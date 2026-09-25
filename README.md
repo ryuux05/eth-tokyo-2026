@@ -4,7 +4,7 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
-Read the [protocol design](docs/PROTOCOL.md) for the authentication flow and trust boundaries, the [use cases](docs/USECASE.md) for concrete service behavior, the [SDK guide](docs/SDK.md) for integration, and the [implementation plan](docs/IMPLEMENTATION.md) for the build sequence.
+Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md) for onchain autonomy limits, the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
 
 ## Idea
 
@@ -37,13 +37,13 @@ are not part of the core identity protocol.
 
 ## Status
 
-The first onchain milestone and both SDK cores are implemented locally:
+The first onchain milestone, bounded execution policy, and both SDK cores are implemented locally:
 `AgentAccount` manages EIP-7702 identity and authenticators, while
 `MandateRegistry` records principal-approved mandates. The agent SDK signs
 service challenges; the service SDK verifies proofs and issues local sessions.
-Tests cover EIP-7702 delegation, the authorization flows, and SDK interoperability.
-HTTP services, durable storage adapters, KMS integration, account execution
-policy, and public deployment are not implemented yet.
+Tests cover EIP-7702 delegation, authorization flows, owner-defined execution
+rules, and SDK interoperability. HTTP services, durable storage adapters, KMS
+integration, a policy dashboard, and public deployment are not implemented yet.
 
 To run the checks:
 

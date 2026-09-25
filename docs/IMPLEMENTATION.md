@@ -2,7 +2,7 @@
 
 This is the repository's working build plan. The [use cases](USECASE.md) describe the desired behavior; the [protocol](PROTOCOL.md) describes the trust boundaries. The v3 handoff includes an older `IMPLEMENTATION_PLAN.md`, but this plan also accounts for the newer user-mandate discussion.
 
-Current status: the first `AgentAccount` and `MandateRegistry` implementations, separate agent/service SDK cores, and local EIP-7702 interoperability tests are in the repository. They are not deployed or audited; HTTP services, durable stores, and KMS integration remain to be built.
+Current status: the `AgentAccount` and `MandateRegistry` implementations, a constrained onchain execution policy, separate agent/service SDK cores, and local EIP-7702 tests are in the repository. They are not deployed or audited; HTTP services, durable stores, dashboard, stablecoin amount rules, and KMS integration remain to be built.
 
 ## Contract-first milestone
 
@@ -23,13 +23,18 @@ The service SDK then handles service challenges, EIP-712 digest construction, at
 
 The separate agent SDK validates the challenge against its configured agent ID, chain, and expected audience, then asks an injected signer to sign the digest. It does not hold the root EOA key or a human session. See the [SDK guide](SDK.md) for the frozen wire choices and integration examples.
 
+## Owner-defined execution policy milestone
+
+The owner now sets a versioned ABI policy on `0xAGENT`. `PolicyEngine` evaluates target, selector, and native value in first-match order, with explicit `DENY`, `ALLOW`, and `REQUIRE_OWNER_SIGNATURE` outcomes. The operating authenticator alone may call `execute`, and only the current owner may change policy. Owner approvals bind the exact action, current policy hash and revision, nonce, deadline, agent, and chain. The [policy guide](POLICY.md) documents format, limitations, and root-key trust assumptions. Hardhat EIP-7702 tests cover policy enforcement and both EOA and ERC-1271 owners.
+
 ## Service and demo milestone
 
 Two separate service processes independently verify the same `0xAGENT`. One demonstrates mandate-backed use of a paid principal's selected read entitlement; the other demonstrates a different local policy. A service checks its own paid status and resource policy on use. The agent never receives the human's OAuth token, API key, or session.
 
 ## Deferred from the first contract milestone
 
-- Account execution/payment policy and owner-approved high-value actions.
+- ERC-20 amount-aware and cumulative spending limits; v1 policy bounds only native value.
+- Dashboard rule builder and $2/$20 stablecoin demo; the encoder exists, but not the UI or token-specific policy.
 - KMS signer integration; use a local development signer behind the same interface first.
 - Immediate invalidation of existing service sessions after onchain changes.
 - Contract-wallet principals and relayed registration. With a relayer, `msg.sender` is the relayer, so the registry would need a principal-signed permit instead.
@@ -37,4 +42,4 @@ Two separate service processes independently verify the same `0xAGENT`. One demo
 
 ## Decisions to freeze before SDK integration
 
-The contract and SDK now share the EIP-712 type strings and signature envelope, and use canonical HTTPS origins for audiences. Interoperability tests exercise them against the local EIP-7702 account. Onchain versioning, deployment addresses, immediate session invalidation, and production storage adapters remain open.
+The contract and SDK now share the EIP-712 type strings and signature envelope, and use canonical HTTPS origins for audiences. Interoperability tests exercise them against the local EIP-7702 account. Onchain versioning, deployment addresses, immediate session invalidation, production storage adapters, and token-amount policy semantics remain open.

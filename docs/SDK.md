@@ -28,6 +28,8 @@ const proof = await agent.answerChallenge(challenge, "https://service-a.example"
 
 The agent SDK does not possess the agent root key or human credentials. The caller passes the expected audience separately, rather than trusting the challenge to select where the signature is valid. Transport and key custody are application concerns.
 
+It also exports the [policy encoder and owner-approval typed data](POLICY.md) for an owner dashboard or agent execution flow. These helpers do not give the operating signer authority to update policy or sign as the owner.
+
 ## Service SDK
 
 ```ts
@@ -61,4 +63,4 @@ For mandate-backed routes, `session.principal` is a short-lived cached result. I
 - The service checks `eth_getCode(0xAGENT) == 0xef0100 || pinnedImplementation` and reads `owner()` and ERC-1271 at the agent address. It compares the registry's `principalOf(agent)` to that owner before exposing a principal. Onchain reads for one authentication use one block number.
 - A session is a local opaque token; by default it survives authenticator or mandate changes until expiry. `currentPrincipal` is a fresh mandate check. Immediate authenticator revocation of existing sessions is not implemented.
 
-The contracts and SDKs do not implement resource authorization, human account matching, payments, or HTTP endpoint conventions. Those are the next service/demo milestone.
+The contracts and SDKs do not implement resource authorization, human account matching, stablecoin amount limits, or HTTP endpoint conventions. Those are later service/demo milestones; the onchain policy only controls native-value execution through `AgentAccount`.

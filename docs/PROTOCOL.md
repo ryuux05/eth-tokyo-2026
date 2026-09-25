@@ -308,9 +308,9 @@ A service may require a fresh signature for each request or for selected sensiti
 
 ## Account execution policy
 
-The delegated account can enforce which account actions the operating signer may initiate alone and which require an owner signature. The recommended hackathon demonstration is a narrowly defined small payment allowed autonomously and a larger payment requiring an approval bound to the agent, chain, target, value, call data, nonce, and deadline.
+The delegated account now enforces an owner-defined, default-deny [execution policy](POLICY.md) for actions submitted by the operating authenticator. A matching rule returns `ALLOW`, `REQUIRE_OWNER_SIGNATURE`, or `DENY`. Required approvals bind the exact agent, chain, target, native value, calldata hash, current policy hash and revision, approval nonce, and deadline. Only the owner can change the policy; service authentication signatures cannot approve execution.
 
-The owner alone may change the execution policy and operating authenticator. Approval nonces belong to the account execution protocol; they are separate from service authentication challenges. The exact payment limit and cumulative budget rules are still open. No service-specific permissions or subscriptions belong in the core account.
+This is a separate authorization boundary from service ACLs and the mandate registry. The policy currently bounds native value, not ERC-20 transfer amounts; a true $2/$20 stablecoin demo needs a narrow token-amount extension. The root EOA retains ultimate EIP-7702 authority and is outside the delegated execution policy's control.
 
 ## Demo acceptance cases
 
@@ -324,4 +324,4 @@ The owner alone may change the execution policy and operating authenticator. App
 
 ## Decisions still open
 
-The first contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, and an owner-transaction mandate registry. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, and the account execution ABI. These are prototype choices until independent-service demos validate them end to end.
+The contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, an owner-transaction mandate registry, and a constrained v1 execution policy. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, ERC-20 amount rules, and the independent-service demo. These are prototype choices until that demo validates them end to end.
