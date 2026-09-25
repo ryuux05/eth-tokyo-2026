@@ -5,6 +5,7 @@ import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {PolicyEngine} from "./PolicyEngine.sol";
 
 /// @notice EIP-7702 implementation called at each persistent agent EOA address.
@@ -74,6 +75,7 @@ contract AgentAccount is EIP712, IERC1271 {
     error InvalidApprovalNonce();
     error ExecutionFailed();
     error ReentrantExecution();
+    error TokenSpendExceeded();
 
     event AgentInitialized(address indexed agent, address indexed owner, address indexed authenticator);
     event AuthenticatorRotated(address indexed agent, address indexed authenticator);
@@ -247,8 +249,16 @@ contract AgentAccount is EIP712, IERC1271 {
             state.ownerApprovalNonce = approval.nonce + 1;
         }
 
+        (bool tokenPurchase, address token, uint256 declaredAmount) = PolicyEngine.tokenPurchaseDetails(data);
+        uint256 tokenBalanceBefore = tokenPurchase ? IERC20(token).balanceOf(address(this)) : 0;
         (bool success, bytes memory returned) = target.call{value: value}(data);
         if (!success) revert ExecutionFailed();
+        if (tokenPurchase) {
+            uint256 tokenBalanceAfter = IERC20(token).balanceOf(address(this));
+            if (tokenBalanceAfter < tokenBalanceBefore && tokenBalanceBefore - tokenBalanceAfter > declaredAmount) {
+                revert TokenSpendExceeded();
+            }
+        }
         state.executing = false;
         emit ActionExecuted(target, value, data.length >= 4 ? bytes4(data[:4]) : bytes4(0), decision);
         return returned;

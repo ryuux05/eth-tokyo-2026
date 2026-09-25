@@ -34,5 +34,5 @@ export function createAgentSdk(config: {
 }
 
 export type { AuthenticationChallenge, AuthenticationProof } from "./shared.js";
-export { Decision, agentPolicyAbi, encodePolicy, ownerActionTypedData } from "./policy.js";
+export { Decision, TOKEN_PURCHASE_SELECTOR, agentPolicyAbi, decodePolicy, encodePolicy, ownerActionTypedData } from "./policy.js";
 export type { PolicyRule } from "./policy.js";

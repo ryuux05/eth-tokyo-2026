@@ -1,4 +1,4 @@
-import { encodeAbiParameters, isAddress, keccak256, zeroAddress, type Address, type Hex } from "viem";
+import { decodeAbiParameters, encodeAbiParameters, isAddress, keccak256, toFunctionSelector, zeroAddress, type Address, type Hex } from "viem";
 
 export const Decision = {
   DENY: 0,
@@ -11,9 +11,13 @@ export type Decision = (typeof Decision)[keyof typeof Decision];
 export type PolicyRule = {
   target: Address;
   selector: Hex;
+  token: Address;
   maxValue: bigint;
+  maxAmount: bigint;
   decision: Decision;
 };
+
+export const TOKEN_PURCHASE_SELECTOR = toFunctionSelector("purchaseCompute(address,uint256)");
 
 /** Minimal ABI for owner dashboard and agent execution integrations. Call at 0xAGENT. */
 export const agentPolicyAbi = [
@@ -38,7 +42,9 @@ const policyAbi = [
   { type: "tuple[]", components: [
     { name: "target", type: "address" },
     { name: "selector", type: "bytes4" },
+    { name: "token", type: "address" },
     { name: "maxValue", type: "uint256" },
+    { name: "maxAmount", type: "uint256" },
     { name: "decision", type: "uint8" },
   ] },
 ] as const;
@@ -49,12 +55,26 @@ export function encodePolicy(rules: readonly PolicyRule[]): Hex {
   for (const rule of rules) {
     if (!isAddress(rule.target) || rule.target.toLowerCase() === zeroAddress) throw new Error("Invalid policy target");
     if (!/^0x[0-9a-fA-F]{8}$/.test(rule.selector)) throw new Error("Selector must be four bytes");
-    if (rule.maxValue < 0n || rule.maxValue > (1n << 256n) - 1n) throw new Error("Invalid maximum value");
+    if (!isAddress(rule.token)) throw new Error("Invalid policy token");
+    if (rule.maxValue < 0n || rule.maxValue > (1n << 256n) - 1n || rule.maxAmount < 0n || rule.maxAmount > (1n << 256n) - 1n) throw new Error("Invalid maximum value or amount");
+    if (rule.token.toLowerCase() === zeroAddress) {
+      if (rule.maxAmount !== 0n || rule.selector.toLowerCase() === TOKEN_PURCHASE_SELECTOR) throw new Error("Purchase selector requires a token condition");
+    } else if (rule.selector.toLowerCase() !== TOKEN_PURCHASE_SELECTOR || rule.maxValue !== 0n) {
+      throw new Error("Token rule must use purchaseCompute(address,uint256) with zero native value");
+    }
     if (rule.decision !== Decision.DENY && rule.decision !== Decision.ALLOW && rule.decision !== Decision.REQUIRE_OWNER_SIGNATURE) throw new Error("Invalid decision");
   }
   const encoded = encodeAbiParameters(policyAbi, [1, [...rules]]);
   if ((encoded.length - 2) / 2 > 8192) throw new Error("Policy exceeds 8192 bytes");
   return encoded;
+}
+
+export function decodePolicy(encoded: Hex): PolicyRule[] {
+  const [version, rules] = decodeAbiParameters(policyAbi, encoded);
+  if (version !== 1) throw new Error("Unsupported policy version");
+  const parsed = rules.map(rule => ({ ...rule, decision: rule.decision as Decision }));
+  if (encodePolicy(parsed).toLowerCase() !== encoded.toLowerCase()) throw new Error("Noncanonical policy encoding");
+  return parsed;
 }
 
 export function ownerActionTypedData(action: {
