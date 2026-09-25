@@ -3,6 +3,9 @@ import { describe, it } from "node:test";
 import hre from "hardhat";
 import { encodeAbiParameters, hashTypedData, keccak256, toBytes } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { createAgentSdk } from "../sdk/agent.js";
+import { createServiceSdk, type ChallengeStore, type SessionStore } from "../sdk/service.js";
+import type { AuthenticationChallenge } from "../sdk/shared.js";
 
 const VALID = "0x1626ba7e";
 const INVALID = "0xffffffff";
@@ -387,5 +390,113 @@ describe("MandateRegistry", () => {
         args: [context.agentRoot.address, 0n, context.deadline, rootPermit],
       }),
     );
+  });
+});
+
+describe("Agent and service SDK interoperability", () => {
+  it("authenticates independently, prevents replay, and exposes only an active mandate", async () => {
+    const context = await setup();
+    await initialize(context);
+    let clock = Math.floor(Date.now() / 1000);
+    const makeStores = () => {
+      const challenges = new Map<string, AuthenticationChallenge>();
+      const consumed = new Set<string>();
+      const sessions = new Map<string, { agentId: `0x${string}`; principal?: `0x${string}`; expiresAt: number }>();
+      const challengeStore: ChallengeStore = {
+        async put(challenge) { challenges.set(challenge.nonce, challenge); },
+        async get(nonce) { return consumed.has(nonce) ? undefined : challenges.get(nonce); },
+        async consume(nonce) {
+          if (consumed.has(nonce) || !challenges.has(nonce)) return false;
+          consumed.add(nonce);
+          return true;
+        },
+      };
+      const sessionStore: SessionStore = {
+        async put(hash, session) { sessions.set(hash, session); },
+        async get(hash) { return sessions.get(hash); },
+      };
+      return { challengeStore, sessionStore };
+    };
+    const createService = (audience: string) => {
+      const { challengeStore, sessionStore } = makeStores();
+      return createServiceSdk({
+        client: context.publicClient,
+        chainId: context.chainId,
+        audience,
+        implementation: context.implementation.address,
+        registry: context.registry.address,
+        challenges: challengeStore,
+        sessions: sessionStore,
+        now: () => clock,
+      });
+    };
+    const serviceA = createService("https://service-a.example");
+    const serviceB = createService("https://service-b.example");
+    const agent = createAgentSdk({
+      agentId: context.agentRoot.address,
+      chainId: context.chainId,
+      signDigest: digest => context.authenticator.sign({ hash: digest }),
+      now: () => clock,
+    });
+
+    const challengeA = await serviceA.issueChallenge(context.agentRoot.address);
+    await assert.rejects(agent.answerChallenge(challengeA, "https://service-b.example"));
+    const proofA = await agent.answerChallenge(challengeA, "https://service-a.example");
+    await assert.rejects(serviceB.authenticate(proofA));
+    const first = await serviceA.authenticate(proofA);
+    assert.equal(first.session.agentId, context.agentRoot.address);
+    assert.equal(first.session.principal, undefined);
+    assert.deepEqual(await serviceA.readSession(first.token), first.session);
+    await assert.rejects(serviceA.authenticate(proofA));
+
+    const rootPermit = await context.agentRoot.signTypedData({
+      domain: { name: "Agentic World Mandate Registry", version: "1", chainId: context.chainId, verifyingContract: context.registry.address },
+      types: { AgentRegistration: [
+        { name: "agent", type: "address" }, { name: "principal", type: "address" },
+        { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint64" },
+      ] },
+      primaryType: "AgentRegistration",
+      message: { agent: context.agentRoot.address, principal: context.owner.account.address, nonce: 0n, deadline: context.deadline },
+    });
+    const registrationTx = await context.owner.writeContract({
+      address: context.registry.address, abi: context.registry.abi, functionName: "register",
+      args: [context.agentRoot.address, 0n, context.deadline, rootPermit],
+    });
+    await context.publicClient.waitForTransactionReceipt({ hash: registrationTx });
+
+    const challengeB = await serviceB.issueChallenge(context.agentRoot.address);
+    const proofB = await agent.answerChallenge(challengeB, "https://service-b.example");
+    const second = await serviceB.authenticate(proofB);
+    assert.equal(second.session.principal?.toLowerCase(), context.owner.account.address.toLowerCase());
+
+    const revokeTx = await context.owner.writeContract({
+      address: context.registry.address, abi: context.registry.abi, functionName: "revoke", args: [context.agentRoot.address],
+    });
+    await context.publicClient.waitForTransactionReceipt({ hash: revokeTx });
+    assert.equal(await serviceB.currentPrincipal(context.agentRoot.address), undefined);
+    // An issued session is intentionally cached until its short local expiry.
+    assert.deepEqual(await serviceB.readSession(second.token), second.session);
+
+    const rotationChallenge = await serviceB.issueChallenge(context.agentRoot.address);
+    const oldProof = await agent.answerChallenge(rotationChallenge, "https://service-b.example");
+    const newAuthenticator = privateKeyToAccount(generatePrivateKey());
+    const rotationTx = await context.owner.writeContract({
+      address: context.agentRoot.address, abi: context.implementation.abi,
+      functionName: "rotateAuthenticator", args: [newAuthenticator.address],
+    });
+    await context.publicClient.waitForTransactionReceipt({ hash: rotationTx });
+    await assert.rejects(serviceB.authenticate(oldProof));
+    const rotatedAgent = createAgentSdk({
+      agentId: context.agentRoot.address,
+      chainId: context.chainId,
+      signDigest: digest => newAuthenticator.sign({ hash: digest }),
+      now: () => clock,
+    });
+    const newProof = await rotatedAgent.answerChallenge(rotationChallenge, "https://service-b.example");
+    const afterRotation = await serviceB.authenticate(newProof);
+    assert.equal(afterRotation.session.principal, undefined);
+
+    clock += 61;
+    assert.equal(await serviceB.readSession(second.token), undefined);
   });
 });

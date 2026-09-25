@@ -187,7 +187,7 @@ AgentAuthentication {
 }
 ```
 
-The agent's wire message carries the readable `audience`; the service first checks it against its configured audience and then hashes its canonical bytes into `audienceHash`. The service builds the domain from its expected chain and challenge-bound `agentId`, then recomputes the digest. It does not trust domain fields or a digest supplied by the agent. The prototype contract freezes the typed fields and domain above; the SDK still needs a canonical audience-string rule and clock-skew allowance. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+The agent's wire message carries the readable `audience`; the service first checks it against its configured audience and then hashes its canonical bytes into `audienceHash`. The service builds the domain from its expected chain and challenge-bound `agentId`, then recomputes the digest. It does not trust domain fields or a digest supplied by the agent. The SDK requires an exact canonical HTTPS origin as the audience and allows at most 30 seconds of future clock skew for `issuedAt`. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
 
 ### What each verifier checks
 
@@ -214,7 +214,7 @@ The return value means the account accepts **this signature for this digest in t
 
 This restriction is especially important because v3 also gives the account an execution policy. A generic `isValidSignature(hash, rawOperatingSignature)` implementation would accept any digest signed by the operating key. Another application that accepts ERC-1271 signatures could then treat that key as a broader wallet signer, bypassing the intended account execution boundary.
 
-For the prototype, the service ABI-encodes `AuthProof {agentId, audienceHash, nonce, issuedAt, expiresAt, authenticatorSignature}` as the ERC-1271 `signature` argument. The account recomputes the allowed typed digest using its own address as `verifyingContract` and the current chain ID, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. Malformed envelopes and arbitrary operating-key signatures return the invalid magic value. This behavior has contract-level tests; SDK interoperability still needs testing.
+For the prototype, the service ABI-encodes `AuthProof {agentId, audienceHash, nonce, issuedAt, expiresAt, authenticatorSignature}` as the ERC-1271 `signature` argument. The account recomputes the allowed typed digest using its own address as `verifyingContract` and the current chain ID, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. Malformed envelopes and arbitrary operating-key signatures return the invalid magic value. Contract-level and SDK interoperability tests cover this flow.
 
 Owner approvals for account actions use a **separate** typed message and replay nonce. The operating authenticator's authentication proof must never double as an owner approval.
 
@@ -324,4 +324,4 @@ The owner alone may change the execution policy and operating authenticator. App
 
 ## Decisions still open
 
-The first contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, and an owner-transaction mandate registry. The remaining decisions include audience canonicalization, SDK signature-envelope interoperability, optional authenticator expiry and epoch, session freshness/revocation behavior, deployment networks and addresses, and the account execution ABI. The contract choices above are prototype choices until the SDK and independent-service demo validate them end to end.
+The first contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, and an owner-transaction mandate registry. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, and the account execution ABI. These are prototype choices until independent-service demos validate them end to end.

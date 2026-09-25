@@ -2,7 +2,7 @@
 
 This is the repository's working build plan. The [use cases](USECASE.md) describe the desired behavior; the [protocol](PROTOCOL.md) describes the trust boundaries. The v3 handoff includes an older `IMPLEMENTATION_PLAN.md`, but this plan also accounts for the newer user-mandate discussion.
 
-Current status: the first `AgentAccount` and `MandateRegistry` implementations and local EIP-7702 tests are in the repository. They are not deployed or audited; SDK and independent-service integration remain to be built.
+Current status: the first `AgentAccount` and `MandateRegistry` implementations, separate agent/service SDK cores, and local EIP-7702 interoperability tests are in the repository. They are not deployed or audited; HTTP services, durable stores, and KMS integration remain to be built.
 
 ## Contract-first milestone
 
@@ -15,11 +15,13 @@ Current status: the first `AgentAccount` and `MandateRegistry` implementations a
 
 The registry is **not** a global permission or subscription system. It only records who mandated a particular agent. Each service retains its own paid-account lookup and rule for which resources a mandated agent may request.
 
-## SDK verification milestone
+## Two-SDK milestone
 
 The service SDK will be configured with expected implementation and registry addresses *per chain*. It checks the EIP-7702 delegation pointer of `0xAGENT`, calls `0xAGENT.isValidSignature(...)`, and reads `0xAGENT.owner()` plus `MandateRegistry.principalOf(0xAGENT)`. It exposes a verified principal only when the registry record is active and matches the account's owner. Calling `owner()` directly on the implementation would read the wrong storage. Current-implementation pinning alone does not prove historical owner consent.
 
-The SDK then handles service challenges, EIP-712 digest construction, atomic nonce consumption, and short-lived sessions. A service can authenticate an agent without a mandate for direct agent-specific grants; it must not convert an unverified owner hint into mandate-backed access.
+The service SDK then handles service challenges, EIP-712 digest construction, atomic nonce consumption, and short-lived sessions. A service can authenticate an agent without a mandate for direct agent-specific grants; it must not convert an unverified owner hint into mandate-backed access. Storage is injected by each service; the SDK does not provide a shared backend or a production database.
+
+The separate agent SDK validates the challenge against its configured agent ID, chain, and expected audience, then asks an injected signer to sign the digest. It does not hold the root EOA key or a human session. See the [SDK guide](SDK.md) for the frozen wire choices and integration examples.
 
 ## Service and demo milestone
 
@@ -35,4 +37,4 @@ Two separate service processes independently verify the same `0xAGENT`. One demo
 
 ## Decisions to freeze before SDK integration
 
-The final EIP-712 type strings and signature envelope, audience canonicalization, onchain contract versioning, deployment addresses, session freshness rules, and registration/initialization permit nonces must be documented with executable vectors. The first contract milestone may choose concrete values for testing, but they remain prototype protocol choices until the SDK is built against them.
+The contract and SDK now share the EIP-712 type strings and signature envelope, and use canonical HTTPS origins for audiences. Interoperability tests exercise them against the local EIP-7702 account. Onchain versioning, deployment addresses, immediate session invalidation, and production storage adapters remain open.

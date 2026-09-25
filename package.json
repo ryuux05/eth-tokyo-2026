@@ -2,8 +2,19 @@
   "name": "agentic-world",
   "private": true,
   "type": "module",
+  "exports": {
+    "./agent": {
+      "types": "./dist/sdk/agent.d.ts",
+      "default": "./dist/sdk/agent.js"
+    },
+    "./service": {
+      "types": "./dist/sdk/service.d.ts",
+      "default": "./dist/sdk/service.js"
+    }
+  },
   "scripts": {
-    "build": "hardhat build",
+    "build": "hardhat build && npm run build:sdk",
+    "build:sdk": "tsc --project tsconfig.sdk.json",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit"
   },
