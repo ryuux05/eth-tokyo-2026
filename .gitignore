@@ -1,0 +1,33 @@
+# Credentials and local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+keystore/
+keystores/
+secrets/
+
+# Dependencies and generated output
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+out/
+cache/
+coverage/
+target/
+.venv/
+__pycache__/
+*.pyc
+
+# Local deployment state and logs
+broadcast/
+*.log
+
+# Editor and operating system files
+.DS_Store
+.idea/
+.vscode/
