@@ -35,31 +35,61 @@ Service generates and stores a random, single-use challenge
   → Agent sends the message and signature to the service
   → Service validates the message against its challenge
   → Service computes the digest itself
-  → Service calls 0xAGENT.isValidSignature(digest, signature) via eth_call
+  → Service encodes the signed fields with the operating-key signature
+  → Service calls 0xAGENT.isValidSignature(digest, encodedSignature) via eth_call
   → Account returns 0x1626ba7e only for a valid current authenticator
   → Service atomically consumes the challenge and creates a short session
   → Service applies its own access rules to resource requests
 ```
 
-Conceptual signed message:
+The agent sends this proof to the service:
 
 ```text
-AgentAuthentication {
-    version
-    chainId
-    agent       // 0xAGENT
+{
+    agentId     // 0xAGENT
     audience    // the intended service
     nonce       // the service's challenge
+    issuedAt
+    expiresAt
+    signature   // operating-key ECDSA signature, sent alongside the signed data
+}
+```
+
+The EIP-712 digest covers the `AgentAuthentication` fields below. The signature is the result of signing that digest; it is not itself a field inside the signed struct.
+
+```text
+EIP712Domain {
+    name
+    version
+    chainId
+    verifyingContract = agentId
+}
+
+AgentAuthentication {
+    agentId
+    audience
+    nonce
     issuedAt
     expiresAt
 }
 ```
 
-The reference EIP-712 domain should bind protocol name/version, chain ID, and `verifyingContract = 0xAGENT`. The exact type string, domain version, audience encoding, timestamp units, and clock skew allowance must be frozen before implementation. These fields are shown as protocol semantics, not a final ABI. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+The service builds the domain from its expected chain and the challenge-bound `agentId`, then recomputes the digest. It does not trust domain fields or a digest supplied by the agent. The exact type string, domain name/version, audience encoding, timestamp units, and clock skew allowance must be frozen before implementation. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
 
 ### What each verifier checks
 
-The service generates an unpredictable challenge, preferably 256 bits, and stores it with the expected agent, audience, expiry, and consumption state. Before the chain call it checks that the submitted fields match that record, that the chain and audience are the ones it supports, and that the signed time window is acceptable. It must compute the EIP-712 digest from the submitted message itself rather than trust a digest supplied by the agent.
+The service generates an unpredictable challenge, preferably 256 bits, and stores it with the expected agent, audience, expiry, and consumption state. If the agent is new to the service, the service binds the claimed `agentId` to that challenge when it issues it.
+
+Before `eth_call`, the service checks:
+
+1. `agentId` equals the agent bound to its challenge; this is the `0xAGENT` it will call.
+2. The EIP-712 domain's `verifyingContract` equals `agentId`.
+3. The EIP-712 domain's `chainId` equals the service's expected chain.
+4. `audience` equals this service's configured audience.
+5. `nonce` exists in the service's challenge store, is unused, and is still within the challenge's lifetime.
+6. `issuedAt` is within the service's allowed time window, and `expiresAt` has not passed.
+
+The service recomputes the digest from those verified fields and the expected domain. A valid ERC-1271 result is followed by atomic challenge consumption and session issuance.
 
 The service must also establish that `0xAGENT` currently exposes the expected Agentic World behavior. The precise version/discovery mechanism is still open. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
 
@@ -71,7 +101,7 @@ The return value means the account accepts **this signature for this digest in t
 
 This restriction is especially important because v3 also gives the account an execution policy. A generic `isValidSignature(hash, rawOperatingSignature)` implementation would accept any digest signed by the operating key. Another application that accepts ERC-1271 signatures could then treat that key as a broader wallet signer, bypassing the intended account execution boundary.
 
-For the prototype, the proposed ERC-1271 signature bytes should carry the authentication message as well as the operating key's ECDSA signature. The account recomputes the allowed `AgentAuthentication` typed digest from those fields, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. This encoding is a proposed resolution of the open signature-format decision; it needs a concrete test against other ERC-1271 consumers before the ABI is frozen.
+For the prototype, the service should encode the signed `AgentAuthentication` fields together with the received operating-key ECDSA signature as the ERC-1271 `signature` argument. The account recomputes the allowed typed digest using its own address as `verifyingContract` and the expected chain ID, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. This encoding is a proposed resolution of the open signature-format decision; it needs a concrete test against other ERC-1271 consumers before the ABI is frozen.
 
 Owner approvals for account actions use a **separate** typed message and replay nonce. The operating authenticator's authentication proof must never double as an owner approval.
 
@@ -111,4 +141,4 @@ The owner alone may change the execution policy and operating authenticator. App
 
 ## Decisions still open
 
-The handoff leaves protocol discovery/versioning, secure bootstrap mechanics, the final EIP-712 encoding, optional authenticator expiry and epoch, session lifetime/revocation behavior, and the account execution ABI to be finalized. The signed envelope and constrained ERC-1271 behavior above record the intended trust path; they do not settle those remaining implementation details by implication.
+The handoff leaves protocol discovery/versioning, secure bootstrap mechanics, the final EIP-712 field types and encoding, optional authenticator expiry and epoch, session lifetime/revocation behavior, and the account execution ABI to be finalized. The proof fields and verification checks above are the expected authentication path; they do not settle those remaining implementation details by implication.
