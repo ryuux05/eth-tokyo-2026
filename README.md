@@ -4,7 +4,7 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
-Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md) for onchain autonomy limits, the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
+Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md) for onchain autonomy limits, the [owner portal guide](docs/PORTAL.md) for registration and policy authoring, the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
 
 ## Idea
 
@@ -41,9 +41,11 @@ The first onchain milestone, bounded execution policy, and both SDK cores are im
 `AgentAccount` manages EIP-7702 identity and authenticators, while
 `MandateRegistry` records principal-approved mandates. The agent SDK signs
 service challenges; the service SDK verifies proofs and issues local sessions.
-Tests cover EIP-7702 delegation, authorization flows, owner-defined execution
-rules, and SDK interoperability. HTTP services, durable storage adapters, KMS
-integration, a policy dashboard, and public deployment are not implemented yet.
+Tests cover EIP-7702 delegation, authorization flows, owner-defined native and
+token-purchase rules, and SDK interoperability. The owner registration/policy
+page is built, but needs deployed contract addresses and a bootstrapped agent.
+HTTP services, durable storage adapters, KMS integration, and public deployment
+are not implemented yet.
 
 To run the checks:
 
@@ -53,6 +55,8 @@ npm run build
 npm test
 npm run typecheck
 ```
+
+To build and serve the owner page locally, run `npm run build:portal` and `npm run serve:portal`. Before wallet transactions, set trusted deployment addresses in [`portal/config.ts`](portal/config.ts).
 
 The contract ABI and typed-data details are documented in the [protocol](docs/PROTOCOL.md).
 

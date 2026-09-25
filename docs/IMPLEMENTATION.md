@@ -2,7 +2,7 @@
 
 This is the repository's working build plan. The [use cases](USECASE.md) describe the desired behavior; the [protocol](PROTOCOL.md) describes the trust boundaries. The v3 handoff includes an older `IMPLEMENTATION_PLAN.md`, but this plan also accounts for the newer user-mandate discussion.
 
-Current status: the `AgentAccount` and `MandateRegistry` implementations, a constrained onchain execution policy, separate agent/service SDK cores, and local EIP-7702 tests are in the repository. They are not deployed or audited; HTTP services, durable stores, dashboard, stablecoin amount rules, and KMS integration remain to be built.
+Current status: the `AgentAccount` and `MandateRegistry` implementations, constrained native/token-purchase policy, separate agent/service SDK cores, owner registration page, and local EIP-7702 tests are in the repository. They are not deployed or audited; HTTP services, durable stores, production agent bootstrap, and KMS integration remain to be built.
 
 ## Contract-first milestone
 
@@ -25,7 +25,9 @@ The separate agent SDK validates the challenge against its configured agent ID, 
 
 ## Owner-defined execution policy milestone
 
-The owner now sets a versioned ABI policy on `0xAGENT`. `PolicyEngine` evaluates target, selector, and native value in first-match order, with explicit `DENY`, `ALLOW`, and `REQUIRE_OWNER_SIGNATURE` outcomes. The operating authenticator alone may call `execute`, and only the current owner may change policy. Owner approvals bind the exact action, current policy hash and revision, nonce, deadline, agent, and chain. The [policy guide](POLICY.md) documents format, limitations, and root-key trust assumptions. Hardhat EIP-7702 tests cover policy enforcement and both EOA and ERC-1271 owners.
+The owner now sets a versioned ABI policy on `0xAGENT`. `PolicyEngine` evaluates target, selector, native value, and—only for the fixed `purchaseCompute(address,uint256)` ABI—token and amount in first-match order, with explicit `DENY`, `ALLOW`, and `REQUIRE_OWNER_SIGNATURE` outcomes. The operating authenticator alone may call `execute`, and only the current owner may change policy. Owner approvals bind the exact action, current policy hash and revision, nonce, deadline, agent, and chain. The [policy guide](POLICY.md) documents format, limitations, and root-key trust assumptions. Hardhat EIP-7702 tests cover policy enforcement, 2/20 demo-token thresholds, and both EOA and ERC-1271 owners.
+
+The [owner portal](PORTAL.md) verifies an existing agent, edits ordered rules, submits `setPolicy`, previews saved policy via `eth_call`, and registers the mandate using an agent-root permit signed outside the page. It needs pinned contract addresses and a separate agent bootstrap workflow before a live end-to-end demonstration.
 
 ## Service and demo milestone
 
@@ -33,8 +35,8 @@ Two separate service processes independently verify the same `0xAGENT`. One demo
 
 ## Deferred from the first contract milestone
 
-- ERC-20 amount-aware and cumulative spending limits; v1 policy bounds only native value.
-- Dashboard rule builder and $2/$20 stablecoin demo; the encoder exists, but not the UI or token-specific policy.
+- General ERC-20 amount-aware and cumulative spending limits; v1 supports only the explicit demo purchase ABI and per-call ceilings.
+- Public deployment, production bootstrap, root-key signing UX, and live $2/$20 service demo. Local contract tests and the owner page exist.
 - KMS signer integration; use a local development signer behind the same interface first.
 - Immediate invalidation of existing service sessions after onchain changes.
 - Contract-wallet principals and relayed registration. With a relayer, `msg.sender` is the relayer, so the registry would need a principal-signed permit instead.
@@ -42,4 +44,4 @@ Two separate service processes independently verify the same `0xAGENT`. One demo
 
 ## Decisions to freeze before SDK integration
 
-The contract and SDK now share the EIP-712 type strings and signature envelope, and use canonical HTTPS origins for audiences. Interoperability tests exercise them against the local EIP-7702 account. Onchain versioning, deployment addresses, immediate session invalidation, production storage adapters, and token-amount policy semantics remain open.
+The contract and SDK now share the EIP-712 type strings and signature envelope, and use canonical HTTPS origins for audiences. Interoperability tests exercise them against the local EIP-7702 account. Onchain versioning, deployment addresses, immediate session invalidation, production storage adapters, and broader token-action semantics remain open.

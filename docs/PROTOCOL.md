@@ -6,15 +6,16 @@ This document describes the protocol intended for the ETHGlobal Tokyo 2026 proto
 
 ## Responsibility boundary
 
-The protocol separates three facts:
+The protocol separates four facts:
 
 1. **Agent identity:** `0xAGENT` proves who is making the request.
 2. **User mandate:** `0xHUMAN` explicitly approves that agent to act on their behalf, proven independently of the agent's self-reported `owner()` value. The mandate establishes the relationship; it is not the human's login or a blanket resource grant.
-3. **Service authorization:** Each service decides which requests, if any, that mandated agent may make using its own customer accounts, subscriptions, and access policy.
+3. **Owner execution policy:** The owner decides which onchain calls the operating authenticator may execute autonomously, which need an exact owner signature, and which are denied.
+4. **Service authorization:** Each service decides which requests, if any, that mandated agent may make using its own customer accounts, subscriptions, and access policy.
 
 Ethereum and the agent account provide a shared identity and a way to check current authentication authority. A portable mandate can prove the principal–agent relationship to independent services. A service may grant access directly to `0xAGENT` or permit mandate-backed requests for selected resources already available to the principal. Services maintain their own registration, access rules, challenge records, payments, and sessions. They can verify the agent and mandate without an Agentic World authentication server.
 
-The account also governs actions initiated *from the agent account*, such as token payments. That execution policy is separate from a service's resource access policy.
+The account's execution policy governs actions initiated *from the agent account*, such as bounded token purchases. It is separate from a service's resource access policy and does not constrain the EIP-7702 root key.
 
 ## Identity and keys
 
@@ -308,9 +309,9 @@ A service may require a fresh signature for each request or for selected sensiti
 
 ## Account execution policy
 
-The delegated account now enforces an owner-defined, default-deny [execution policy](POLICY.md) for actions submitted by the operating authenticator. A matching rule returns `ALLOW`, `REQUIRE_OWNER_SIGNATURE`, or `DENY`. Required approvals bind the exact agent, chain, target, native value, calldata hash, current policy hash and revision, approval nonce, and deadline. Only the owner can change the policy; service authentication signatures cannot approve execution.
+The delegated account now enforces an owner-defined, default-deny [execution policy](POLICY.md) for actions submitted by the operating authenticator. A matching rule returns `ALLOW`, `REQUIRE_OWNER_SIGNATURE`, or `DENY`. The constrained v1 vocabulary checks target, selector, native value, and—only for the explicit demo purchase ABI—token and amount. Required approvals bind the exact agent, chain, target, native value, calldata hash, current policy hash and revision, approval nonce, and deadline. Only the owner can change the policy; service authentication signatures cannot approve execution.
 
-This is a separate authorization boundary from service ACLs and the mandate registry. The policy currently bounds native value, not ERC-20 transfer amounts; a true $2/$20 stablecoin demo needs a narrow token-amount extension. The root EOA retains ultimate EIP-7702 authority and is outside the delegated execution policy's control.
+This is a separate authorization boundary from service ACLs and the mandate registry. The policy bounds the declared amount of `purchaseCompute(address,uint256)` on a pinned target, not arbitrary ERC-20 transfers or cumulative spend. The root EOA retains ultimate EIP-7702 authority and is outside the delegated execution policy's control. The owner can author policy and register a mandate in the [owner portal](PORTAL.md) after the agent is bootstrapped.
 
 ## Demo acceptance cases
 
@@ -324,4 +325,4 @@ This is a separate authorization boundary from service ACLs and the mandate regi
 
 ## Decisions still open
 
-The contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, an owner-transaction mandate registry, and a constrained v1 execution policy. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, ERC-20 amount rules, and the independent-service demo. These are prototype choices until that demo validates them end to end.
+The contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, an owner-transaction mandate registry, and a constrained v1 execution policy with one token-purchase action shape. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, broader ERC-20 rules, and the independent-service demo. These are prototype choices until that demo validates them end to end.

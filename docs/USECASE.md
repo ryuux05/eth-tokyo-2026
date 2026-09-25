@@ -46,11 +46,11 @@ This can be automatic *after* the principal has approved the mandate. The mandat
 
 **Situation:** The agent needs to buy the temporary access in use case 3.
 
-**Flow:** The service decides the price and whether payment grants access. Separately, the agent's EIP-7702 account execution policy decides whether the operating signer may spend that native-token value autonomously or must obtain owner approval. Service resource authorization and account spending authority are distinct decisions. The current rule format does not inspect ERC-20 transfer amounts.
+**Flow:** The service decides the price and whether payment grants access. Separately, the agent's EIP-7702 account execution policy decides whether the operating signer may make that exact native-value call or supported token-purchase call autonomously, needs owner approval, or is denied. Service resource authorization and account spending authority are distinct decisions.
 
 **Acceptance test:** A small payment within the account's limit can proceed autonomously; an amount above that limit requires owner approval and cannot be authorized by an authentication signature.
 
-The [policy specification](POLICY.md) records the exact onchain rule format, owner-approval type, and the current native-value limitation. A $2/$20 stablecoin payment demo needs a future token-amount-aware rule rather than pretending `msg.value` bounds an ERC-20 transfer.
+The [policy specification](POLICY.md) records the exact onchain rule format and owner-approval type. The demo's 6-decimal token can show a 2-token autonomous purchase and a 20-token owner-approved purchase through the fixed `purchaseCompute(address,uint256)` action shape. The owner can set those rules while registering the agent in the [owner portal](PORTAL.md). This is a per-call ceiling, not a cumulative budget or a general ERC-20 spending guard.
 
 ## Mandate security boundary
 
