@@ -13,8 +13,10 @@
     }
   },
   "scripts": {
-    "build": "hardhat build && npm run build:sdk",
+    "build": "hardhat build && npm run build:sdk && npm run build:portal",
     "build:sdk": "tsc --project tsconfig.sdk.json",
+    "build:portal": "esbuild portal/main.ts portal/styles.css portal/index.html --bundle --platform=browser --format=esm --outdir=portal/dist --loader:.html=copy",
+    "serve:portal": "python3 -m http.server 4173 --directory portal/dist",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit"
   },
@@ -23,6 +25,7 @@
     "@nomicfoundation/hardhat-viem": "^3.0.9",
     "@openzeppelin/contracts": "^5.6.1",
     "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
     "hardhat": "^3.18.0",
     "typescript": "^7.0.2",
     "viem": "^2.56.9"
