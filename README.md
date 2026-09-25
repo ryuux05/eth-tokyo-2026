@@ -4,6 +4,8 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
+Read the [protocol design](docs/PROTOCOL.md) for the authentication flow and trust boundaries.
+
 ## Idea
 
 Give an agent a persistent Ethereum account that it can use to authenticate across
