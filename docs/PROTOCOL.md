@@ -25,6 +25,47 @@ The account also governs actions initiated *from the agent account*, such as tok
 
 EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. The exact bootstrap transaction and signatures remain an open design decision. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
 
+### Agent creation and bootstrap
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    participant H as Human / Owner
+    participant A as 0xAGENT EOA
+    participant C as AgentAccount
+    participant K as KMS / Authenticator
+    participant E as Ethereum
+
+    H->>A: Create 0xAGENT
+    Note over A: Persistent Agent ID
+
+    H->>K: Create operating signing key
+    K-->>H: Public key
+    H->>H: Derive 0xAUTHENTICATOR
+
+    H->>A: Authorize EIP-7702 delegation
+    A->>E: Delegate to AgentAccount implementation
+
+    Note over A,C: 0xAGENT now executes<br/>AgentAccount code via EIP-7702
+
+    H->>A: Initialize identity
+    Note over H,A: owner = 0xHUMAN<br/>authenticator = 0xAUTHENTICATOR
+
+    A->>C: Execute initialize(...)
+    C->>C: Verify initialization authorization
+    C->>C: Store owner
+    C->>C: Store authenticator
+    C->>C: Store createdAt
+    C->>C: Mark initialized
+
+    Note over A: 0xAGENT is ready
+
+    H->>K: Grant agent runtime signing access
+```
+
+The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so the initialized storage belongs to `0xAGENT`. `initialize(...)` must check authorization from the root EOA key before setting owner and authenticator; the exact signed bootstrap format remains open.
+
 ## Reference authentication handshake
 
 ```text
@@ -41,6 +82,59 @@ Service generates and stores a random, single-use challenge
   → Service atomically consumes the challenge and creates a short session
   → Service applies its own access rules to resource requests
 ```
+
+### First connection, authentication, and session
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    participant A as Agent
+    participant K as KMS / Authenticator
+    participant S as Service
+    participant E as Ethereum / 0xAGENT
+
+    A->>S: Connect(agentId = 0xAGENT)
+
+    S->>E: Resolve 0xAGENT
+    E-->>S: AgentAccount / owner() / protocol support
+
+    S->>S: Generate random nonce
+    S->>S: Store challenge as unused
+
+    S-->>A: Authentication challenge
+    Note over A,S: audience<br/>nonce<br/>issuedAt<br/>expiresAt
+
+    A->>A: Construct EIP-712 AgentAuthentication
+    Note over A: agentId = 0xAGENT<br/>audience = Service<br/>nonce = challenge<br/>issuedAt<br/>expiresAt
+
+    A->>K: Sign EIP-712 digest
+    K-->>A: Signature
+
+    A->>S: AgentAuthentication + signature
+
+    S->>S: Validate audience
+    S->>S: Validate nonce
+    S->>S: Validate timestamps
+    S->>S: Validate agentId / chain
+    S->>S: Recompute digest and encode signed fields with signature
+
+    S->>E: eth_call<br/>0xAGENT.isValidSignature(digest, encodedSignature)
+
+    E->>E: ERC-1271 validation
+    Note over E: Recover/check current<br/>operating authenticator
+
+    E-->>S: 0x1626ba7e (VALID)
+
+    S->>S: Atomically consume nonce
+    S->>S: Generate random session token
+    S->>S: Store H(token) → 0xAGENT
+    S-->>A: Session token (~60 sec)
+
+    Note over A,S: Authentication complete
+```
+
+The service constructs the EIP-712 domain with its expected `chainId` and `verifyingContract = agentId`. The `encodedSignature` call argument is the service's proposed packaging of the signed fields and operating-key signature described below.
 
 The agent sends this proof to the service:
 
@@ -112,6 +206,43 @@ When AWS KMS signs an already computed EIP-712 digest, its request must use `Mes
 ### Session and revocation semantics
 
 A successful handshake may produce a short-lived, opaque service-local session. A 60-second lifetime is a demo default, not a protocol rule. The token is a cached authentication result, not the agent's identity or a grant of resource access; the service checks its own permissions on use.
+
+### Requests after session creation
+
+```mermaid
+sequenceDiagram
+    autonumber
+
+    participant A as Agent
+    participant S as Service
+    participant DB as Service DB
+    participant R as Resource
+
+    A->>S: Request + AgentSession token
+
+    S->>S: Hash token
+    S->>DB: Lookup session
+
+    DB-->>S: agentId = 0xAGENT<br/>expiresAt
+
+    S->>S: Check session expiry
+
+    alt Session valid
+        S->>DB: Lookup permissions for 0xAGENT
+        DB-->>S: Local permissions
+
+        alt Permission granted
+            S->>R: Execute requested operation
+            R-->>S: Result
+            S-->>A: 200 Result
+        else Permission missing
+            S-->>A: PERMISSION_REQUIRED / DENIED
+        end
+
+    else Session expired
+        S-->>A: SESSION_EXPIRED
+    end
+```
 
 Rotating or revoking the authenticator blocks *new* authentication once the service observes the changed chain state. An existing session may remain usable until its expiry unless the service checks an authentication epoch or another revocation signal on each request. Immediate invalidation is an open product decision; the prototype must describe whichever behavior it implements. The root EOA can also change delegated code, so services must not treat a prior verification as a permanent guarantee about current account behavior.
 
