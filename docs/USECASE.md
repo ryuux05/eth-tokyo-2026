@@ -8,7 +8,7 @@ Agentic World lets an agent authenticate as a persistent `0xAGENT` across indepe
 
 **Flow:**
 
-1. The human signs a mandate for the specific `0xAGENT` on the intended chain. A service-verifiable signature or human-authorized onchain record proves this approval.
+1. The human sends a transaction to `MandateRegistry.register(0xAGENT, ...)`. The registry stores `principal = msg.sender` after checking an agent-root registration permit.
 2. The agent authenticates to Service A with its own operating signer using the challenge and ERC-1271 flow.
 3. The service verifies the mandate independently of the agent's mutable account storage, then matches its principal `0xHUMAN` to its existing customer record.
 4. The service checks that the principal's subscription is still active **and** that its own policy permits mandated agents to request `dataset.read`.
@@ -54,7 +54,7 @@ This can be automatic *after* the principal has approved the mandate. The mandat
 
 `owner()` is a useful lookup hint, **not by itself proof that the named human approved the agent**. The agent's root EOA can change EIP-7702 delegation; another delegate can write to the same agent storage before switching back to the expected implementation. Therefore, merely pinning the current delegated contract address does not prove how `owner` was set.
 
-For mandate-backed access, the service SDK must verify the principal's approval for the exact agent and chain. The [candidate prototype design](PROTOCOL.md#candidate-user-mandate-proof-for-the-prototype) uses one time-bounded EIP-712 signature from the principal, reusable across services. A shared onchain registry controlled by the principal is an alternative that could support immediate revocation. Until a proof is implemented, the SDK must not label `owner()` as a mandate-verified principal or use it to unlock an existing customer's entitlements. Direct agent grants do not require a mandate.
+For mandate-backed access, the service SDK must verify the principal's approval for the exact agent and chain. The [prototype registry](PROTOCOL.md#onchain-mandate-registration-for-the-prototype) uses the principal's own registration transaction rather than a separate owner signature. Its state is shared and revocable; the agent-root permit prevents someone from registering an agent they do not control. The SDK must not label `owner()` as a mandate-verified principal until the registry record matches. Direct agent grants do not require a mandate.
 
 ## What is not promised
 

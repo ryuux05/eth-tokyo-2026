@@ -1,0 +1,19 @@
+{
+  "name": "agentic-world",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "hardhat build",
+    "test": "hardhat test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-node-test-runner": "^3.1.0",
+    "@nomicfoundation/hardhat-viem": "^3.0.9",
+    "@openzeppelin/contracts": "^5.6.1",
+    "@types/node": "^26.6.2",
+    "hardhat": "^3.18.0",
+    "typescript": "^7.0.2",
+    "viem": "^2.56.9"
+  }
+}

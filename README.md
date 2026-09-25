@@ -4,7 +4,7 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
-Read the [protocol design](docs/PROTOCOL.md) for the authentication flow and trust boundaries, and the [use cases](docs/USECASE.md) for concrete service behavior.
+Read the [protocol design](docs/PROTOCOL.md) for the authentication flow and trust boundaries, the [use cases](docs/USECASE.md) for concrete service behavior, and the [implementation plan](docs/IMPLEMENTATION.md) for the build sequence.
 
 ## Idea
 
@@ -37,10 +37,22 @@ are not part of the core identity protocol.
 
 ## Status
 
-Design and initial repository scaffold. The features above are planned;
-no application or contracts have been implemented in this repository yet.
+The first onchain milestone is implemented locally: `AgentAccount` for EIP-7702
+identity/authenticator management and `MandateRegistry` for principal-approved
+registration and revocation. Contract tests exercise EIP-7702 delegation and
+the authorization flows. The SDK, services, KMS integration, account execution
+policy, and public deployment are not implemented yet.
 
-Development instructions, architecture, tests, and demo details will be added as the project takes shape.
+To run the contract checks:
+
+```sh
+npm install
+npm run build
+npm test
+npm run typecheck
+```
+
+The contract ABI and typed-data details are documented in the [protocol](docs/PROTOCOL.md).
 
 ## Security
 

@@ -29,7 +29,7 @@ The account also governs actions initiated *from the agent account*, such as tok
 - The owner controls lifecycle operations inside the delegated account, including rotating or revoking the authenticator.
 - The authenticator signs routine authentication proofs. Its private key may be held by AWS KMS. It cannot manage identity lifecycle or loosen execution policy.
 
-EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. Because services may accept mandate-backed requests, naming a human or organization as owner must also require that principal's explicit, verifiable approval. Root authorization alone cannot prove the named principal agreed. The exact bootstrap transaction and signatures remain an open design decision. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
+EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. In the prototype, the intended owner sends `initialize(...)` directly to `0xAGENT`, so the delegated code stores `owner = msg.sender`; a root-signed permit also binds that owner, the authenticator, agent address, chain, nonce, and deadline. Services do not rely on this stored owner value alone for mandate-backed access. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
 
 ### Agent creation and bootstrap
 
@@ -42,6 +42,7 @@ sequenceDiagram
     participant C as AgentAccount
     participant K as KMS / Authenticator
     participant E as Ethereum
+    participant M as MandateRegistry
 
     H->>A: Create 0xAGENT
     Note over A: Persistent Agent ID
@@ -55,23 +56,30 @@ sequenceDiagram
 
     Note over A,C: 0xAGENT now executes<br/>AgentAccount code via EIP-7702
 
-    H->>A: Initialize identity
+    H->>A: Send initialize(...) with agent-root permit
     Note over H,A: owner = 0xHUMAN<br/>authenticator = 0xAUTHENTICATOR
-    H->>H: Sign mandate for 0xAGENT
 
     A->>C: Execute initialize(...)
-    C->>C: Verify root authorization and owner consent
-    C->>C: Store owner
+    C->>C: Verify root permit binds msg.sender
+    C->>C: Store owner = msg.sender
     C->>C: Store authenticator
     C->>C: Store createdAt
     C->>C: Mark initialized
 
     Note over A: 0xAGENT is ready
 
+    H->>A: Request agent-root registration permit
+    A-->>H: AgentRegistration signature
+    H->>M: register(0xAGENT, permit)
+    M->>M: Verify agent-root permit
+    M->>M: principalOf(0xAGENT) = msg.sender
+
     H->>K: Grant agent runtime signing access
 ```
 
-The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so the initialized storage belongs to `0xAGENT`. `initialize(...)` must check both root authorization and the named owner's mandate before setting owner and authenticator. But a service **cannot infer historical consent from the current implementation and `owner()` alone**: the root key could temporarily delegate to other code, write a false owner into persistent storage, and switch back. Before mandate-backed access, the service must independently verify the principal's approval, such as an owner-signed mandate for this agent and chain, or an owner-authorized record in a shared onchain registry. The exact proof, expiry, and revocation format remain open. [EIP-7702 storage management](https://eips.ethereum.org/EIPS/eip-7702#storage-management)
+The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so initialized storage belongs to `0xAGENT`. The owner sends both the initialization and registry-registration transactions directly. `msg.sender` proves who sent each transaction, while the separate agent-root permits prove the agent agreed to initialization and registration. The service **cannot infer historical owner consent from the current implementation and `owner()` alone**: the root key could temporarily delegate to other code, write a false owner into persistent storage, and switch back. The registry's record is independent of that storage. [EIP-7702 storage management](https://eips.ethereum.org/EIPS/eip-7702#storage-management)
+
+The bootstrap permit is EIP-712 with domain `name = "Agentic World AgentAccount"`, `version = "1"`, the intended `chainId`, and `verifyingContract = 0xAGENT`. The `0xAGENT` root EOA signs `AgentInitialization(address agent,address owner,address authenticator,uint256 nonce,uint64 deadline)`. `initialize(...)` requires the signed `owner` to equal its actual `msg.sender`, the signed `agent` to equal `address(this)`, the current one-time bootstrap nonce, and an unexpired deadline. The human's transaction and root permit are separate approvals.
 
 ## Reference authentication handshake
 
@@ -100,12 +108,15 @@ sequenceDiagram
     participant K as KMS / Authenticator
     participant S as Service
     participant E as Ethereum / 0xAGENT
+    participant M as MandateRegistry
 
     A->>S: Connect(agentId = 0xAGENT)
 
-    S->>E: Resolve 0xAGENT and optional mandate
-    E-->>S: AgentAccount / owner() / signed mandate / protocol support
-    S->>S: If presented, verify mandate before trusting owner()
+    S->>E: Check delegation pointer; read 0xAGENT.owner()
+    E-->>S: Expected implementation / owner hint
+    S->>M: principalOf(0xAGENT)
+    M-->>S: Registered principal or none
+    S->>S: Trust principal only when registry and owner() match
 
     S->>S: Generate random nonce
     S->>S: Store challenge as unused
@@ -142,7 +153,7 @@ sequenceDiagram
     Note over A,S: Authentication complete
 ```
 
-The service constructs the EIP-712 domain with its expected `chainId` and `verifyingContract = agentId`. The `encodedSignature` call argument is the service's proposed packaging of the signed fields and operating-key signature described below.
+The service constructs the EIP-712 domain with its expected `chainId` and `verifyingContract = agentId`. `encodedSignature` is `abi.encode(AuthProof)` from the contract ABI, containing the signed fields and the operating-key ECDSA signature.
 
 The agent sends this proof to the service:
 
@@ -161,22 +172,22 @@ The EIP-712 digest covers the `AgentAuthentication` fields below. The signature 
 
 ```text
 EIP712Domain {
-    name
-    version
-    chainId
+    name = "Agentic World AgentAccount"
+    version = "1"
+    chainId = expected chain
     verifyingContract = agentId
 }
 
 AgentAuthentication {
-    agentId
-    audience
-    nonce
-    issuedAt
-    expiresAt
+    address agentId
+    bytes32 audienceHash  // keccak256(bytes(canonical audience))
+    bytes32 nonce
+    uint64 issuedAt        // Unix seconds
+    uint64 expiresAt       // Unix seconds
 }
 ```
 
-The service builds the domain from its expected chain and the challenge-bound `agentId`, then recomputes the digest. It does not trust domain fields or a digest supplied by the agent. The exact type string, domain name/version, audience encoding, timestamp units, and clock skew allowance must be frozen before implementation. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+The agent's wire message carries the readable `audience`; the service first checks it against its configured audience and then hashes its canonical bytes into `audienceHash`. The service builds the domain from its expected chain and challenge-bound `agentId`, then recomputes the digest. It does not trust domain fields or a digest supplied by the agent. The prototype contract freezes the typed fields and domain above; the SDK still needs a canonical audience-string rule and clock-skew allowance. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
 
 ### What each verifier checks
 
@@ -193,7 +204,7 @@ Before `eth_call`, the service checks:
 
 The service recomputes the digest from those verified fields and the expected domain. A valid ERC-1271 result is followed by atomic challenge consumption and session issuance.
 
-The service must also establish that `0xAGENT` currently exposes the expected Agentic World authentication behavior. For mandate-backed access, it must separately verify the principal's mandate; current code recognition cannot by itself prove that historical storage writes were authorized. The precise version/discovery mechanism is still open. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
+The prototype SDK must read the EIP-7702 delegation pointer at `0xAGENT` and compare it to its configured implementation address for that chain. It then calls methods at **`0xAGENT`**, not at the implementation address. For mandate-backed access it also reads the separately configured `MandateRegistry`. Pinning the current implementation cannot by itself prove that historical storage writes were authorized. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
 
 The account's ERC-1271 method checks the digest and signature against its current authentication policy. On success it returns the standard magic value `0x1626ba7e`. The method is read-only; it cannot consume the service's challenge. The service therefore consumes the challenge atomically after successful verification, so two concurrent submissions cannot create two sessions from one nonce. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271)
 
@@ -203,7 +214,7 @@ The return value means the account accepts **this signature for this digest in t
 
 This restriction is especially important because v3 also gives the account an execution policy. A generic `isValidSignature(hash, rawOperatingSignature)` implementation would accept any digest signed by the operating key. Another application that accepts ERC-1271 signatures could then treat that key as a broader wallet signer, bypassing the intended account execution boundary.
 
-For the prototype, the service should encode the signed `AgentAuthentication` fields together with the received operating-key ECDSA signature as the ERC-1271 `signature` argument. The account recomputes the allowed typed digest using its own address as `verifyingContract` and the expected chain ID, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. This encoding is a proposed resolution of the open signature-format decision; it needs a concrete test against other ERC-1271 consumers before the ABI is frozen.
+For the prototype, the service ABI-encodes `AuthProof {agentId, audienceHash, nonce, issuedAt, expiresAt, authenticatorSignature}` as the ERC-1271 `signature` argument. The account recomputes the allowed typed digest using its own address as `verifyingContract` and the current chain ID, requires it to equal the supplied `hash`, checks that the authenticator is active, and only then validates the ECDSA signature. The service still verifies its own audience, challenge, and time rules. Malformed envelopes and arbitrary operating-key signatures return the invalid magic value. This behavior has contract-level tests; SDK interoperability still needs testing.
 
 Owner approvals for account actions use a **separate** typed message and replay nonce. The operating authenticator's authentication proof must never double as an owner approval.
 
@@ -261,35 +272,35 @@ Rotating or revoking the authenticator blocks *new* authentication once the serv
 
 After authenticating `0xAGENT`, a service can check a direct local grant for that agent. Alternatively, it can verify a user mandate, match its principal `0xHUMAN` to an existing paid or registered account, and permit the agent to request selected resources on that principal's behalf. The service must explicitly mark those resources as eligible for mandated agents. Neither agent authentication nor the mandate alone grants resource access, and the agent never receives the human's credential.
 
-For example, Service A has already verified that `0xHUMAN` controls its registered address and has an active paid `dataset.read` entitlement. On first connection, Service A authenticates `0xAGENT`, reads `owner() = 0xHUMAN`, and verifies `0xHUMAN`'s mandate for that exact agent and chain. On a dataset request, it checks that the paid entitlement is still active and that its own policy permits mandated agents to request `dataset.read`. It may then serve the data under the agent's *own* short-lived session. Service A can still require a direct agent grant or fresh human approval for `billing.manage`, destructive writes, or any other excluded operation. Service B can make a different choice using the same agent identity and mandate.
+For example, Service A has already verified that `0xHUMAN` controls its registered address and has an active paid `dataset.read` entitlement. On first connection, Service A authenticates `0xAGENT`, reads `owner() = 0xHUMAN`, and confirms `MandateRegistry.principalOf(0xAGENT) = 0xHUMAN`. On a dataset request, it checks that the paid entitlement is still active and that its own policy permits mandated agents to request `dataset.read`. It may then serve the data under the agent's *own* short-lived session. Service A can still require a direct agent grant or fresh human approval for `billing.manage`, destructive writes, or any other excluded operation. Service B can make a different choice using the same agent identity and mandate.
 
-This feature depends on two independent facts: the principal genuinely mandated this agent, and the service intentionally allows the particular request. Neither a self-reported `owner()` nor a pinned current implementation proves the mandate, because another delegate could previously have modified the same storage. A service must verify an owner-signed mandate or an owner-authorized onchain registry record independently of mutable agent storage. The exact mandate-proof and revocation formats remain open. Owner changes must invalidate or bound any cached mandate; a short session only bounds that staleness, while sensitive access may require a fresh onchain check.
+This feature depends on two independent facts: the principal genuinely mandated this agent, and the service intentionally allows the particular request. Neither a self-reported `owner()` nor a pinned current implementation proves the mandate, because another delegate could previously have modified the same storage. The registry record is written by a transaction from the principal, guarded by an agent-root permit, and cannot be rewritten by the agent's EIP-7702 storage operations. The current registry state is shared across services; an existing service session may still cache an older result until expiry unless it rechecks on each request.
 
-### Candidate user-mandate proof for the prototype
+### Onchain mandate registration for the prototype
 
-The simplest portable option is a **one-time EIP-712 mandate signed by the human owner**, separate from the operating authenticator's `AgentAuthentication` proof:
+The owner sends `MandateRegistry.register(agent, nonce, deadline, agentRootSignature)` directly. The registry stores `principalOf(agent) = msg.sender`. The agent root EOA signs this EIP-712 permit, which is separate from the operating authenticator's `AgentAuthentication` proof:
 
 ```text
 EIP712Domain {
-    name = "Agentic World Mandate"
+    name = "Agentic World Mandate Registry"
     version = "1"
     chainId = expected chain
-    verifyingContract = 0xAGENT
+    verifyingContract = MandateRegistry
 }
 
-AgentMandate {
-    agentId:    0xAGENT
-    principal:  0xHUMAN
-    issuedAt:   Unix seconds
-    expiresAt:  Unix seconds
+AgentRegistration {
+    address agent       // 0xAGENT
+    address principal   // must equal registration tx msg.sender
+    uint256 nonce       // current registry nonceOf(agent)
+    uint64 deadline     // Unix seconds
 }
 
-mandateSignature = signature by 0xHUMAN over this typed digest
+agentRootSignature = signature by the 0xAGENT root EOA
 ```
 
-The mandate means: “I recognize this agent as acting on my behalf and permit it to request agent-eligible resources.” It does **not** authorize account spending, transfer the principal's session, or compel any service to grant access. The signature intentionally has **no service audience** so independent services can verify the same mandate; a service can require additional service-specific approval for sensitive access. The agent account can expose the signed fields and signature through a read-only method, but an untrusted agent can also transmit them; neither location makes the claim true. At authentication, each service SDK must reconstruct the digest from its expected chain and challenged `agentId`, check `owner()` matches the signed `principal`, check the validity window, and independently verify that the principal address signed it. For an EOA principal this means recovering the ECDSA signer; contract-wallet principals would require a separate ERC-1271 path. The signed `agentId` and domain's `verifyingContract` must both equal the challenged agent.
+The principal's transaction is the approval: no separate EIP-712 owner signature is needed for direct registration. The agent-root permit binds the agent, principal, registry, chain, nonce, and deadline so someone else cannot register the agent first. The registry rejects duplicate registrations; only the current principal can call `revoke(agent)`. After revocation, its nonce advances, so an old registration permit cannot be replayed. A relayer would change `msg.sender`, so relayed registration requires a future principal-signed variant.
 
-Only after that check may the SDK expose the address as a *mandate-verified principal* and let service code use it for mandate-backed access. Its session must expire no later than the mandate. Reusing the same signature at multiple services is intentional; replay **after withdrawal but before expiry** remains a risk. A short expiry bounds that risk for the demo, while immediate cross-service revocation needs additional principal-controlled onchain state, such as a mandate registry. The format and revocation design above are a candidate, not yet a finalized ABI.
+The registry means: “This principal approved this agent as acting on their behalf.” It does **not** authorize account spending, transfer the principal's session, or compel any service to grant access. At authentication, the SDK checks the expected registry address, reads the active `principalOf(agent)`, and compares it to `0xAGENT.owner()`. Only then may it expose a *mandate-verified principal* to service code. Revocation updates the shared onchain fact immediately; an already-issued session remains bounded by the service's chosen lifetime unless the service rechecks registry state on each request.
 
 ## Per-request authentication
 
@@ -313,4 +324,4 @@ The owner alone may change the execution policy and operating authenticator. App
 
 ## Decisions still open
 
-The handoff leaves protocol discovery/versioning, secure bootstrap mechanics, independent mandate proof and revocation, the final EIP-712 field types and encoding, optional authenticator expiry and epoch, session lifetime/revocation behavior, and the account execution ABI to be finalized. The proof fields and verification checks above are the expected authentication path; they do not settle those remaining implementation details by implication.
+The first contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, and an owner-transaction mandate registry. The remaining decisions include audience canonicalization, SDK signature-envelope interoperability, optional authenticator expiry and epoch, session freshness/revocation behavior, deployment networks and addresses, and the account execution ABI. The contract choices above are prototype choices until the SDK and independent-service demo validate them end to end.
