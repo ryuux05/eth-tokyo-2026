@@ -1,12 +1,18 @@
 # Agentic World protocol
 
-Agentic World gives an autonomous agent a persistent Ethereum identity that independent services can authenticate. The agent does not need its human owner's OAuth token, API key, or service session.
+Agents need to act under a user's authority without becoming the user. Giving an agent the user's OAuth token, API key, or session collapses the distinction between principal and agent. Agentic World gives the agent its own persistent Ethereum identity and lets independent services recognize it as acting under a user-approved mandate.
 
 This document describes the protocol intended for the ETHGlobal Tokyo 2026 prototype. The handoff's unresolved choices remain open where marked below.
 
 ## Responsibility boundary
 
-Ethereum and the agent account provide a shared identity and a way to check its current authentication authority. Each service decides whether the agent may use its resources. Services maintain their own registration, access rules, challenge records, payments, and sessions. They can verify the agent through Ethereum without an Agentic World authentication server.
+The protocol separates three facts:
+
+1. **Agent identity:** `0xAGENT` proves who is making the request.
+2. **User mandate:** `0xHUMAN` explicitly approves that agent to act on their behalf, proven independently of the agent's self-reported `owner()` value. The mandate establishes the relationship; it is not the human's login or a blanket resource grant.
+3. **Service authorization:** Each service decides which requests, if any, that mandated agent may make using its own customer accounts, subscriptions, and access policy.
+
+Ethereum and the agent account provide a shared identity and a way to check current authentication authority. A portable mandate can prove the principal–agent relationship to independent services. A service may grant access directly to `0xAGENT` or permit mandate-backed requests for selected resources already available to the principal. Services maintain their own registration, access rules, challenge records, payments, and sessions. They can verify the agent and mandate without an Agentic World authentication server.
 
 The account also governs actions initiated *from the agent account*, such as token payments. That execution policy is separate from a service's resource access policy.
 
@@ -23,7 +29,7 @@ The account also governs actions initiated *from the agent account*, such as tok
 - The owner controls lifecycle operations inside the delegated account, including rotating or revoking the authenticator.
 - The authenticator signs routine authentication proofs. Its private key may be held by AWS KMS. It cannot manage identity lifecycle or loosen execution policy.
 
-EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. The exact bootstrap transaction and signatures remain an open design decision. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
+EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. Because services may accept mandate-backed requests, naming a human or organization as owner must also require that principal's explicit, verifiable approval. Root authorization alone cannot prove the named principal agreed. The exact bootstrap transaction and signatures remain an open design decision. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
 
 ### Agent creation and bootstrap
 
@@ -51,9 +57,10 @@ sequenceDiagram
 
     H->>A: Initialize identity
     Note over H,A: owner = 0xHUMAN<br/>authenticator = 0xAUTHENTICATOR
+    H->>H: Sign mandate for 0xAGENT
 
     A->>C: Execute initialize(...)
-    C->>C: Verify initialization authorization
+    C->>C: Verify root authorization and owner consent
     C->>C: Store owner
     C->>C: Store authenticator
     C->>C: Store createdAt
@@ -64,7 +71,7 @@ sequenceDiagram
     H->>K: Grant agent runtime signing access
 ```
 
-The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so the initialized storage belongs to `0xAGENT`. `initialize(...)` must check authorization from the root EOA key before setting owner and authenticator; the exact signed bootstrap format remains open.
+The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so the initialized storage belongs to `0xAGENT`. `initialize(...)` must check both root authorization and the named owner's mandate before setting owner and authenticator. But a service **cannot infer historical consent from the current implementation and `owner()` alone**: the root key could temporarily delegate to other code, write a false owner into persistent storage, and switch back. Before mandate-backed access, the service must independently verify the principal's approval, such as an owner-signed mandate for this agent and chain, or an owner-authorized record in a shared onchain registry. The exact proof, expiry, and revocation format remain open. [EIP-7702 storage management](https://eips.ethereum.org/EIPS/eip-7702#storage-management)
 
 ## Reference authentication handshake
 
@@ -96,8 +103,9 @@ sequenceDiagram
 
     A->>S: Connect(agentId = 0xAGENT)
 
-    S->>E: Resolve 0xAGENT
-    E-->>S: AgentAccount / owner() / protocol support
+    S->>E: Resolve 0xAGENT and optional mandate
+    E-->>S: AgentAccount / owner() / signed mandate / protocol support
+    S->>S: If presented, verify mandate before trusting owner()
 
     S->>S: Generate random nonce
     S->>S: Store challenge as unused
@@ -128,7 +136,7 @@ sequenceDiagram
 
     S->>S: Atomically consume nonce
     S->>S: Generate random session token
-    S->>S: Store H(token) → 0xAGENT
+    S->>S: Store H(token) → agentId, optional principal, expiry
     S-->>A: Session token (~60 sec)
 
     Note over A,S: Authentication complete
@@ -185,7 +193,7 @@ Before `eth_call`, the service checks:
 
 The service recomputes the digest from those verified fields and the expected domain. A valid ERC-1271 result is followed by atomic challenge consumption and session issuance.
 
-The service must also establish that `0xAGENT` currently exposes the expected Agentic World behavior. The precise version/discovery mechanism is still open. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
+The service must also establish that `0xAGENT` currently exposes the expected Agentic World authentication behavior. For mandate-backed access, it must separately verify the principal's mandate; current code recognition cannot by itself prove that historical storage writes were authorized. The precise version/discovery mechanism is still open. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
 
 The account's ERC-1271 method checks the digest and signature against its current authentication policy. On success it returns the standard magic value `0x1626ba7e`. The method is read-only; it cannot consume the service's challenge. The service therefore consumes the challenge atomically after successful verification, so two concurrent submissions cannot create two sessions from one nonce. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271)
 
@@ -205,7 +213,7 @@ When AWS KMS signs an already computed EIP-712 digest, its request must use `Mes
 
 ### Session and revocation semantics
 
-A successful handshake may produce a short-lived, opaque service-local session. A 60-second lifetime is a demo default, not a protocol rule. The token is a cached authentication result, not the agent's identity or a grant of resource access; the service checks its own permissions on use.
+A successful handshake may produce a short-lived, opaque service-local session. A 60-second lifetime is a demo default, not a protocol rule. The service may cache a *mandate-verified* principal address with the agent ID in that session. The token is a cached authentication result, not the agent's identity, mandate, or a grant of resource access; the service checks its own policy and the principal's current service-side entitlement on use.
 
 ### Requests after session creation
 
@@ -223,15 +231,18 @@ sequenceDiagram
     S->>S: Hash token
     S->>DB: Lookup session
 
-    DB-->>S: agentId = 0xAGENT<br/>expiresAt
+    DB-->>S: agentId = 0xAGENT<br/>verifiedPrincipal = 0xHUMAN or none<br/>expiresAt
 
     S->>S: Check session expiry
 
     alt Session valid
-        S->>DB: Lookup permissions for 0xAGENT
-        DB-->>S: Local permissions
+        S->>DB: Lookup direct grant for 0xAGENT
+        DB-->>S: Direct grant or none
+        S->>DB: If mandated, check principal's account and paid entitlement
+        DB-->>S: Active principal entitlement or none
+        S->>S: Apply service policy for mandate-backed requests
 
-        alt Permission granted
+        alt Direct or mandate-backed access allowed
             S->>R: Execute requested operation
             R-->>S: Result
             S-->>A: 200 Result
@@ -246,11 +257,39 @@ sequenceDiagram
 
 Rotating or revoking the authenticator blocks *new* authentication once the service observes the changed chain state. An existing session may remain usable until its expiry unless the service checks an authentication epoch or another revocation signal on each request. Immediate invalidation is an open product decision; the prototype must describe whichever behavior it implements. The root EOA can also change delegated code, so services must not treat a prior verification as a permanent guarantee about current account behavior.
 
-## Authorization and owner association
+## User mandate and service authorization
 
-After authentication, the service can look up its own registration, permissions, subscription, or paid access grant for `0xAGENT`. Authentication alone grants no resource access.
+After authenticating `0xAGENT`, a service can check a direct local grant for that agent. Alternatively, it can verify a user mandate, match its principal `0xHUMAN` to an existing paid or registered account, and permit the agent to request selected resources on that principal's behalf. The service must explicitly mark those resources as eligible for mandated agents. Neither agent authentication nor the mandate alone grants resource access, and the agent never receives the human's credential.
 
-The account may expose `owner() -> 0xHUMAN` so a service can identify a possible relationship with an existing human account. The service must decide how it establishes the human's consent before linking privileged access; the getter alone must not cause the agent to inherit the human's permissions.
+For example, Service A has already verified that `0xHUMAN` controls its registered address and has an active paid `dataset.read` entitlement. On first connection, Service A authenticates `0xAGENT`, reads `owner() = 0xHUMAN`, and verifies `0xHUMAN`'s mandate for that exact agent and chain. On a dataset request, it checks that the paid entitlement is still active and that its own policy permits mandated agents to request `dataset.read`. It may then serve the data under the agent's *own* short-lived session. Service A can still require a direct agent grant or fresh human approval for `billing.manage`, destructive writes, or any other excluded operation. Service B can make a different choice using the same agent identity and mandate.
+
+This feature depends on two independent facts: the principal genuinely mandated this agent, and the service intentionally allows the particular request. Neither a self-reported `owner()` nor a pinned current implementation proves the mandate, because another delegate could previously have modified the same storage. A service must verify an owner-signed mandate or an owner-authorized onchain registry record independently of mutable agent storage. The exact mandate-proof and revocation formats remain open. Owner changes must invalidate or bound any cached mandate; a short session only bounds that staleness, while sensitive access may require a fresh onchain check.
+
+### Candidate user-mandate proof for the prototype
+
+The simplest portable option is a **one-time EIP-712 mandate signed by the human owner**, separate from the operating authenticator's `AgentAuthentication` proof:
+
+```text
+EIP712Domain {
+    name = "Agentic World Mandate"
+    version = "1"
+    chainId = expected chain
+    verifyingContract = 0xAGENT
+}
+
+AgentMandate {
+    agentId:    0xAGENT
+    principal:  0xHUMAN
+    issuedAt:   Unix seconds
+    expiresAt:  Unix seconds
+}
+
+mandateSignature = signature by 0xHUMAN over this typed digest
+```
+
+The mandate means: “I recognize this agent as acting on my behalf and permit it to request agent-eligible resources.” It does **not** authorize account spending, transfer the principal's session, or compel any service to grant access. The signature intentionally has **no service audience** so independent services can verify the same mandate; a service can require additional service-specific approval for sensitive access. The agent account can expose the signed fields and signature through a read-only method, but an untrusted agent can also transmit them; neither location makes the claim true. At authentication, each service SDK must reconstruct the digest from its expected chain and challenged `agentId`, check `owner()` matches the signed `principal`, check the validity window, and independently verify that the principal address signed it. For an EOA principal this means recovering the ECDSA signer; contract-wallet principals would require a separate ERC-1271 path. The signed `agentId` and domain's `verifyingContract` must both equal the challenged agent.
+
+Only after that check may the SDK expose the address as a *mandate-verified principal* and let service code use it for mandate-backed access. Its session must expire no later than the mandate. Reusing the same signature at multiple services is intentional; replay **after withdrawal but before expiry** remains a risk. A short expiry bounds that risk for the demo, while immediate cross-service revocation needs additional principal-controlled onchain state, such as a mandate registry. The format and revocation design above are a candidate, not yet a finalized ABI.
 
 ## Per-request authentication
 
@@ -267,9 +306,11 @@ The owner alone may change the execution policy and operating authenticator. App
 - The same `0xAGENT` authenticates independently to two services using one operating key, without sharing their challenge or session databases.
 - A proof issued for Service A fails at Service B; an expired or already consumed challenge fails at Service A.
 - The service denies a resource when its local permission is absent, even after successful authentication.
+- A registered and paid principal can mandate an agent to request a service-approved resource without giving the agent human credentials; a request excluded by service policy is still denied.
+- An agent that merely claims someone else's paid address through an untrusted `owner()` implementation cannot establish that person's mandate.
 - After the owner rotates the authenticator, the old key cannot create a new session and the new key can, while `0xAGENT` remains unchanged.
 - The operating key cannot approve an owner-only action or expand its own execution limits.
 
 ## Decisions still open
 
-The handoff leaves protocol discovery/versioning, secure bootstrap mechanics, the final EIP-712 field types and encoding, optional authenticator expiry and epoch, session lifetime/revocation behavior, and the account execution ABI to be finalized. The proof fields and verification checks above are the expected authentication path; they do not settle those remaining implementation details by implication.
+The handoff leaves protocol discovery/versioning, secure bootstrap mechanics, independent mandate proof and revocation, the final EIP-712 field types and encoding, optional authenticator expiry and epoch, session lifetime/revocation behavior, and the account execution ABI to be finalized. The proof fields and verification checks above are the expected authentication path; they do not settle those remaining implementation details by implication.
