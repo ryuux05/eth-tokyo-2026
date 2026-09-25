@@ -4,6 +4,8 @@ pragma solidity ^0.8.28;
 import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+import {PolicyEngine} from "./PolicyEngine.sol";
 
 /// @notice EIP-7702 implementation called at each persistent agent EOA address.
 /// @dev It contains no global service permissions. State is stored at 0xAGENT.
@@ -17,6 +19,9 @@ contract AgentAccount is EIP712, IERC1271 {
     bytes32 private constant _AUTHENTICATION_TYPEHASH = keccak256(
         "AgentAuthentication(address agentId,bytes32 audienceHash,bytes32 nonce,uint64 issuedAt,uint64 expiresAt)"
     );
+    bytes32 private constant _OWNER_ACTION_TYPEHASH = keccak256(
+        "OwnerActionApproval(address agent,uint256 chainId,address target,uint256 value,bytes32 dataHash,bytes32 policyHash,uint256 policyRevision,uint256 nonce,uint64 deadline)"
+    );
     bytes32 private constant _STATE_SLOT = keccak256("agentic.world.agent.account.storage.v1");
 
     address private immutable _implementationAddress;
@@ -28,6 +33,11 @@ contract AgentAccount is EIP712, IERC1271 {
         bool initialized;
         bool authRevoked;
         uint256 bootstrapNonce;
+        bytes policy;
+        bytes32 policyHash;
+        uint256 policyRevision;
+        uint256 ownerApprovalNonce;
+        bool executing;
     }
 
     /// @dev The signature argument to ERC-1271 is abi.encode(AuthProof).
@@ -40,6 +50,12 @@ contract AgentAccount is EIP712, IERC1271 {
         bytes authenticatorSignature;
     }
 
+    struct OwnerApproval {
+        uint256 nonce;
+        uint64 deadline;
+        bytes signature;
+    }
+
     error NotDelegated();
     error AlreadyInitialized();
     error NotInitialized();
@@ -50,11 +66,21 @@ contract AgentAccount is EIP712, IERC1271 {
     error InvalidRootSignature();
     error AuthenticationIsRevoked();
     error AuthenticationNotRevoked();
+    error NotAuthenticator();
+    error PolicyDenied();
+    error OwnerSignatureRequired();
+    error InvalidOwnerSignature();
+    error ApprovalExpired();
+    error InvalidApprovalNonce();
+    error ExecutionFailed();
+    error ReentrantExecution();
 
     event AgentInitialized(address indexed agent, address indexed owner, address indexed authenticator);
     event AuthenticatorRotated(address indexed agent, address indexed authenticator);
     event AuthenticationRevoked(address indexed agent);
     event AuthenticationRestored(address indexed agent, address indexed authenticator);
+    event PolicyUpdated(bytes32 indexed policyHash);
+    event ActionExecuted(address indexed target, uint256 value, bytes4 selector, PolicyEngine.Decision decision);
 
     constructor() EIP712("Agentic World AgentAccount", "1") {
         _implementationAddress = address(this);
@@ -128,6 +154,22 @@ contract AgentAccount is EIP712, IERC1271 {
         return _state().authRevoked;
     }
 
+    function policy() external view onlyDelegated returns (bytes memory) {
+        return _state().policy;
+    }
+
+    function policyHash() external view onlyDelegated returns (bytes32) {
+        return _state().policyHash;
+    }
+
+    function policyRevision() external view onlyDelegated returns (uint256) {
+        return _state().policyRevision;
+    }
+
+    function ownerApprovalNonce() external view onlyDelegated returns (uint256) {
+        return _state().ownerApprovalNonce;
+    }
+
     function protocolVersion() external pure returns (uint64) {
         return 1;
     }
@@ -154,6 +196,65 @@ contract AgentAccount is EIP712, IERC1271 {
         state.authRevoked = false;
         emit AuthenticationRestored(address(this), newAuthenticator);
     }
+
+    /// @notice The owner sets a versioned, canonical ABI policy at 0xAGENT.
+    function setPolicy(bytes calldata newPolicy) external onlyDelegated onlyOwner {
+        PolicyEngine.validate(newPolicy);
+        State storage state = _state();
+        state.policy = newPolicy;
+        state.policyHash = keccak256(newPolicy);
+        state.policyRevision += 1;
+        emit PolicyUpdated(state.policyHash);
+    }
+
+    function evaluateAction(address target, uint256 value, bytes calldata data)
+        external view onlyDelegated returns (PolicyEngine.Decision)
+    {
+        return PolicyEngine.evaluate(_state().policy, target, value, data);
+    }
+
+    /// @notice Only the current operating signer can request execution.
+    /// @dev Native ETH value is spent from 0xAGENT's balance, not msg.value.
+    function execute(address target, uint256 value, bytes calldata data, OwnerApproval calldata approval)
+        external onlyDelegated returns (bytes memory result)
+    {
+        State storage state = _state();
+        if (!state.initialized || state.authRevoked || msg.sender != state.authenticator) revert NotAuthenticator();
+        if (state.executing) revert ReentrantExecution();
+        state.executing = true;
+
+        PolicyEngine.Decision decision = PolicyEngine.evaluate(state.policy, target, value, data);
+        if (decision == PolicyEngine.Decision.DENY) revert PolicyDenied();
+        if (decision == PolicyEngine.Decision.REQUIRE_OWNER_SIGNATURE) {
+            if (approval.signature.length == 0) revert OwnerSignatureRequired();
+            if (block.timestamp > approval.deadline) revert ApprovalExpired();
+            if (approval.nonce != state.ownerApprovalNonce) revert InvalidApprovalNonce();
+            bytes32 structHash = keccak256(abi.encode(
+                _OWNER_ACTION_TYPEHASH,
+                address(this),
+                block.chainid,
+                target,
+                value,
+                keccak256(data),
+                state.policyHash,
+                state.policyRevision,
+                approval.nonce,
+                approval.deadline
+            ));
+            if (!SignatureChecker.isValidSignatureNowCalldata(
+                state.owner, _hashTypedDataV4(structHash), approval.signature
+            )) revert InvalidOwnerSignature();
+            state.ownerApprovalNonce = approval.nonce + 1;
+        }
+
+        (bool success, bytes memory returned) = target.call{value: value}(data);
+        if (!success) revert ExecutionFailed();
+        state.executing = false;
+        emit ActionExecuted(target, value, data.length >= 4 ? bytes4(data[:4]) : bytes4(0), decision);
+        return returned;
+    }
+
+    receive() external payable onlyDelegated {}
 
     /// @inheritdoc IERC1271
     /// @dev Only an EIP-712 AgentAuthentication proof is recognized. Arbitrary
