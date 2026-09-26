@@ -269,6 +269,31 @@ func run(args []string) error {
 		return errors.New("expected provision, public-key, sign-challenge, or sign-request with a key label")
 	}
 	command, label := args[0], args[1]
+	if command == "sign-execution" || command == "hash-execution" {
+		var input executionRequest
+		if err := readJSON(16384, &input); err != nil {
+			return err
+		}
+		if input.Label != label {
+			return errors.New("key label mismatch")
+		}
+		hash, err := executionDigest(input)
+		if err != nil {
+			return err
+		}
+		if command == "hash-execution" {
+			return output(map[string]any{"digest": hexBytes(hash)})
+		}
+		signature, err := platformSign(label, hash)
+		if err != nil {
+			return err
+		}
+		signature, err = lowS(signature)
+		if err != nil {
+			return err
+		}
+		return output(map[string]any{"digest": hexBytes(hash), "signature": hexBytes(signature)})
+	}
 	if command == "provision" {
 		qx, qy, err := platformProvision(label)
 		if err != nil {

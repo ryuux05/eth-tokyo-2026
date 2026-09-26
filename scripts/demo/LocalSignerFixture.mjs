@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { p256 } from "@noble/curves/nist.js";
 import { toBytes } from "viem";
 import { createAgentSdk } from "../../sdk/agent.js";
+import { executionDigest } from "../../sdk/payments.js";
 
 const [command, label] = process.argv.slice(2);
 const rotating = label?.startsWith("agentic-world-");
@@ -22,6 +23,15 @@ if (command === "public-key" || command === "provision") {
   const proof = await signer.signRequest({ method: input.method, target: input.target,
     body: Buffer.from(input.bodyBase64, "base64") }, input.audience);
   console.log(JSON.stringify(label === "tampered" ? { ...proof, target: "/tampered" } : proof));
+} else if (command === "sign-execution") {
+  const input = JSON.parse(readFileSync(0, "utf8"));
+  if (input.kind !== "AgentExecution" || input.label !== label) process.exit(1);
+  const op = input.userOperation;
+  const digest = executionDigest(input.chainId, input.entryPoint, { sender: op.sender, nonce: BigInt(op.nonce), callData: op.callData,
+    verificationGasLimit: BigInt(op.accountGasLimits.slice(0, 34)), callGasLimit: BigInt(`0x${op.accountGasLimits.slice(34)}`),
+    preVerificationGas: BigInt(op.preVerificationGas), maxPriorityFeePerGas: BigInt(op.gasFees.slice(0, 34)),
+    maxFeePerGas: BigInt(`0x${op.gasFees.slice(34)}`), signature: "0x" }, input.validUntil);
+  console.log(JSON.stringify({ digest, signature: hex(p256.sign(toBytes(digest), secret, { prehash: false }).toCompactRawBytes()) }));
 } else if (command === "sign-challenge") {
   const input = JSON.parse(readFileSync(0, "utf8"));
   if (input.kind !== "AgentAuthentication" || input.label !== label) process.exit(1);
