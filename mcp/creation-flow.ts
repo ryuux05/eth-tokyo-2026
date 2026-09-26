@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Address, Hex } from "viem";
+import { openDefaultBrowser } from "./open-browser.js";
 
 export type CreationIntent = { predictedAgent: Address; transaction: { chainId: number; from: Address; to: Address; value: string; data: Hex } };
 
@@ -15,16 +15,6 @@ type FlowOptions = {
   openBrowser?: (url: string) => Promise<void>;
   timeoutMs?: number;
 };
-
-async function defaultOpenBrowser(url: string): Promise<void> {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : undefined;
-  if (!command) throw new Error("Automatic browser opening currently requires macOS or Windows");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, [url], { stdio: "ignore" });
-    child.once("error", reject);
-    child.once("exit", code => code === 0 ? resolve() : reject(new Error("Could not open the default browser")));
-  });
-}
 
 /** A single-use, loopback-only wallet approval page. Its secret URL never leaves MCP. */
 export async function runCreationFlow(options: FlowOptions): Promise<Address> {
@@ -95,7 +85,7 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
   base = `http://127.0.0.1:${address.port}`;
   const timer = setTimeout(() => fail(new Error("Identity creation timed out; call the tool again to retry")), options.timeoutMs ?? 300_000);
   try {
-    await (options.openBrowser ?? defaultOpenBrowser)(`${base}/flow/${token}`);
+    await (options.openBrowser ?? openDefaultBrowser)(`${base}/flow/${token}`);
     return await outcome;
   } finally {
     clearTimeout(timer);

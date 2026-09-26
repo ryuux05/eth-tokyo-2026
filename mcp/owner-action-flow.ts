@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Address, Hex } from "viem";
+import { openDefaultBrowser } from "./open-browser.js";
 
 export type OwnerActionIntent = {
   action: "policy" | "rotate" | "revoke";
@@ -22,16 +22,6 @@ type Options<T> = {
   openBrowser?: (url: string) => Promise<void>;
   timeoutMs?: number;
 };
-
-async function openDefaultBrowser(url: string): Promise<void> {
-  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : undefined;
-  if (!command) throw new Error("Automatic browser opening currently requires macOS or Windows");
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(command, [url], { stdio: "ignore" });
-    child.once("error", reject);
-    child.once("exit", code => code === 0 ? resolve() : reject(new Error("Could not open the default browser")));
-  });
-}
 
 /** One-time loopback approval; only the owner wallet can submit the prepared transaction. */
 export async function runOwnerActionFlow<T>(options: Options<T>): Promise<{ hash: Hex; state: T }> {
