@@ -17,9 +17,10 @@ type FlowOptions = {
 };
 
 async function defaultOpenBrowser(url: string): Promise<void> {
-  if (process.platform !== "darwin") throw new Error("Automatic browser opening currently requires macOS");
+  const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : undefined;
+  if (!command) throw new Error("Automatic browser opening currently requires macOS or Windows");
   await new Promise<void>((resolve, reject) => {
-    const child = spawn("open", [url], { stdio: "ignore" });
+    const child = spawn(command, [url], { stdio: "ignore" });
     child.once("error", reject);
     child.once("exit", code => code === 0 ? resolve() : reject(new Error("Could not open the default browser")));
   });

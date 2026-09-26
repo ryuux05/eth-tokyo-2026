@@ -16,8 +16,8 @@ let serviceBPort = 8797;
 let rpcUrl = `http://127.0.0.1:${rpcPort}`;
 const configPath = resolve(root, ".agentic-world.demo.json");
 const statePath = resolve(root, ".agentic-world.demo-state.json");
-const signerPath = resolve(root, "dist/signer/agentic-signer");
-const hardhatPath = resolve(root, "node_modules/.bin/hardhat");
+const signerPath = resolve(root, `dist/signer/agentic-signer${process.platform === "win32" ? ".exe" : ""}`);
+const hardhatPath = resolve(root, "node_modules/hardhat/dist/src/cli.js");
 const signerLabel = process.env.AGENTIC_DEMO_SIGNER_LABEL ?? "agentic-world-demo";
 const createdP256 = parseAbiItem("event AgentCreatedP256(address indexed agent,address indexed owner,bytes32 qx,bytes32 qy)");
 
@@ -32,7 +32,10 @@ let runtimeDeployment: Deployment | undefined;
 let runtimeAgent: Address | undefined;
 
 async function run(command: string, args: string[], capture = false): Promise<string> {
-  const child = spawn(command, args, { cwd: root, env: { ...process.env, DEMO_RPC_URL: rpcUrl },
+  const windowsNpm = process.platform === "win32" && command === "npm";
+  const child = spawn(windowsNpm ? (process.env.ComSpec ?? "cmd.exe") : command,
+    windowsNpm ? ["/d", "/s", "/c", "npm run build:demo"] : args,
+    { cwd: root, env: { ...process.env, DEMO_RPC_URL: rpcUrl },
     stdio: capture ? ["ignore", "pipe", "pipe"] : "inherit" });
   let output = "";
   if (capture) {
@@ -82,7 +85,7 @@ async function writeMcpConfig(deployment: Deployment, agentId?: Address): Promis
   const value = { rpcUrl, chainId: deployment.chainId, factory: deployment.factory,
     implementation: deployment.implementation, deploymentBlockNumber: deployment.deploymentBlockNumber,
     deploymentBlockHash: deployment.deploymentBlockHash, ...(agentId ? { agentId } : {}),
-    signer: { kind: "secure-enclave", binaryPath: signerPath, label: signerLabel } };
+    signer: { kind: process.platform === "win32" ? "windows-tpm" : "secure-enclave", binaryPath: signerPath, label: signerLabel } };
   const temp = `${configPath}.${randomBytes(4).toString("hex")}.tmp`;
   await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
   await rename(temp, configPath);
@@ -121,7 +124,7 @@ try {
   rpcUrl = `http://127.0.0.1:${rpcPort}`;
   process.stdout.write("Building contracts, Service A, and Service B…\n");
   await run("npm", ["run", "build:demo"]);
-  node = spawn(hardhatPath, ["node", "--hostname", "127.0.0.1", "--port", String(rpcPort)],
+  node = spawn(process.execPath, [hardhatPath, "node", "--hostname", "127.0.0.1", "--port", String(rpcPort)],
     { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   let nodeOutput = "";
   const capture = (chunk: Buffer) => { nodeOutput = (nodeOutput + chunk.toString()).slice(-4000); };
@@ -129,7 +132,7 @@ try {
   try { await waitForNode(node); }
   catch (error) { throw new Error(`${error instanceof Error ? error.message : String(error)}\n${nodeOutput}`); }
   process.stdout.write("Deploying EntryPoint and AgentAccountFactory…\n");
-  const output = await run(hardhatPath, ["run", "--no-compile", "scripts/deploy-local-service.ts", "--network", "localhost"], true);
+  const output = await run(process.execPath, [hardhatPath, "run", "--no-compile", "scripts/deploy-local-service.ts", "--network", "localhost"], true);
   const line = output.split("\n").find(item => item.startsWith("LOCAL_DEPLOYMENT "));
   if (!line) throw new Error(`Deployment did not return addresses:\n${output}`);
   const deployment = JSON.parse(line.slice("LOCAL_DEPLOYMENT ".length)) as Deployment;
@@ -176,7 +179,7 @@ try {
   process.stdout.write("npm run build:mcp\nnpm run build:signer\n");
   process.stdout.write(`Then register MCP in Codex once:\n`);
   process.stdout.write(`codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG=${configPath} -- node ${resolve(root, "dist/mcp/server.js")}\n\n`);
-  process.stdout.write(`The first no-argument agentic_create_identity call creates or reuses the Secure Enclave key '${signerLabel}'.\n`);
+  process.stdout.write(`The first no-argument agentic_create_identity call creates or reuses the ${process.platform === "win32" ? "TPM" : "Secure Enclave"} key '${signerLabel}'.\n`);
   process.stdout.write("Ask the skill to create your identity. Its one-time localhost page opens your browser; connect your owner wallet and confirm the factory transaction. Ctrl+C stops the demo.\n");
 } catch (error) {
   process.stderr.write(`Demo startup failed: ${error instanceof Error ? error.message : String(error)}\n`);

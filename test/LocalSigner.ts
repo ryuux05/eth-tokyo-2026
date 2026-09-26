@@ -10,7 +10,7 @@ import { authenticationDigest, requestAuthenticationDigest, type AuthenticationC
 import { signLocalChallenge, signLocalRequest, signerPublicKey } from "../mcp/local-signer.js";
 
 describe("Local signer bridge", () => {
-  it("checks the structured proof returned by a separate signer process", async () => {
+  it("checks the structured proof returned by a separate signer process", { skip: process.platform === "win32" ? "POSIX fixture launcher; Windows TPM helper has separate protocol-vector tests" : false }, async () => {
     const temporary = await mkdtemp(join(tmpdir(), "agentic-signer-test-"));
     try {
       const fixture = fileURLToPath(new URL("../scripts/demo/LocalSignerFixture.mjs", import.meta.url));

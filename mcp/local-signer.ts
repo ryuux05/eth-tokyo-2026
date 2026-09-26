@@ -7,7 +7,10 @@ type PublicKey = { scheme: "p256"; qx: Hex; qy: Hex };
 
 async function invoke(config: SignerConfig, command: "provision" | "public-key" | "sign-request" | "sign-challenge", input?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const child = spawn(config.binaryPath, [command, config.label], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } });
+    const env = process.platform === "win32"
+      ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH }
+      : { PATH: "/usr/bin:/bin" };
+    const child = spawn(config.binaryPath, [command, config.label], { stdio: ["pipe", "pipe", "pipe"], env });
     const stdout: Buffer[] = [];
     let outputSize = 0;
     const timer = setTimeout(() => { child.kill("SIGKILL"); reject(new Error("Local signer timed out")); }, 15_000);
@@ -40,7 +43,7 @@ export async function signerPublicKey(config: SignerConfig): Promise<PublicKey> 
 export async function ensureSignerPublicKey(config: SignerConfig): Promise<PublicKey> {
   try { return await signerPublicKey(config); }
   catch {
-    // The Swift helper refuses to overwrite an existing label. If another process
+    // Both hardware helpers refuse to overwrite an existing label. If another process
     // provisioned it meanwhile, reading the key again is safe.
     try { await invoke(config, "provision"); }
     catch { return signerPublicKey(config); }
