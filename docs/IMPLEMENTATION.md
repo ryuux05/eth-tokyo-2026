@@ -6,15 +6,15 @@ The v0 account uses ERC-4337 for UserOperation validation and execution and a de
 
 | Layer | Implemented locally | Remaining completion gate |
 | --- | --- | --- |
-| Account and modules | `AgentAccount4337`, `AgentAccountFactory`, `AgentValidator`, `AgentPolicyHook`, `PolicyEngine`; deterministic initialized clone, P-256 or secp256k1 validator, owner-only lifecycle, fixed modules, ERC-1271, default-deny single-call policy; local EntryPoint v0.8 operation test | Integrate a bundler, then deploy and verify trusted addresses on the chosen chain; security review |
-| Core SDK | Shared account/factory ABIs, typed request/challenge/owner-approval data, clone-code check, policy encoding, execution calldata encoder | Version a deployment manifest and test against live deployed bytecode |
+| Account and modules | Deterministic initialized clones, P-256 validator, owner-only lifecycle, fixed modules, ERC-1271, default-deny policy; source adds management-target isolation and ERC-165 | Redeploy the corrected source on Sepolia and update pins; bundler integration and security review |
+| Core SDK | Shared ABIs, proof types, clone-code check, policy and execution encoders, pinned Sepolia deployment | Publish/version the SDK and update the deployment manifest after redeployment |
 | Agent SDK | Injected digest signer, challenge and legacy request proofs, `userOpHash` signing helper; local P-256 Secure Enclave challenge signer | Test physical-key signing and add a complete UserOperation build/fund/submit/receipt path |
 | Service SDK | `AgenticWorld` manual/owner association, pinned account-code and ERC-1271 checks, `createChallenge`, atomic challenge consumption, admission callback, local session interface | Durable atomic stores, HTTP middleware, service-specific permissions, reorg/freshness policy |
-| Owner portal | Create/verify a clone, inspect modules and owner, rotate/revoke/restore signer, edit and preview onchain policy | Configure real trusted deployment addresses and test wallet flow on the target network |
+| Owner portal | Sepolia pins, MCP-hosted identity list and aliases, create/verify account, signer management, onchain policy editor | Hands-on wallet-extension and hardware validation on the target machines |
 | Service A and Service B | Separate local HTTP processes use the service SDK with owner/manual association, independent stores, and different route grants | Durable stores, real account/payment integration, deployment and operations |
 | Demo agent | Local process obtains service challenges, signs proofs, and uses separate service sessions; checks audience isolation, replay, authorization, and revocation | Secure Enclave-backed end-to-end run, bundler client, and 2/20 token-policy user journey |
 
-The tests use both `MockAgentEntryPoint`, a caller-boundary fixture, and the official EntryPoint v0.8 contract locally. The latter covers a funded, signed UserOperation, signature rejection, nonce/replay handling, and service SDK authentication. A separate local demo starts two SDK-backed HTTP services and an agent process. These do **not** establish bundler support, gas estimation, physical Secure Enclave signing, or public-network behavior. The repository has no public factory/EntryPoint deployment, production challenge/session stores, or deployed HTTP services. The local MCP challenge-proof flow is implemented; see [MCP.md](MCP.md).
+The tests use both `MockAgentEntryPoint`, a caller-boundary fixture, and the official EntryPoint v0.8 locally. The P-256 MCP lifecycle also exercises both SDK-backed HTTP services, browser approval endpoints, policy updates, rotation, restart and revocation. A Sepolia factory and EntryPoint are pinned, but the final-review management-target guard and ERC-165 source changes require redeployment; see [current status](V0-IMPLEMENTATION.md). Tests do **not** establish bundler interoperability or physical hardware/wallet-extension behavior. Production challenge/session stores and public HTTP service hosting remain outside the example services.
 
 ## Contract and account gate
 
@@ -37,9 +37,9 @@ The [SDK guide](SDK.md) has the current agent/service integration surface. There
 
 ## Portal and demo gate
 
-The [owner portal](PORTAL.md) is a static workbench. Its deployment map is intentionally empty until trusted factory and implementation addresses exist. A connected owner can create or verify an account, manage the operating key, and set a versioned onchain policy. The portal cannot grant service API access or enforce a model's offchain instructions.
+The [owner portal](PORTAL.md) uses pinned Sepolia addresses and has an MCP-hosted identity list and alias editor. A connected owner can create or verify an account, manage the operating key, and set a versioned onchain policy. The portal cannot grant service API access or enforce a model's offchain instructions.
 
-The [local demo](LOCAL-DEMO.md) now runs Service A with a simulated paid owner-linked read entitlement and Service B with manual agent enrollment. Each verifies the same `0xAGENT` with separate nonce, session, user, and permission data. The agent authenticates to both and shows a route denied despite valid authentication. A real purchase-to-entitlement flow and the 2-token autonomous versus 20-token owner-approved user journey are still missing. Each service must decide whether any payment unlocks a resource.
+`npm run demo` runs Service A with owner-signed manual enrollment and operator-managed permissions, and Service B with registered-wallet owner association. Both verify Sepolia identities using separate nonce/session/user state. The older [local smoke script](LOCAL-DEMO.md) uses synthetic services with the inverse A/B roles. A real purchase-to-entitlement journey remains unimplemented; token thresholds are tested at the contract level. Each service decides whether a payment unlocks resources.
 
 ## Run local checks
 

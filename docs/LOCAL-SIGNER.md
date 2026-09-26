@@ -1,6 +1,6 @@
 # Local Secure Enclave signer
 
-Agentic World uses a local macOS helper for service-challenge authentication. Its P-256 private key is generated in Apple Secure Enclave and is non-exportable; the model-facing MCP process receives only a public key and signed challenge proofs. The key is not an Ethereum EOA key. `AgentValidator` verifies its P-256 signatures through ERC-1271 (and can still verify earlier secp256k1 demo accounts).
+Agentic World uses a local helper for service-challenge authentication: Apple Secure Enclave on macOS, or the Microsoft Platform Crypto Provider with a TPM on Windows. Both generate non-exportable P-256 keys. MCP receives public keys and signed challenge proofs. The key is not an Ethereum EOA key. `AgentValidator` verifies P-256 through ERC-1271 and retains secp256k1 prototype compatibility.
 
 ```text
 Agent → Service: request challenge for 0xAGENT
@@ -29,7 +29,11 @@ dist/signer/agentic-signer availability
 dist/signer/agentic-signer provision my-agent
 ```
 
-The availability command must report `secureEnclaveAvailable: true` before provisioning. `provision` creates one new local key and stores the opaque key reference in macOS Keychain. Manual provisioning is optional: an explicit no-argument `agentic_create_identity()` call creates the key if its configured label does not exist, then opens a temporary browser wallet approval page. The MCP never sends the owner transaction itself. For a manual flow, copy the public `qx` and `qy` into the [owner portal](PORTAL.md) or call `AgentAccountFactory.createAgentP256(qx, qy, salt)` from the human owner's wallet. Do not provision again with the same label; the helper will fail rather than replace an existing key. The account's onchain `authenticatorP256()` must match this local key. Set `signer.kind`, the absolute `binaryPath`, and `label` in `.agentic-world.json` as shown in [`mcp/config.example.json`](../mcp/config.example.json). Set only `AGENTIC_WORLD_CONFIG` in the MCP host environment; do **not** set `AGENTIC_WORLD_OPERATING_KEY` for this mode.
+A sandbox can report `secureEnclaveAvailable: false` even when the host supports it; init does not require provisioning and must not stop on that result. Actual hardware access is required for provisioning/signing. `provision` creates a new key and saves an opaque reference in Keychain. Normally `agentic_create_identity()` provisions on explicit request and opens owner-wallet approval. For a manual flow, use only public `qx`/`qy` coordinates in the [portal](PORTAL.md). Existing labels are never overwritten. `npm run init:mcp` creates the private signer config and prints its path for `AGENTIC_WORLD_CONFIG`; no exported operating key is used on Sepolia.
+
+On Windows, `npm run build:signer` installs and self-tests the bundled executable for x64 or ARM64 after verifying its checksum. End users need no Go compiler. `dist/signer/agentic-signer.exe availability` checks TPM support. Windows hardware operations still require testing on a physical Windows host.
+
+MCP rotation with `scheme: "p256"` provisions a fresh label and retains it per agent before wallet approval. Authentication selects the retained key matching current onchain public coordinates, so the old key still works if the owner cancels and the new key works after confirmation or a restart. Other identities sharing the original key remain unaffected. Revoked identities and key labels remain in local data; restoring a key is a separate owner action in the portal.
 
 `npm run build:signer` compiles the helper with a fresh temporary Swift module cache and runs a deterministic Keccak/EIP-712 vector test. The isolated cache avoids clashes between differently cased macOS paths such as `Documents` and `documents`. This build is separate from `npm run demo` and does not provision a key. A physical Secure Enclave + Keychain signing run still requires a supported Mac and an explicitly created agent key; the repository's automated Hardhat tests use software P-256 keys for contract compatibility.
 

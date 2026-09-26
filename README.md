@@ -64,19 +64,25 @@ pinned implementation; the service-facing `AgenticWorld` manual/owner API is
 unchanged. The old `AgentAccount` and `MandateRegistry` remain as historical
 prototype code, not v0 deployment components.
 
-This is **not yet a deployed, end-to-end public-network demo**. A local integration test
-uses the official EntryPoint v0.8 contract to execute a signed UserOperation.
-A separate local demo has an agent process authenticate to two independent
-SDK-backed HTTP services, and a real stdio MCP client exercises the same identity
-and services through three semantic tools. Neither path uses a bundler. There is
-no public factory deployment, live KMS adapter, or production-grade HTTP service
-and durable nonce/session store. The long-running Service A workbench uses
-intentionally in-memory stores and live local permissions. The local MCP has a
-challenge-proof tool, a macOS Secure Enclave signer adapter, and a temporary
-browser wallet approval flow for identity creation. The physical-key and
-MetaMask path still needs a hands-on run on a supported Mac. Only the single-call, revert-on-error
-ERC-7579 execution mode is enabled; all onchain actions are default-denied until
-the owner installs a policy. See the [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
+The factory, implementation, validator, hook, and EntryPoint are pinned to
+Sepolia in `sdk/deployments.ts`. `npm run demo` runs two loopback HTTP services
+against that deployment. The local MCP supports macOS Secure Enclave and Windows
+TPM signers, multiple identities, aliases, an owner portal, and browser-approved
+creation, policy updates, rotation, and revocation.
+
+**Deployment update required:** the final review found that a policy could allow
+agent execution to call its own management modules directly. Source now blocks
+those targets and includes ERC-165 discovery, but the pinned Sepolia deployment
+predates these changes. Deploy a new factory and update the pins before treating
+onchain execution as ready. Existing immutable accounts cannot be upgraded.
+
+Local tests exercise P-256 authentication, both services, owner approval flows,
+rotation across MCP restarts, and policy changes through the official EntryPoint
+v0.8. Hardware signing and real wallet-extension interactions still need a
+hands-on run. Services intentionally use in-memory stores; there is no bundler
+integration or MCP UserOperation execution tool. Only single-call, revert-on-error
+ERC-7579 execution is supported, and execution defaults to deny. See the
+[implementation status and security limits](docs/V0-IMPLEMENTATION.md).
 
 To run the checks:
 
@@ -93,19 +99,24 @@ For the interactive local workbench, run **one command** and leave it open:
 npm run demo
 ```
 
-It builds only the demo contracts and Service A page, starts a fresh Hardhat
-node, deploys the factory, and serves SDK-backed Service A. It selects free
-loopback ports and prints the service URL and operator key.
-MCP and Secure Enclave signer builds are separate steps for your later agent
-setup; `npm run demo` never compiles Swift, provisions a key, or sends an
-owner-wallet transaction. The MCP creates a key only when you explicitly ask
-it to create an identity. See the [interactive demo guide](docs/SERVICE-DEMO.md).
+It builds and serves Service A at `http://127.0.0.1:8787` and Service B at
+`http://127.0.0.1:8797`, verifies the pinned Sepolia deployment, and prints the
+Service A operator key. Their report endpoints are `/private/report`; Service A
+also offers `/private/compute`. Set `AGENTIC_SERVICE_A_PORT` or
+`AGENTIC_SERVICE_B_PORT` to explicitly change ports. The command uses Sepolia;
+it does not start Hardhat, deploy contracts, or build the local signer.
+
+Service A requires each end user to enroll their agent with an owner-wallet
+signature; the operator then grants resource permissions. Service B requires
+wallet registration and associates an authenticated agent through its onchain
+`owner()`. Service-local state resets on restart; onchain identities persist.
+The legacy local-chain launcher is available explicitly as `npm run demo:hardhat`.
 
 ### Use the skill in Codex or Claude Code
 
 Installing the skill and connecting the MCP are **two separate steps**. The skill
-is instructions for the agent; the MCP and Secure Enclave signer run locally on
-your Mac. A GitHub URL alone cannot launch them. For a fresh machine, clone the
+is instructions for the agent; MCP and the hardware signer run locally on macOS
+or Windows. A GitHub URL alone cannot launch them. For a fresh machine, clone the
 public repository into a stable location and build the local components:
 
 ```sh
@@ -113,15 +124,16 @@ git clone https://github.com/ryuux05/eth-tokyo-2026.git
 cd eth-tokyo-2026
 npm ci
 npm run build:mcp
+npm run build:portal
 npm run build:signer
-dist/signer/agentic-signer availability
+npm run init:mcp
 ```
 
-`availability` must report `secureEnclaveAvailable: true`. Keep this checkout:
-the MCP registration below points to its built files. Start the demo in a
-separate terminal and leave it running; it creates the gitignored runtime
-config and prints the actual RPC and Service A URLs. Run this from the checkout
-in another terminal:
+Keep this checkout: the MCP registration points to its built files. `init:mcp`
+prints `MCP_CONFIG_PATH`, creates a private Sepolia config, and creates no key or
+identity. Do not block init on a sandboxed hardware `availability` result.
+Windows installs the bundled verified executable and needs no Go compiler.
+To run the optional Service A/B workbench, use another terminal:
 
 ```sh
 npm run demo
@@ -151,45 +163,48 @@ For a session **in another project**, install the skill personally first:
   with your clone. If that destination already exists, inspect it before
   replacing anything. [Claude Code supports personal and symlinked skills](https://code.claude.com/docs/en/skills#choose-where-skills-load).
 
-Next, register the **local MCP** with the host you will use. Run the command
-from the clone so the paths become absolute:
+Next, say `agentic-world:init` to the installed skill to register the MCP, or
+register it manually below. Replace the placeholders with the absolute
+`MCP_CONFIG_PATH` from init and this checkout's absolute server path. Inspect
+existing registrations first and reuse a matching one.
 
 For **Codex**:
 
 ```sh
-codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json" -- node "$PWD/dist/mcp/server.js"
+codex mcp add agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
 codex mcp list
 ```
 
-For **Claude Code inside this checkout**, the committed `.mcp.json` already
-declares the server. Set its runtime config path before launching Claude and
-approve the project server if prompted:
+For **Claude Code inside this checkout**, use a local-scope entry with absolute
+paths. It takes priority over the generic project `.mcp.json` entry:
 
 ```sh
-export AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json"
-claude
+claude mcp add --scope local --transport stdio agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
+claude mcp list
 ```
 
 For **Claude Code in another project**, register a user-scoped server instead
 of relying on this repo's `.mcp.json`:
 
 ```sh
-claude mcp add --scope user --transport stdio agentic-world --env AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json" -- node "$PWD/dist/mcp/server.js"
+claude mcp add --scope user --transport stdio agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
 claude mcp list
 ```
 
 Start a new Codex or Claude session, check that `agentic_identity` is available,
-then say “Create an Agentic World identity.” The no-argument
-`agentic_create_identity()` call creates or reuses a local Secure Enclave P-256
-key and opens a temporary localhost page in your default browser. Connect a
-MetaMask-compatible wallet to the demo's **printed RPC URL**. The wallet must
-have local test ETH to pay for the factory transaction. **You** choose the
+then say `agentic-world:create -a "Research"`. The MCP creates or reuses a local
+hardware P-256 key and opens a temporary localhost page in your default browser.
+Connect a MetaMask-compatible wallet on **Sepolia (11155111)** with Sepolia ETH
+to pay for the factory transaction. **You** choose the
 human owner account and approve in the wallet; the MCP never sees your wallet
 key or submits the transaction. The page verifies the account and reports
 `0xAGENT` back to the agent. For a personal skill used outside this checkout,
-give the agent the printed Service A URL; it must not assume the demo state
-file is in your current project. The default local signer label is
-`agentic-world-demo`. See the [MCP guide](docs/MCP.md) and [local signer guide](docs/LOCAL-SIGNER.md).
+give the agent the printed Service A or B URL and its expected audience
+(`https://service-a.example` or `https://service-b.example` for this loopback
+workbench). The default local signer label is `agentic-world-sepolia`.
+Use `agentic-world:list`, `agentic-world:portal`, `agentic-world:rotate`, or
+`agentic-world:revoke` to manage your identities. See the [MCP guide](docs/MCP.md)
+and [local signer guide](docs/LOCAL-SIGNER.md).
 
 The service operator key is **not** in the skill or MCP config; keep it in the
 Service A operator page only. The full portal is optional.
@@ -215,9 +230,14 @@ do not copy that exception into a deployed service. It submits directly to
 EntryPoint, not through a bundler. Restarting the Hardhat node clears deployments.
 See [the local demo guide](docs/LOCAL-DEMO.md) for the complete flow.
 
-For manual owner management and policy editing, the full owner portal remains available separately via `npm run build:portal` and `npm run serve:portal`. Configure trusted deployment addresses in [`portal/config.ts`](portal/config.ts) first. It is not started by `npm run demo`; identity creation does not require it.
+The `agentic-world:portal` prompt opens the MCP-hosted loopback portal, including
+your identity list and aliases. The standalone `npm run serve:portal` page can
+also edit onchain policy but has no local MCP identity-list API. Both use the
+Sepolia pins in [`portal/config.ts`](portal/config.ts).
 
-To run the separate, SDK-backed Service A page, build it with `npm run build:demo-service` and start `npm run serve:demo-service` against the same local node. It prints a one-time operator key for the page. Grant and revoke report/compute access, then retry with the same agent session; see the [hands-on guide](docs/SERVICE-DEMO.md).
+To run only Service A, build it with `npm run build:demo-service` and run
+`npm run serve:demo-service`; it also uses Sepolia. Grant and revoke report/compute
+access, then retry with the same agent session; see the [hands-on guide](docs/SERVICE-DEMO.md).
 
 The contract ABI and typed-data details are documented in the [protocol](docs/PROTOCOL.md).
 

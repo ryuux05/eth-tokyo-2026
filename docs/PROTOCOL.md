@@ -2,6 +2,8 @@
 
 Agentic World authenticates an agent as itself instead of giving it a human's OAuth token, API key, or session. The shared onchain fact is the agent account and its current authentication authority. Each service independently decides what that authenticated agent may access. Agentic World does not manage a behavioral mandate, infer the model's intent, or operate a central authentication backend.
 
+The source account now exposes ERC-165 and prevents execution against its own management modules. These corrections are not in the currently pinned immutable Sepolia deployment; see the [deployment status](V0-IMPLEMENTATION.md) before relying on onchain execution policy.
+
 This document describes the implemented ERC-4337 / ERC-7579 prototype. It is not a claim of public deployment or full EntryPoint/bundler interoperability; see [implementation status](V0-IMPLEMENTATION.md).
 
 ## Four separate decisions

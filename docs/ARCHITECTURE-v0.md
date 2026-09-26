@@ -17,7 +17,7 @@ These are distinct decisions: authenticating `0xAGENT`, associating it with a se
 
 ## ERC-4337 execution path
 
-1. The agent runtime asks its separate operating key to sign a `UserOperation` for `0xAGENT`. It does not hold the owner's key or an agent-root EOA key. The local Secure Enclave helper currently exposes HTTP request signing only; a UserOperation helper is a separate pending path.
+1. The agent SDK can ask an injected operating signer to sign a `UserOperation` for `0xAGENT`. It does not hold the owner's key or an agent-root EOA key. The local hardware helper currently signs structured authentication challenges (plus a legacy request-proof command); a hardware UserOperation helper and MCP execution tool remain pending.
 2. In a live deployment, a bundler submits the operation to the configured ERC-4337 EntryPoint. The account's `validateUserOp` calls its fixed `AgentValidator`. Local tests now cover both a caller fixture and a complete operation through the official EntryPoint v0.8 contract; they do not use a bundler.
 3. The EntryPoint calls the account's ERC-7579 single-call execution entrypoint. `AgentPolicyHook` checks the action before execution and checks token spend afterward. Batch, delegatecall, executor, and try modes are unsupported.
 4. The human directly calls owner-only key and policy methods. The operating validator cannot install/remove modules, upgrade the account, or change `owner()`.
