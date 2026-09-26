@@ -33,8 +33,11 @@ function element<T extends HTMLElement>(id: string): T {
 }
 
 const ui = {
+  managedSection: element<HTMLElement>("managedSection"), managedCount: element<HTMLElement>("managedCount"),
+  managedList: element<HTMLElement>("managedList"), refreshManaged: element<HTMLButtonElement>("refreshManagedButton"),
   connect: element<HTMLButtonElement>("connectButton"), network: element<HTMLElement>("networkBadge"),
   configNotice: element<HTMLElement>("configNotice"), status: element<HTMLElement>("statusMessage"),
+  creationAlias: element<HTMLInputElement>("creationAlias"),
   creationScheme: element<HTMLSelectElement>("creationScheme"),
   creationP256Fields: element<HTMLElement>("creationP256Fields"),
   creationLegacyFields: element<HTMLElement>("creationLegacyFields"),
@@ -76,6 +79,52 @@ let predictionSequence = 0;
 let busy = false;
 let nextRuleId = 1;
 const draftRules: DraftRule[] = [];
+type ManagedIdentity = { agentId: Address; alias: string | null; owner?: Address; status: "ACTIVE" | "REVOKED" | "UNAVAILABLE" };
+
+async function refreshManaged(): Promise<void> {
+  let response: Response;
+  try { response = await fetch(new URL("api/identities", location.href), { cache: "no-store" }); }
+  catch { return; }
+  if (!response.ok) return;
+  const data = await response.json() as { count: number; identities: ManagedIdentity[] };
+  ui.managedSection.hidden = false;
+  ui.managedCount.textContent = String(data.count);
+  ui.managedList.replaceChildren();
+  if (!data.count) {
+    const empty = document.createElement("p"); empty.className = "managed-empty";
+    empty.textContent = "No local agent IDs yet. Use agentic-world:create -a \"name\" to create one.";
+    ui.managedList.append(empty); return;
+  }
+  for (const entry of data.identities) {
+    const row = document.createElement("div"); row.className = "managed-row";
+    const identity = document.createElement("div"); identity.className = "managed-identity";
+    const name = document.createElement("strong"); name.textContent = entry.alias ?? "Unnamed agent";
+    const address = document.createElement("code"); address.textContent = entry.agentId;
+    identity.append(name, address);
+    const state = document.createElement("span"); state.className = `managed-status ${entry.status.toLowerCase()}`;
+    state.textContent = entry.status === "ACTIVE" ? "Active" : entry.status === "REVOKED" ? "Revoked" : "Unavailable";
+    const alias = document.createElement("input"); alias.type = "text"; alias.maxLength = 40;
+    alias.placeholder = "Add an alias"; alias.value = entry.alias ?? "";
+    alias.setAttribute("aria-label", `Alias for ${entry.agentId}`);
+    const save = document.createElement("button"); save.type = "button"; save.className = "button button-secondary"; save.textContent = "Save alias";
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      try {
+        const result = await fetch(new URL("api/alias", location.href), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: entry.agentId, alias: alias.value }) });
+        if (!result.ok) throw new Error("Alias must be 1–40 printable characters.");
+        await refreshManaged();
+      } catch (error) { status(readableError(error), "error"); }
+      finally { save.disabled = false; }
+    });
+    const open = document.createElement("button"); open.type = "button"; open.className = "button button-primary"; open.textContent = "Manage";
+    open.addEventListener("click", () => {
+      ui.agent.value = entry.agentId;
+      if (!owner) { status("Connect the owner wallet, then manage this agent."); refresh(); return; }
+      void action(() => verifyAgent(entry.agentId));
+    });
+    row.append(identity, state, alias, save, open); ui.managedList.append(row);
+  }
+}
 
 function short(value: string): string { return `${value.slice(0, 6)}…${value.slice(-4)}`; }
 function same(a: string, b: string): boolean { return a.toLowerCase() === b.toLowerCase(); }
@@ -331,6 +380,7 @@ async function connect(): Promise<void> {
   }
   status(`Owner wallet ${short(owner)} connected. ${deployment ? "Create or load an agent to continue." : "Configure this chain's deployment to continue."}`);
   refresh();
+  if (isAddress(ui.agent.value.trim()) && deployment) await verifyAgent(getAddress(ui.agent.value.trim()));
 }
 
 async function createAgent(): Promise<void> {
@@ -352,7 +402,15 @@ async function createAgent(): Promise<void> {
   if (receipt.status !== "success") throw new Error("Deployment reverted. No agent was created.");
   ui.agent.value = predicted;
   await verifyAgent(predicted);
+  const alias = ui.creationAlias.value.trim();
+  if (!ui.managedSection.hidden) {
+    const registration = await fetch(new URL("api/adopt", location.href), { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: predicted, alias }) });
+    if (!registration.ok)
+      throw new Error("Agent was created onchain, but this portal could not add it to the local list. Do not repeat the transaction; load the address manually.");
+  }
   status(`Agent ${short(predicted)} created and verified. Its owner is ${short(owner)}.`);
+  await refreshManaged();
 }
 
 async function verifyAgent(input?: Address): Promise<void> {
@@ -499,6 +557,8 @@ async function preview(amount: string): Promise<void> {
 }
 
 ui.salt.value = newSalt();
+ui.refreshManaged.addEventListener("click", () => { void refreshManaged().catch(error => status(readableError(error), "error")); });
+void refreshManaged().catch(error => status(readableError(error), "error"));
 ui.connect.addEventListener("click", () => { void action(connect); });
 ui.newSalt.addEventListener("click", () => { ui.salt.value = newSalt(); void action(updatePrediction); });
 ui.salt.addEventListener("input", () => { void updatePrediction().catch(error => status(readableError(error), "error")); });

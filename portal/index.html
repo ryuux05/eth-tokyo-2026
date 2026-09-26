@@ -27,12 +27,20 @@
       <div id="configNotice" class="notice notice-warning" role="status" hidden></div>
       <div id="statusMessage" class="notice" role="status" aria-live="polite" hidden></div>
 
+      <section id="managedSection" class="managed-section" aria-labelledby="managedTitle" hidden>
+        <div class="managed-heading"><div><span class="context-line">LOCAL IDENTITY INDEX</span><h2 id="managedTitle">Your agents <span id="managedCount" class="managed-count">0</span></h2><p>Aliases are stored on this device. Revoked identities stay in the list; policy and revocation state come from the chain.</p></div><button id="refreshManagedButton" class="button button-secondary" type="button">Refresh</button></div>
+        <div id="managedList" class="managed-list" aria-live="polite"></div>
+      </section>
+
       <section class="flow-section" aria-labelledby="identityTitle">
         <div class="section-head"><span class="section-number">01</span><div><h2 id="identityTitle">Create or load an agent</h2><p>The owner wallet sends the factory transaction. No agent-root EOA key or separate registry is needed.</p></div><span id="identityState" class="state-pill">Waiting</span></div>
         <div class="section-content">
           <div class="create-grid">
             <div class="create-form">
               <h3>Create a new account</h3>
+              <label for="creationAlias">Local alias</label>
+              <input id="creationAlias" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Research agent" aria-describedby="aliasHelp" />
+              <p class="field-help" id="aliasHelp">Optional. Shown only in this local portal and the MCP list, never onchain.</p>
               <label for="creationScheme">Operating key type</label>
               <select id="creationScheme"><option value="p256">P-256 / Secure Enclave</option><option value="secp256k1">Legacy Ethereum signer</option></select>
               <div id="creationP256Fields">

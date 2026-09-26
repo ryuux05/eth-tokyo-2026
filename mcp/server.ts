@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { createServer, type Server } from "node:http";
 import { isAbsolute } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { concatHex, createPublicClient, decodeEventLog, encodeFunctionData, getAddress, http, isAddress, keccak256, parseAbiItem, zeroAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -15,9 +16,10 @@ import { ensureSignerPublicKey, signLocalChallenge, signerPublicKey } from "./lo
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
 import { runOwnerActionFlow, type OwnerActionIntent } from "./owner-action-flow.js";
 import { BrowserLaunchError } from "./open-browser.js";
+import { openDefaultBrowser } from "./open-browser.js";
 import { FlowCancelledError } from "./flow-cancel.js";
 
-type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; factory?: Address; implementation: Address;
+type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; aliases?: Record<string, string>; factory?: Address; implementation: Address;
   deploymentBlockNumber?: string; deploymentBlockHash?: Hex;
   signer?: { kind: "secure-enclave" | "windows-tpm"; binaryPath: string; label: string } };
 
@@ -27,7 +29,7 @@ class ToolError extends Error {
 
 export function parseConfig(value: unknown): Config {
   const schema = z.strictObject({
-    rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(32).optional(), factory: z.string().optional(), implementation: z.string().optional(),
+    rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(256).optional(), aliases: z.record(z.string(), z.string()).optional(), factory: z.string().optional(), implementation: z.string().optional(),
     deploymentBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
     deploymentBlockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
     signer: z.strictObject({ kind: z.enum(["secure-enclave", "windows-tpm"]), binaryPath: z.string().refine(isAbsolute, "Signer path must be absolute"), label: z.string().min(1).max(128) }).optional(),
@@ -37,11 +39,15 @@ export function parseConfig(value: unknown): Config {
       (parsed.signer.kind === "windows-tpm" && process.platform !== "win32"))) throw new Error("Signer kind does not match this host platform");
   if ((parsed.agentId && !isAddress(parsed.agentId)) || parsed.agentIds?.some(id => !isAddress(id)) ||
       (parsed.factory && !isAddress(parsed.factory)) || (parsed.implementation && !isAddress(parsed.implementation))) throw new Error("Invalid account, factory, or implementation address");
+  for (const [id, alias] of Object.entries(parsed.aliases ?? {})) {
+    if (!isAddress(id) || alias !== alias.trim() || alias.length < 1 || alias.length > 40 || /[\x00-\x1f\x7f]/.test(alias))
+      throw new Error("Invalid agent alias");
+  }
   if (!!parsed.deploymentBlockNumber !== !!parsed.deploymentBlockHash) throw new Error("Deployment fingerprint requires both block number and hash");
   const rpc = new URL(parsed.rpcUrl);
   if (rpc.protocol !== "https:" && !(rpc.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(rpc.hostname))) throw new Error("RPC must use HTTPS or loopback HTTP");
   return { ...parsed, agentId: parsed.agentId ? getAddress(parsed.agentId) : undefined,
-    agentIds: parsed.agentIds?.map(id => getAddress(id)),
+    agentIds: parsed.agentIds?.map(id => getAddress(id)), aliases: Object.fromEntries(Object.entries(parsed.aliases ?? {}).map(([id, alias]) => [id.toLowerCase(), alias])),
     factory: trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined),
     implementation: trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined),
     deploymentBlockHash: parsed.deploymentBlockHash as Hex | undefined };
@@ -55,10 +61,11 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   if (config.signer && operatingKey) throw new Error("Do not provide an operating key when a hardware P-256 signer is configured");
   const legacySigner = operatingKey ? privateKeyToAccount(operatingKey) : undefined;
   const client = createPublicClient({ transport: http(config.rpcUrl) });
-  const agent = legacySigner && config.agentId ? createAgentSdk({ agentId: config.agentId, chainId: config.chainId, signDigest: digest => legacySigner.sign({ hash: digest }) }) : undefined;
   const server = new McpServer({ name: "agentic-world", version: "0.1.0" }, { capabilities: { tools: {} } });
   let creatingIdentity = false;
   let ownerActionInProgress = false;
+  let portal: { server: Server; url: string } | undefined;
+  let persistQueue: Promise<void> = Promise.resolve();
 
   async function requireNativeP256() {
     // Known-valid EIP-7951 vector also used by OpenZeppelin to detect precompile presence.
@@ -78,6 +85,47 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       .map(id => [id.toLowerCase(), id] as const)).values()];
   }
 
+  function persistConfig(): Promise<void> {
+    if (!configPath) return Promise.resolve();
+    persistQueue = persistQueue.catch(() => {}).then(async () => {
+      const temp = `${configPath}.${randomBytes(4).toString("hex")}.tmp`;
+      const persisted = { ...config };
+      if (config.chainId === SEPOLIA_CHAIN_ID) {
+        Reflect.deleteProperty(persisted, "factory");
+        Reflect.deleteProperty(persisted, "implementation");
+      }
+      await writeFile(temp, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
+      await rename(temp, configPath);
+    });
+    return persistQueue;
+  }
+
+  function validatedAlias(alias: string): string {
+    const value = alias.trim();
+    if (value.length < 1 || value.length > 40 || /[\x00-\x1f\x7f]/.test(value))
+      throw new ToolError("INVALID_ALIAS", "Alias must be 1–40 printable characters");
+    return value;
+  }
+
+  async function listIdentities() {
+    const ids = managedAgentIds();
+    if (!ids.length) return { count: 0, identities: [] };
+    const [actualChain, blockNumber] = await Promise.all([client.getChainId(), client.getBlockNumber({ cacheTime: 0 })]);
+    if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
+    const identities = await Promise.all(ids.map(async agentId => {
+      const code = await client.getBytecode({ address: agentId, blockNumber });
+      if (!isExpectedAgentClone(code, config.implementation))
+        return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, status: "UNAVAILABLE" as const };
+      const [owner, revoked] = await Promise.all([
+        client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
+        client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
+      ]);
+      return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, owner,
+        status: revoked ? "REVOKED" as const : "ACTIVE" as const, authenticationRevoked: revoked };
+    }));
+    return { count: identities.length, blockNumber: blockNumber.toString(), identities };
+  }
+
   function selectManagedAgentId(requested?: string): Address {
     const known = managedAgentIds();
     if (requested && !isAddress(requested)) throw new ToolError("INVALID_AGENT", "Invalid agent ID");
@@ -91,13 +139,17 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     return known[0];
   }
 
-  async function identity(agentId = config.agentId) {
-    if (!agentId) throw new ToolError("IDENTITY_NOT_CONFIGURED", "Create an agent identity and configure its address first");
-    const actualChain = await client.getChainId();
+  async function pinnedAccountBlock(agentId: Address): Promise<bigint> {
+    const [actualChain, blockNumber] = await Promise.all([client.getChainId(), client.getBlockNumber({ cacheTime: 0 })]);
     if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
-    const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
     const code = await client.getBytecode({ address: agentId, blockNumber });
     if (!isExpectedAgentClone(code, config.implementation)) throw new ToolError("IDENTITY_UNAVAILABLE", "Agent is not the pinned ERC-4337 account clone");
+    return blockNumber;
+  }
+
+  async function identity(agentId = config.agentId) {
+    if (!agentId) throw new ToolError("IDENTITY_NOT_CONFIGURED", "Create an agent identity and configure its address first");
+    const blockNumber = await pinnedAccountBlock(agentId);
     const [owner, authenticator, scheme, p256PublicKey, revoked, createdAt, policyHash, policyRevision] = await Promise.all([
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
@@ -114,6 +166,19 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       p256PublicKey: scheme === 2 ? { qx: p256PublicKey[0], qy: p256PublicKey[1] } : undefined,
       authenticationRevoked: revoked,
       createdAt: Number(createdAt), policyHash, policyRevision: policyRevision.toString(), blockNumber: blockNumber.toString() };
+  }
+
+  async function authenticationState(agentId: Address) {
+    const blockNumber = await pinnedAccountBlock(agentId);
+    const [scheme, revoked, authenticator, p256PublicKey] = await Promise.all([
+      client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
+      client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
+      client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
+      client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorP256", blockNumber }),
+    ]);
+    return { agentId, authenticatorScheme: scheme, authenticationRevoked: revoked,
+      authenticator: scheme === 1 ? authenticator : undefined,
+      p256PublicKey: scheme === 2 ? { qx: p256PublicKey[0], qy: p256PublicKey[1] } : undefined };
   }
 
   function result(value: unknown) { return { content: [{ type: "text" as const, text: JSON.stringify(value) }] }; }
@@ -138,24 +203,109 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         implementation: config.implementation, next: "Provision a local signer, then call agentic_create_identity to prepare an owner wallet transaction." };
     }));
 
-  server.registerTool("agentic_list_identities", { description: "List locally configured agent IDs and independently verify each pinned onchain account before an owner action.", inputSchema: z.object({}) },
+  server.registerTool("agentic_list_identities", { description: "List all locally known agent IDs, aliases, and current onchain revocation status, including revoked agents.", inputSchema: z.object({}) },
+    async () => guarded(listIdentities));
+
+  server.registerTool("agentic_set_alias", { description: "Set a local-only display alias for a managed agent ID; this changes no onchain state.",
+    inputSchema: z.object({ agentId: z.string(), alias: z.string() }) },
+    async ({ agentId, alias }) => guarded(async () => {
+      const selected = selectManagedAgentId(agentId);
+      config.aliases ??= {};
+      config.aliases[selected.toLowerCase()] = validatedAlias(alias);
+      await persistConfig();
+      return { agentId: selected, alias: config.aliases[selected.toLowerCase()] };
+    }));
+
+  server.registerTool("agentic_portal", { description: "Open the local owner portal to view managed agents, edit aliases, and set their onchain execution policies.", inputSchema: z.object({}) },
     async () => guarded(async () => {
-      const ids = managedAgentIds();
-      return { identities: await Promise.all(ids.map(async id => {
-        const current = await identity(id);
-        return { agentId: current.agentId, owner: current.owner, chainId: current.chainId,
-          authenticatorScheme: current.authenticatorScheme, authenticationRevoked: current.authenticationRevoked };
-      })) };
+      if (portal) { await openDefaultBrowser(portal.url); return { status: "PORTAL_OPEN", url: portal.url }; }
+      const token = randomBytes(24).toString("hex");
+      const prefix = `/portal/${token}/`;
+      let base = "";
+      const site = createServer(async (request, response) => {
+        const path = new URL(request.url ?? "/", "http://localhost").pathname;
+        const headers = { "cache-control": "no-store", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer" };
+        const send = (status: number, value: unknown) => {
+          response.writeHead(status, { ...headers, "content-type": "application/json; charset=utf-8" });
+          response.end(JSON.stringify(value));
+        };
+        if (request.headers.host !== base.slice("http://".length) || !path.startsWith(prefix)) { send(404, { error: "Not found" }); return; }
+        if (request.method === "GET" && path === `${prefix}api/identities`) {
+          try { send(200, await listIdentities()); }
+          catch { send(503, { error: "Could not read agent identities from the configured chain" }); }
+          return;
+        }
+        if (request.method === "POST" && path === `${prefix}api/alias`) {
+          if (request.headers.origin !== base || !request.headers["content-type"]?.startsWith("application/json")) { send(403, { error: "Request rejected" }); return; }
+          try {
+            let body = "";
+            for await (const chunk of request) { body += chunk.toString(); if (body.length > 1024) throw new Error("Too large"); }
+            const input: unknown = JSON.parse(body);
+            if (!input || typeof input !== "object" || !("agentId" in input) || !("alias" in input) ||
+                typeof input.agentId !== "string" || typeof input.alias !== "string") throw new Error("Invalid alias input");
+            const agentId = selectManagedAgentId(input.agentId);
+            config.aliases ??= {};
+            config.aliases[agentId.toLowerCase()] = validatedAlias(input.alias);
+            await persistConfig();
+            send(200, { agentId, alias: config.aliases[agentId.toLowerCase()] });
+          } catch { send(400, { error: "Could not save alias" }); }
+          return;
+        }
+        if (request.method === "POST" && path === `${prefix}api/adopt` && request.headers.origin === base && request.headers["content-type"]?.startsWith("application/json")) {
+          try {
+            let body = "";
+            for await (const chunk of request) { body += chunk.toString(); if (body.length > 1024) throw new Error("Too large"); }
+            const input: unknown = JSON.parse(body);
+            if (!input || typeof input !== "object" || !("agentId" in input) || typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Invalid agent");
+            const agentId = getAddress(input.agentId);
+            const current = await identity(agentId);
+            if (config.signer) {
+              const key = await signerPublicKey(config.signer);
+              if (current.authenticatorScheme !== 2 || current.p256PublicKey?.qx.toLowerCase() !== key.qx.toLowerCase() ||
+                  current.p256PublicKey?.qy.toLowerCase() !== key.qy.toLowerCase()) throw new Error("Agent key does not match local signer");
+            } else if (current.authenticator?.toLowerCase() !== legacySigner?.address.toLowerCase()) throw new Error("Agent key does not match local signer");
+            config.agentIds = [...new Map([...managedAgentIds(), agentId].map(id => [id.toLowerCase(), id] as const)).values()];
+            config.agentId = agentId;
+            if ("alias" in input && typeof input.alias === "string" && input.alias.trim()) {
+              config.aliases ??= {}; config.aliases[agentId.toLowerCase()] = validatedAlias(input.alias);
+            }
+            await persistConfig();
+            send(200, { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null });
+          } catch { send(400, { error: "Could not register this agent with the local signer" }); }
+          return;
+        }
+        if (request.method === "POST" && path === `${prefix}api/close` && request.headers.origin === base) {
+          send(200, { closed: true });
+          site.close(); portal = undefined;
+          return;
+        }
+        const file = path === prefix ? "index.html" : path.slice(prefix.length);
+        if (request.method !== "GET" || !["index.html", "main.js", "styles.css"].includes(file)) { send(404, { error: "Not found" }); return; }
+        try {
+          const primary = new URL(`../../portal/dist/${file}`, import.meta.url);
+          const fallback = new URL(`../portal/dist/${file}`, import.meta.url);
+          const bytes = await readFile(fileURLToPath(primary)).catch(() => readFile(fileURLToPath(fallback)));
+          response.writeHead(200, { ...headers, "content-type": file.endsWith(".html") ? "text/html; charset=utf-8" : file.endsWith(".css") ? "text/css; charset=utf-8" : "text/javascript; charset=utf-8" });
+          response.end(bytes);
+        } catch { send(503, { error: "Portal assets are missing; run npm run build:portal" }); }
+      });
+      await new Promise<void>((resolve, reject) => { site.once("error", reject); site.listen(0, "127.0.0.1", () => { site.off("error", reject); resolve(); }); });
+      const address = site.address();
+      if (!address || typeof address === "string") { site.close(); throw new ToolError("PORTAL_UNAVAILABLE", "Could not bind portal to loopback"); }
+      base = `http://127.0.0.1:${address.port}`;
+      portal = { server: site, url: `${base}${prefix}` };
+      try { await openDefaultBrowser(portal.url); }
+      catch (error) { site.close(); portal = undefined; throw error; }
+      return { status: "PORTAL_OPEN", url: `${base}${prefix}` };
     }));
 
   server.registerTool("agentic_policy_check", {
     description: "Preview current onchain policy for an EVM action. This is not execution authorization; policy is rechecked during execution.",
-    inputSchema: z.object({ target: z.string(), valueWei: z.string().regex(/^(0|[1-9][0-9]*)$/), data: z.string().regex(/^0x([0-9a-fA-F]{2})*$/) }),
-  }, async ({ target, valueWei, data }) => guarded(async () => {
+    inputSchema: z.object({ agentId: z.string().optional(), target: z.string(), valueWei: z.string().regex(/^(0|[1-9][0-9]*)$/), data: z.string().regex(/^0x([0-9a-fA-F]{2})*$/) }),
+  }, async ({ agentId, target, valueWei, data }) => guarded(async () => {
     if (!isAddress(target)) throw new ToolError("INVALID_ACTION", "Invalid target address");
-    if (!config.agentId) throw new ToolError("IDENTITY_NOT_CONFIGURED", "No agent identity is configured");
-    const current = await identity();
-    const decision = await client.readContract({ address: config.agentId, abi: agentPolicyAbi, functionName: "evaluateAction",
+    const current = await identity(selectManagedAgentId(agentId));
+    const decision = await client.readContract({ address: current.agentId, abi: agentPolicyAbi, functionName: "evaluateAction",
       args: [target, BigInt(valueWei), data as Hex], blockNumber: BigInt(current.blockNumber) });
     return { decision: decision === Decision.ALLOW ? "ALLOW" : decision === Decision.REQUIRE_OWNER_SIGNATURE ? "REQUIRE_OWNER_SIGNATURE" : "DENY",
       policyHash: current.policyHash, policyRevision: current.policyRevision, blockNumber: current.blockNumber, previewOnly: true };
@@ -180,9 +330,9 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     }
   }
 
-  async function prepareIdentity(owner: string, salt: Hex, providedKey?: Awaited<ReturnType<typeof signerPublicKey>>) {
+  async function prepareIdentity(owner: string, salt: Hex, providedKey?: Awaited<ReturnType<typeof signerPublicKey>>, prechecked = false) {
     const key = providedKey ?? (config.signer ? await signerPublicKey(config.signer) : undefined);
-    await assertTrustedFactory();
+    if (!prechecked) await assertTrustedFactory();
     if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
     if (!isAddress(owner) || getAddress(owner) === zeroAddress) throw new ToolError("INVALID_OWNER", "Expected a human owner wallet address");
     const predictedAgent = await client.readContract({ address: config.factory, abi: agentAccountFactoryAbi,
@@ -190,7 +340,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     const existingCode = await client.getBytecode({ address: predictedAgent });
     if (existingCode && existingCode !== "0x") throw new ToolError("IDENTITY_ALREADY_EXISTS", "An agent already exists for this owner and salt");
     if (!key && !legacySigner) throw new ToolError("SIGNER_UNAVAILABLE", "No local signer is configured");
-    if (key) await requireNativeP256();
+    if (key && !prechecked) await requireNativeP256();
     const data = key
       ? encodeFunctionData({ abi: agentAccountFactoryAbi, functionName: "createAgentP256", args: [key.qx, key.qy, salt as Hex] })
       : encodeFunctionData({ abi: agentAccountFactoryAbi, functionName: "createAgent", args: [legacySigner!.address, salt as Hex] });
@@ -201,15 +351,15 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
 
   server.registerTool("agentic_create_identity", {
     description: "Open a local owner-wallet approval page to create a P-256 agent identity. With explicit owner and salt, only prepare transaction data for a manual flow.",
-    inputSchema: z.object({ owner: z.string().optional(), salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional() }),
-  }, async ({ owner, salt }) => guarded(async () => {
+    inputSchema: z.object({ owner: z.string().optional(), salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), alias: z.string().optional() }),
+  }, async ({ owner, salt, alias }) => guarded(async () => {
     if (owner || salt) {
       if (!owner || !salt) throw new ToolError("INVALID_CREATION_INPUT", "Provide both owner and salt, or neither for browser approval");
       return prepareIdentity(owner, salt as Hex);
     }
     if (!config.signer) throw new ToolError("P256_SIGNER_REQUIRED", "Browser creation requires a local hardware P-256 signer");
     if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
-    if (config.agentId) throw new ToolError("IDENTITY_ALREADY_CONFIGURED", "An agent identity is already configured");
+    const displayAlias = alias === undefined ? undefined : validatedAlias(alias);
     if (creatingIdentity) throw new ToolError("CREATION_IN_PROGRESS", "An identity creation page is already open");
     creatingIdentity = true;
     try {
@@ -221,7 +371,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     const agentId = await runCreationFlow({ chainId: config.chainId, factory: config.factory, rpcUrl: config.rpcUrl, qx: key.qx, qy: key.qy,
       deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
       prepare: async walletOwner => {
-        const prepared = await prepareIdentity(walletOwner, creationSalt, key);
+        const prepared = await prepareIdentity(walletOwner, creationSalt, key, true);
         selected = prepared;
         return prepared;
       },
@@ -260,20 +410,12 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         config.agentIds = [...new Map([...managedAgentIds(), intent.predictedAgent]
           .map(id => [id.toLowerCase(), id] as const)).values()];
         config.agentId = intent.predictedAgent;
-        if (configPath) {
-          const temp = `${configPath}.${randomBytes(4).toString("hex")}.tmp`;
-          const persisted = { ...config };
-          if (config.chainId === SEPOLIA_CHAIN_ID) {
-            Reflect.deleteProperty(persisted, "factory");
-            Reflect.deleteProperty(persisted, "implementation");
-          }
-          await writeFile(temp, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
-          await rename(temp, configPath);
-        }
+        if (displayAlias) { config.aliases ??= {}; config.aliases[intent.predictedAgent.toLowerCase()] = displayAlias; }
+        await persistConfig();
         return intent.predictedAgent;
       },
     });
-    return { status: "IDENTITY_CREATED", agentId, owner: selected?.transaction.from, chainId: config.chainId,
+    return { status: "IDENTITY_CREATED", agentId, alias: displayAlias ?? null, owner: selected?.transaction.from, chainId: config.chainId,
       next: "The onchain identity is confirmed and the local MCP config has been updated." };
     } finally { creatingIdentity = false; }
   }));
@@ -421,7 +563,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         challenge.expiresAt <= challenge.issuedAt || challenge.expiresAt - challenge.issuedAt > 300) {
       throw new ToolError("INVALID_CHALLENGE", "Challenge nonce, chain, or validity window is invalid");
     }
-    const current = await identity();
+    const current = await authenticationState(selectManagedAgentId(challenge.agentId));
     const agentId = current.agentId;
     if (challenge.agentId.toLowerCase() !== agentId.toLowerCase()) {
       throw new ToolError("AGENT_MISMATCH", "Challenge is for a different agent identity");
@@ -437,7 +579,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     } else if (current.authenticatorScheme !== 1 || current.authenticator?.toLowerCase() !== legacySigner?.address.toLowerCase()) {
       throw new ToolError("AUTHENTICATOR_MISMATCH", "Demo signer is not the current authenticator");
     }
-    return agent!.answerChallenge(challenge, challenge.audience);
+    const selectedAgent = createAgentSdk({ agentId, chainId: config.chainId, signDigest: digest => legacySigner!.sign({ hash: digest }) });
+    return selectedAgent.answerChallenge(challenge, challenge.audience);
   }
 
   server.registerTool("agentic_session_proof", {

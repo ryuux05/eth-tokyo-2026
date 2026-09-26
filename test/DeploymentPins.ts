@@ -47,3 +47,15 @@ test("MCP resolves Sepolia addresses from code and rejects config overrides", as
   assert.throws(() => parseConfig({ ...input, rpcUrl: "http://remote.example" }), /RPC must use HTTPS/);
   await assert.rejects(createAgenticWorldMcp(input, `0x${"1".repeat(64)}`), /hardware-backed P-256/);
 });
+
+test("MCP config keeps multiple identities and local aliases without dropping revoked entries", () => {
+  const first = "0x1111111111111111111111111111111111111111";
+  const second = "0x2222222222222222222222222222222222222222";
+  const config = parseConfig({ rpcUrl: "http://127.0.0.1:8545", chainId: 31337, implementation: otherImplementation,
+    agentId: second, agentIds: [first, second], aliases: { [first.toUpperCase().replace("0X", "0x")]: "Research", [second]: "Payments" } });
+  assert.deepEqual(config.agentIds, [getAddress(first), getAddress(second)]);
+  assert.equal(config.aliases?.[first.toLowerCase()], "Research");
+  assert.equal(config.aliases?.[second.toLowerCase()], "Payments");
+  assert.throws(() => parseConfig({ ...config, aliases: { [first]: " " } }), /Invalid agent alias/);
+  assert.throws(() => parseConfig({ ...config, aliases: { [first]: "bad\nname" } }), /Invalid agent alias/);
+});

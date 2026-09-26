@@ -56,6 +56,26 @@ h1 span { color: var(--teal); }
 .notice-warning { border-color: #e0b481; background: var(--warning-soft); color: #70370e; }
 .notice-error { border-color: #d4988e; background: #ffebe8; color: #832b24; }
 
+.managed-section { border-top: 1px solid var(--line-strong); padding: 24px 0 35px; }
+.managed-heading { display: flex; align-items: start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.managed-heading .context-line { display: block; margin-bottom: 7px; }
+.managed-heading h2 { margin-bottom: 5px; }
+.managed-heading p { color: var(--muted); font-size: 13px; line-height: 1.5; margin: 0; }
+.managed-count { display: inline-grid; place-items: center; min-width: 28px; height: 26px; margin-left: 5px; padding: 0 7px; border-radius: 5px; background: var(--teal-soft); color: var(--teal); font: 500 12px "DM Mono", monospace; vertical-align: 2px; }
+.managed-list { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.managed-row { display: grid; grid-template-columns: minmax(170px, 1fr) auto minmax(130px, 180px) auto auto; align-items: center; gap: 12px; padding: 12px 16px; border-top: 1px solid var(--line); }
+.managed-row:first-child { border-top: 0; }
+.managed-identity { min-width: 0; }
+.managed-identity strong, .managed-identity code { display: block; }
+.managed-identity strong { font-size: 13px; margin-bottom: 4px; }
+.managed-identity code { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.managed-status { color: var(--teal); font: 500 10px "DM Mono", monospace; text-transform: uppercase; }
+.managed-status.revoked, .managed-status.unavailable { color: var(--danger); }
+.managed-row input { min-height: 38px; }
+.managed-empty { padding: 20px; margin: 0; color: var(--muted); font-size: 13px; }
+@media (max-width: 1050px) { .managed-row { grid-template-columns: minmax(0, 1fr) auto; } .managed-row input { grid-column: 1; } .managed-row .button { justify-self: start; } }
+@media (max-width: 600px) { .managed-heading { flex-wrap: wrap; } .managed-row { gap: 9px; } .managed-row input { grid-column: 1 / -1; } }
+
 .flow-section { border-top: 1px solid var(--line-strong); }
 .section-head { display: grid; grid-template-columns: 35px minmax(0, 1fr) auto; gap: 18px; align-items: start; padding: 24px 0 20px; }
 .section-number { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 6px; background: var(--nav); color: #d8f4e9; font-size: 11px; }
