@@ -4,9 +4,10 @@ The [owner portal](../portal/index.html) is a local setup tool for a human creat
 
 ## Run
 
-For the interactive local workbench, use `npm run demo`: it starts the chain,
-deploys the factory, and serves this portal with its fresh deployment without
-editing `portal/config.ts`. The steps below are for standalone use.
+The portal is optional. `npm run demo` starts the chain and Service A, but does
+not serve the portal. The Agentic World skill and MCP open a smaller, temporary
+browser wallet page for identity creation; a human wallet still has to approve
+its transaction. Use the full portal for manual owner management or policy editing.
 
 1. Deploy a trusted `AgentAccountFactory` with the chosen EntryPoint address. Record the factory's `implementation()` and configure both addresses under the chain ID in [`portal/config.ts`](../portal/config.ts). The map is empty by default: there is no public deployment to assume.
 2. Run `npm run build:portal` and `npm run serve:portal`, then open `http://localhost:4173` in a browser with an injected owner wallet.

@@ -3,7 +3,10 @@
     "agentic-world": {
       "type": "stdio",
       "command": "node",
-      "args": ["dist/mcp/server.js"]
+      "args": ["dist/mcp/server.js"],
+      "env": {
+        "AGENTIC_WORLD_CONFIG": "${AGENTIC_WORLD_CONFIG}"
+      }
     }
   }
 }
