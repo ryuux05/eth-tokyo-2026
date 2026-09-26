@@ -1,3 +1,5 @@
+import { stringToHex } from "viem";
+
 type WalletProvider = { request(args: { method: string; params?: unknown[] }): Promise<unknown> };
 type Event = { at: string; kind: string; detail: string; owner?: string; agentId?: string };
 type Lookup = { agentId: string; owner: string; ownerRegistered: boolean; report: boolean };
@@ -59,7 +61,7 @@ byId<HTMLButtonElement>("register-wallet").addEventListener("click", async () =>
       setStatus("wallet-state", "Approve the one-time registration message in your wallet. No transaction or gas is required.");
       const challenge = await request("/owner/challenge", { method: "POST", body: JSON.stringify({ owner }) });
       if (challenge.status !== 200) throw new Error(challenge.body.error ?? "Could not request wallet challenge");
-      const signature = await window.ethereum.request({ method: "personal_sign", params: [challenge.body.message, owner] }) as string;
+      const signature = await window.ethereum.request({ method: "personal_sign", params: [stringToHex(challenge.body.message as string), owner] }) as string;
       const registration = await request("/owner/register", { method: "POST", body: JSON.stringify({ owner, nonce: challenge.body.nonce, signature }) });
       if (registration.status !== 200) throw new Error(registration.body.error ?? "Registration was rejected");
     }
@@ -124,6 +126,6 @@ async function refreshEvents(): Promise<void> {
 }
 
 byId<HTMLButtonElement>("refresh-button").addEventListener("click", () => { void refreshEvents().catch(error => setStatus("copy-state", error.message, true)); });
-void request("/health").then(({ body }) => { byId("chain-label").textContent = `CHAIN ${body.chainId} · 127.0.0.1`; }).catch(() => { byId("chain-label").textContent = "SERVICE OFFLINE"; });
+void request("/health").then(({ body }) => { byId("chain-label").textContent = body.chainId === 11155111 ? "SEPOLIA · 11155111" : `CHAIN ${body.chainId} · 127.0.0.1`; }).catch(() => { byId("chain-label").textContent = "SERVICE OFFLINE"; });
 void refreshEvents().catch(() => {});
 setInterval(() => { void refreshEvents().catch(() => {}); }, 3000);

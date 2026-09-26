@@ -2,10 +2,11 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, getAddress, http, isAddress, recoverMessageAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
+import { getAddress, isAddress, recoverMessageAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
-import { agentAccountAbi, agentAccountFactoryAbi, isExpectedAgentClone } from "../sdk/core.js";
-import { DEPLOYMENTS } from "../portal/config.js";
+import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
+import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
+import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
 
 type Permission = "report" | "compute";
 type Enrollment = {
@@ -167,6 +168,7 @@ export async function startDemoService(options: Options) {
           throw new Error("Enrollment challenge is missing or expired");
         enrollmentChallenges.delete(input.nonce);
         const signer = await recoverMessageAddress({ message: pending.message, signature: input.signature as Hex });
+        if (await options.client.getChainId() !== options.chainId) throw new Error("RPC chain mismatch");
         const blockNumber = await options.client.getBlockNumber({ cacheTime: 0 });
         const code = await options.client.getCode({ address: agentId, blockNumber });
         if (!isExpectedAgentClone(code, options.implementation)) throw new Error("This is not an account from the pinned implementation");
@@ -237,16 +239,10 @@ export async function startDemoService(options: Options) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const rpcUrl = process.env.DEMO_RPC_URL ?? "http://127.0.0.1:8545";
-  const client = createPublicClient({ transport: http(rpcUrl) });
-  const chainId = await client.getChainId();
-  const pinned = DEPLOYMENTS[chainId];
-  if (!pinned) throw new Error(`Pin a local factory and implementation for chain ${chainId} in portal/config.ts`);
-  const actual = await client.readContract({ address: pinned.factory, abi: agentAccountFactoryAbi, functionName: "implementation" });
-  if (actual.toLowerCase() !== pinned.implementation.toLowerCase()) throw new Error("Factory implementation does not match the local pin");
-  const running = await startDemoService({ client, chainId, implementation: pinned.implementation,
+  const client = await createVerifiedSepoliaClient(await resolveSepoliaRpcUrl());
+  const running = await startDemoService({ client, chainId: SEPOLIA_CHAIN_ID, implementation: SEPOLIA_DEPLOYMENT.implementation,
     audience: "https://service-a.example", port: Number(process.env.AGENTIC_SERVICE_PORT ?? "8787"),
     operatorToken: process.env.AGENTIC_SERVICE_OPERATOR_TOKEN });
   process.stdout.write(`SERVICE_READY ${JSON.stringify({ url: running.baseUrl, audience: "https://service-a.example",
-    operatorToken: running.operatorToken })}\n`);
+    chainId: SEPOLIA_CHAIN_ID, factory: SEPOLIA_DEPLOYMENT.factory, operatorToken: running.operatorToken })}\n`);
 }

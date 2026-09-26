@@ -31,9 +31,11 @@
     "build:demo-service": "esbuild demo-service/app.ts demo-service/styles.css demo-service/index.html --bundle --platform=browser --format=esm --outdir=demo-service/dist --loader:.html=copy",
     "build:demo-service-b": "esbuild demo-service-b/app.ts demo-service-b/styles.css demo-service-b/index.html --bundle --platform=browser --format=esm --outdir=demo-service-b/dist --loader:.html=copy",
     "serve:demo-service": "node --import tsx demo-service/server.ts",
+    "serve:demo-service-b": "node --import tsx demo-service-b/server.ts",
     "deploy:local-service": "hardhat run scripts/deploy-local-service.ts --network localhost",
     "deploy:sepolia:browser": "hardhat build && node --import tsx scripts/deploy-sepolia-browser.ts",
-    "demo": "node --import tsx scripts/demo.ts",
+    "demo": "npm run build:demo-service && npm run build:demo-service-b && node --import tsx scripts/serve-sepolia.ts",
+    "demo:hardhat": "node --import tsx scripts/demo.ts",
     "demo:local": "hardhat run scripts/local-e2e.ts --network localhost",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit"

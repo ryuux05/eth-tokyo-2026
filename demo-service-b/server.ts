@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, verifyMessage, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
+import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
+import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
 
 type Entitlement = { owner: Address; report: boolean };
 type WalletChallenge = { owner: Address; nonce: Hex; message: string; expiresAt: number };
@@ -214,4 +216,12 @@ export async function startDemoServiceB(options: Options) {
   if (!address || typeof address === "string") throw new Error("Service B did not bind");
   baseUrl = `http://${host}:${address.port}`;
   return { baseUrl, close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) };
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const client = await createVerifiedSepoliaClient(await resolveSepoliaRpcUrl());
+  const running = await startDemoServiceB({ client, chainId: SEPOLIA_CHAIN_ID, implementation: SEPOLIA_DEPLOYMENT.implementation,
+    audience: "https://service-b.example", port: Number(process.env.AGENTIC_SERVICE_B_PORT ?? "8797") });
+  process.stdout.write(`SERVICE_B_READY ${JSON.stringify({ url: running.baseUrl, audience: "https://service-b.example",
+    chainId: SEPOLIA_CHAIN_ID, factory: SEPOLIA_DEPLOYMENT.factory })}\n`);
 }

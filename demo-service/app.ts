@@ -167,5 +167,5 @@ byId<HTMLButtonElement>("refresh-button").addEventListener("click", async () => 
   try { await refresh(); } catch (error) { setStatus(byId("operator-state"), error instanceof Error ? error.message : "Refresh failed", true); }
 });
 
-void request("/health").then(({ body }) => { byId("chain-label").textContent = `CHAIN ${body.chainId} · 127.0.0.1`; }).catch(() => { byId("chain-label").textContent = "SERVICE OFFLINE"; });
+void request("/health").then(({ body }) => { byId("chain-label").textContent = body.chainId === 11155111 ? "SEPOLIA · 11155111" : `CHAIN ${body.chainId} · 127.0.0.1`; }).catch(() => { byId("chain-label").textContent = "SERVICE OFFLINE"; });
 showIdentity();
