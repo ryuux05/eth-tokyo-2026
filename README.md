@@ -188,10 +188,50 @@ not the older pinned Sepolia bytecode or your Secure Enclave/TPM key.
 
 ### Use the skill in Codex or Claude Code
 
-Installing the skill and connecting the MCP are **two separate steps**. The skill
-is instructions for the agent; MCP and the hardware signer run locally on macOS
-or Windows. A GitHub URL alone cannot launch them. For a fresh machine, clone the
-public repository into a stable location and build the local components:
+#### One-command installer (npm release pending)
+
+The `agenticworld` CLI installs both the skill and local MCP. Once the package is
+published, the user-facing command is:
+
+```sh
+npx agenticworld install
+```
+
+Use `--client codex`, `--client claude`, or `--client both` to choose a host;
+otherwise it uses the Codex/Claude Code CLIs found on PATH. An optional
+`--rpc https://your-sepolia-rpc` selects a Sepolia RPC; the public endpoint is the
+default. Put credential-bearing URLs in `AGENTIC_WORLD_RPC_URL` instead of shell
+history. Existing configs keep their RPC unless `--update-rpc` is explicitly
+requested with a new URL and the MCP has been stopped.
+
+The installer keeps its runtime outside the temporary npx cache, registers MCP
+using absolute paths, and installs one skill per client. It reuses existing
+skills; duplicate skills or conflicting/disabled MCP entries are reported,
+never overwritten. Existing agent IDs, aliases, revoked records, and signing
+keys are preserved. Restart Codex/Claude Code, then say
+`agentic-world:create -a "My agent"` to open the wallet-approved creation flow.
+Installation itself creates **no key, identity, or transaction**.
+
+Requirements: Node 22+, a Codex or Claude Code CLI, and macOS with Apple's Swift
+tools or native Windows x64/ARM64 with TPM. Windows needs no Go. No checkout,
+Hardhat, running demo, or external KMS is needed for the published package.
+
+**The package is prepared, not yet published to npm.** To test the installer from
+this checkout before publication:
+
+```sh
+npm run build:installer
+node packages/agenticworld/bin/agenticworld.js install --client codex
+```
+
+See [installer packaging and release steps](packages/agenticworld/README.md).
+`npx install agenticworld` is not the command: that runs a different package
+named `install`.
+
+#### Source-checkout installation
+
+A skill installed alone still needs the local MCP and hardware signer. The
+manual development path remains available:
 
 ```sh
 git clone https://github.com/ryuux05/eth-tokyo-2026.git

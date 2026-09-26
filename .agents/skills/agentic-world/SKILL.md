@@ -7,6 +7,23 @@ Agentic World runs as a local MCP server. This skill teaches Codex how to set it
 
 ## agentic-world:init [--rpc <https-url>]
 
+If MCP tools are already connected and no RPC change was requested, reuse them;
+do not clone or rebuild. For an explicit RPC change, stop the MCP and use the
+installer's `--rpc <url> --update-rpc`, or the source fallback below. The
+`agenticworld` installer sets up this skill and MCP together. Once the official
+npm package is published, run `npx agenticworld install --client codex`, adding
+the user's `--rpc` choice if supplied. Before publication, use the source path
+below (or `npm run build:installer` then
+`node packages/agenticworld/bin/agenticworld.js install --client codex` from an
+existing checkout). Do not install a similarly named third-party package if npm
+returns not found. Run installation in the normal host environment, with approval
+when the agent sandbox requires it; no key or identity is created. On success,
+restart the client and continue with the create/list/portal tools. Do not also
+perform the manual registration below. Installer conflicts require an explicit
+choice, not deleting the user's skill, config, or identities.
+
+Source-checkout fallback:
+
 1. Use a stable, user-owned checkout of `https://github.com/ryuux05/eth-tokyo-2026.git` on `main`. Reuse an existing checkout if supplied. Do not overwrite local changes or silently pull updates. Require Node/npm and macOS with Apple Swift or Windows x64/ARM64; Windows uses bundled verified signer binaries and needs no Go.
 2. In the checkout, run `npm ci` if dependencies are missing, then `npm run build:mcp`, `npm run build:portal`, and `npm run build:signer`. Reuse already built outputs if the checkout has not changed; do not rebuild on every list, portal, or create request. Do not treat a sandboxed `availability` result as a host hardware verdict. Stop on a build or signer self-test failure.
 3. On first setup, offer the default public Sepolia RPC (`https://ethereum-sepolia-rpc.publicnode.com`) or an owner-supplied HTTPS RPC, unless the user already chose. Translate `agentic-world:init --rpc <url>` into `npm run init:mcp -- --rpc <url>`; use `npm run init:mcp` for the default. A credential-bearing URL can instead come from the user's `AGENTIC_WORLD_RPC_URL` environment variable; do not echo API keys or commit the URL. Init verifies chain ID `11155111` before saving the private config and creates no key or identity. The factory and implementation stay pinned in code.
