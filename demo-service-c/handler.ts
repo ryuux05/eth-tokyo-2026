@@ -12,6 +12,7 @@ export type Options = { client: PublicClient; chainId: number; implementation: A
   origin: string; audience: string; stores: ServiceCStores; artifact: { bytecode: Hex; deployedBytecode: Hex } };
 const tokenAbi = parseAbi(["function decimals() view returns (uint8)"]);
 const decisionNames = ["DENY", "ALLOW", "REQUIRE_OWNER_SIGNATURE"] as const;
+class PolicyInputError extends Error {}
 
 function json(response: ServerResponse, status: number, value: unknown): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store",
@@ -61,9 +62,9 @@ export async function createServiceCHandler(options: Options) {
     const [agentCode, targetCode] = await Promise.all([
       options.client.getCode({ address: agentId, blockNumber }), options.client.getCode({ address: target, blockNumber }),
     ]);
-    if (!isExpectedAgentClone(agentCode, options.implementation)) throw new Error("Not an agent from the pinned implementation");
+    if (!isExpectedAgentClone(agentCode, options.implementation)) throw new PolicyInputError("This agent does not match this Service C deployment. Use the latest Service C production site with your current agent identity.");
     if (targetCode?.toLowerCase() !== artifact.deployedBytecode.toLowerCase())
-      throw new Error("Target is not the Service C demo contract. Deploy it from this page or enter its existing address.");
+      throw new PolicyInputError("Target is not the Service C purchase contract. Enter its existing address under Service contract setup.");
     const read = { address: agentId, blockNumber };
     const [owner, revoked, policy, policyHash, policyRevision, decision] = await Promise.all([
       options.client.readContract({ ...read, abi: agentAccountAbi, functionName: "owner" }),
@@ -147,6 +148,6 @@ export async function createServiceCHandler(options: Options) {
         });
         json(response, 200, receipt ? { status: receipt.status, contractAddress: receipt.contractAddress, blockNumber: receipt.blockNumber.toString() } : { status: "pending" });
       } else json(response, 404, { error: "Unknown route" });
-    } catch (error) { if (!response.headersSent) json(response, 400, { error: "Policy check failed. Check agent, target, amount and RPC availability." }); }
+    } catch (error) { if (!response.headersSent) json(response, 400, { error: error instanceof PolicyInputError ? error.message : "Policy check failed. Check agent, target, amount and RPC availability." }); }
   };
 }
