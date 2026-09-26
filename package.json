@@ -22,6 +22,7 @@
     "build:sdk": "tsc --project tsconfig.sdk.json",
     "build:mcp": "tsc --project tsconfig.mcp.json",
     "build:signer": "node --import tsx scripts/build-signer.ts",
+    "init:mcp": "node --import tsx scripts/init-mcp-config.ts",
     "build:signer:windows": "node --import tsx scripts/build-signer.ts --package-windows",
     "verify:signer:windows": "node --import tsx scripts/build-signer.ts --verify-windows-bundle",
     "serve:mcp": "node dist/mcp/server.js",

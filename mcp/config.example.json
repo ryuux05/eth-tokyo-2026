@@ -1,8 +1,6 @@
 {
-  "rpcUrl": "https://YOUR_RPC_ENDPOINT",
+  "rpcUrl": "https://ethereum-sepolia-rpc.publicnode.com",
   "chainId": 11155111,
-  "factory": "0x0000000000000000000000000000000000000003",
-  "implementation": "0x0000000000000000000000000000000000000002",
   "signer": {
     "kind": "secure-enclave",
     "binaryPath": "/absolute/path/to/eth-tokyo-2026/dist/signer/agentic-signer",
