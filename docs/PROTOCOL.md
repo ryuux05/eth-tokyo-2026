@@ -1,6 +1,14 @@
 # Agentic World protocol
 
-Agents need to act under a user's authority without becoming the user. Giving an agent the user's OAuth token, API key, or session collapses the distinction between principal and agent. Agentic World gives the agent its own persistent Ethereum identity and lets independent services recognize it as acting under a user-approved mandate.
+> **Pre-freeze protocol design:** The EIP-7702 account, root-key bootstrap,
+> delegation-pointer verification, and optional `MandateRegistry` described below
+> belong to the earlier prototype. The [v0 architecture freeze](ARCHITECTURE-v0.md)
+> replaces the account/execution design with ERC-4337 + ERC-7579, while keeping
+> independent service authentication and service-local authorization. For the
+> implemented account and exact current limitations, start with
+> [v0 implementation](V0-IMPLEMENTATION.md).
+
+Agents need to authenticate without becoming the human who operates them. Giving an agent the human's OAuth token, API key, or session collapses that distinction. Agentic World gives the agent its own persistent Ethereum identity that independent services can verify. It does not know or enforce the agent's instructions, intent, or offchain behavior.
 
 This document describes the protocol intended for the ETHGlobal Tokyo 2026 prototype. The handoff's unresolved choices remain open where marked below.
 
@@ -9,11 +17,13 @@ This document describes the protocol intended for the ETHGlobal Tokyo 2026 proto
 The protocol separates four facts:
 
 1. **Agent identity:** `0xAGENT` proves who is making the request.
-2. **User mandate:** `0xHUMAN` explicitly approves that agent to act on their behalf, proven independently of the agent's self-reported `owner()` value. The mandate establishes the relationship; it is not the human's login or a blanket resource grant.
+2. **Service association:** A service can link `0xAGENT` to one of its users by explicit local enrollment (`manual`) or by resolving `0xAGENT.owner()` (`owner`). Neither choice proves a behavioral mandate or grants a resource permission.
 3. **Owner execution policy:** The owner decides which onchain calls the operating authenticator may execute autonomously, which need an exact owner signature, and which are denied.
-4. **Service authorization:** Each service decides which requests, if any, that mandated agent may make using its own customer accounts, subscriptions, and access policy.
+4. **Service authorization:** Each service decides which requests, if any, the authenticated agent may make using its own mandates, customer accounts, subscriptions, and access policy.
 
-Ethereum and the agent account provide a shared identity and a way to check current authentication authority. A portable mandate can prove the principal–agent relationship to independent services. A service may grant access directly to `0xAGENT` or permit mandate-backed requests for selected resources already available to the principal. Services maintain their own registration, access rules, challenge records, payments, and sessions. They can verify the agent and mandate without an Agentic World authentication server.
+Ethereum and the agent account provide a shared identity and a way to check current authentication authority. A service may grant access directly to `0xAGENT` or use its chosen association mode as one input to its **own** mandate and entitlement rules. Services maintain their own registration, access rules, replay records, payments, and sessions. They can verify the agent without an Agentic World authentication server.
+
+**An association is not a mandate or permission list.** `manual` mode trusts the service's own enrollment record; `owner` mode reads `owner()` only after pinning the current EIP-7702 implementation and verifying the agent signature. `owner` mode explicitly trusts that the agent root key stays outside the runtime and does not authorize untrusted delegates. Both modes still require the service to check its own account, subscription/entitlement, and whether the requested route permits agents. The historically named `MandateRegistry` is a separate, optional experiment and is not required by either mode.
 
 The account's execution policy governs actions initiated *from the agent account*, such as bounded token purchases. It is separate from a service's resource access policy and does not constrain the EIP-7702 root key.
 
@@ -30,7 +40,7 @@ The account's execution policy governs actions initiated *from the agent account
 - The owner controls lifecycle operations inside the delegated account, including rotating or revoking the authenticator.
 - The authenticator signs routine authentication proofs. Its private key may be held by AWS KMS. It cannot manage identity lifecycle or loosen execution policy.
 
-EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. In the prototype, the intended owner sends `initialize(...)` directly to `0xAGENT`, so the delegated code stores `owner = msg.sender`; a root-signed permit also binds that owner, the authenticator, agent address, chain, nonce, and deadline. Services do not rely on this stored owner value alone for mandate-backed access. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
+EIP-7702 delegation does not initialize account storage. Bootstrap must be one-time and authorized by the root EOA key; an unauthenticated, first-caller-wins initializer is unsafe. In the prototype, the intended owner sends `initialize(...)` directly to `0xAGENT`, so the delegated code stores `owner = msg.sender`; a root-signed permit also binds that owner, the authenticator, agent address, chain, nonce, and deadline. The operating signer cannot change `owner()`. In `owner` mode, services additionally assume the root-key custodian does not later authorize untrusted code. [EIP-7702 security considerations](https://eips.ethereum.org/EIPS/eip-7702#front-running-initialization)
 
 ### Agent creation and bootstrap
 
@@ -69,20 +79,61 @@ sequenceDiagram
 
     Note over A: 0xAGENT is ready
 
-    H->>A: Request agent-root registration permit
-    A-->>H: AgentRegistration signature
-    H->>M: register(0xAGENT, permit)
-    M->>M: Verify agent-root permit
-    M->>M: principalOf(0xAGENT) = msg.sender
+    opt Legacy optional registry experiment
+        H->>A: Request agent-root registration permit
+        A-->>H: AgentRegistration signature
+        H->>M: register(0xAGENT, permit)
+        M->>M: Verify agent-root permit
+        M->>M: principalOf(0xAGENT) = msg.sender
+    end
 
     H->>K: Grant agent runtime signing access
 ```
 
-The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so initialized storage belongs to `0xAGENT`. The owner sends both the initialization and registry-registration transactions directly. `msg.sender` proves who sent each transaction, while the separate agent-root permits prove the agent agreed to initialization and registration. The service **cannot infer historical owner consent from the current implementation and `owner()` alone**: the root key could temporarily delegate to other code, write a false owner into persistent storage, and switch back. The registry's record is independent of that storage. [EIP-7702 storage management](https://eips.ethereum.org/EIPS/eip-7702#storage-management)
+The diagram separates the agent address from its delegated implementation for readability. Delegated code runs in `0xAGENT`'s account context, so initialized storage belongs to `0xAGENT`. The owner sends initialization directly: `msg.sender` supplies the owner, and a separate agent-root permit binds that owner to the setup. The optional registry step is legacy and not needed by either current SDK association mode. A service can use `owner()` under the stated root-key trust assumption, but a current implementation pointer cannot prove all historical delegations: the root key could temporarily authorize other code to change persistent storage. [EIP-7702 storage management](https://eips.ethereum.org/EIPS/eip-7702#storage-management)
 
 The bootstrap permit is EIP-712 with domain `name = "Agentic World AgentAccount"`, `version = "1"`, the intended `chainId`, and `verifyingContract = 0xAGENT`. The `0xAGENT` root EOA signs `AgentInitialization(address agent,address owner,address authenticator,uint256 nonce,uint64 deadline)`. `initialize(...)` requires the signed `owner` to equal its actual `msg.sender`, the signed `agent` to equal `address(this)`, the current one-time bootstrap nonce, and an unexpired deadline. The human's transaction and root permit are separate approvals.
 
-## Reference authentication handshake
+## One-request resource authentication (preferred flow)
+
+The agent already knows the service's HTTPS origin and resource URL from its task, configuration, or API documentation. The chain does not discover or route HTTP services. The first request can be the resource request itself; no `/connect` endpoint or service-issued challenge is required:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Agent
+    participant S as Service
+    participant E as Ethereum / 0xAGENT
+    participant DB as Service DB
+    A->>A: Sign AgentRequest for exact GET /private/report
+    A->>S: GET /private/report + Agent-* proof headers
+    S->>E: Check pinned EIP-7702 pointer
+    opt owner mode
+        S->>E: Read owner() at verification block
+    end
+    S->>E: isValidSignature(request digest, request envelope)
+    E-->>S: 0x1626ba7e
+    S->>S: Atomically consume agent-generated nonce
+    alt manual mode
+        S->>DB: Find user explicitly enrolled with agentId
+    else owner mode
+        S->>DB: Find user by verified owner() address
+    end
+    S->>S: Check service-managed mandate, entitlement and agent-eligible route rules
+    alt Allowed
+        S-->>A: 200 report + optional short Agent-Session
+    else Denied
+        S-->>A: 403; no resource or session returned
+    end
+```
+
+The operating signer signs `AgentRequest(address agentId,bytes32 audienceHash,bytes32 nonce,uint64 issuedAt,uint64 expiresAt,bytes32 methodHash,bytes32 targetHash,bytes32 bodyHash)` in the same agent-account EIP-712 domain. `audienceHash` is the Keccak-256 hash of the service's canonical HTTPS origin. `methodHash` hashes the uppercase ASCII method; `targetHash` hashes the exact origin-form path and raw query (for example `/private/report?year=2026`); `bodyHash` hashes the raw HTTP body bytes, including the empty body. The digest is also bound to `chainId` and `verifyingContract = agentId`. The agent generates a cryptographically random 32-byte nonce; the service enforces a short lifetime and stores each accepted `(agentId, nonce)` with atomic insert-if-absent until at least expiry. ERC-1271 cannot consume an HTTP nonce by itself.
+
+Wire headers are `Agent-ID`, `Agent-Chain-ID`, `Agent-Nonce`, `Agent-Issued-At`, `Agent-Expires-At`, and `Agent-Signature`. The service derives method, target, body hash, and audience from the **actual** request and its trusted configuration—not from client claims—and rejects duplicate proof headers. The request target must be captured before routing or URL rewriting; if a proxy rewrites it, the proxy and application need one documented canonicalization rule. HTTPS is required. A proof for another method, path, query, body, service, chain, or agent fails. For content-negotiated or header-sensitive actions, the service must fix those interpretation rules or extend the signed fields before treating such headers as authority-bearing.
+
+The ERC-1271 signature argument is `0x41575231` (`AWR1`) followed by `abi.encode(RequestProof)`, separating it from the older challenge-authentication envelope. The contract accepts only the structured `AgentRequest` digest and the current operating signer; it does not grant resource access. The service SDK returns an authenticated agent and an optional service user resolved through `manual` or `owner` mode. The service must apply its own permission decision **before returning** the resource or session token to the agent.
+
+### Challenge-based handshake (also supported)
 
 ```text
 Service generates and stores a random, single-use challenge
@@ -109,15 +160,14 @@ sequenceDiagram
     participant K as KMS / Authenticator
     participant S as Service
     participant E as Ethereum / 0xAGENT
-    participant M as MandateRegistry
-
     A->>S: Connect(agentId = 0xAGENT)
 
-    S->>E: Check delegation pointer; read 0xAGENT.owner()
-    E-->>S: Expected implementation / owner hint
-    S->>M: principalOf(0xAGENT)
-    M-->>S: Registered principal or none
-    S->>S: Trust principal only when registry and owner() match
+    S->>E: Check pinned delegation pointer
+    E-->>S: Expected implementation
+    opt owner mode
+        S->>E: Read 0xAGENT.owner() at verification block
+        E-->>S: Owner address
+    end
 
     S->>S: Generate random nonce
     S->>S: Store challenge as unused
@@ -148,7 +198,7 @@ sequenceDiagram
 
     S->>S: Atomically consume nonce
     S->>S: Generate random session token
-    S->>S: Store H(token) → agentId, optional principal, expiry
+    S->>S: Store H(token) → agentId, optional owner, expiry
     S-->>A: Session token (~60 sec)
 
     Note over A,S: Authentication complete
@@ -205,7 +255,7 @@ Before `eth_call`, the service checks:
 
 The service recomputes the digest from those verified fields and the expected domain. A valid ERC-1271 result is followed by atomic challenge consumption and session issuance.
 
-The prototype SDK must read the EIP-7702 delegation pointer at `0xAGENT` and compare it to its configured implementation address for that chain. It then calls methods at **`0xAGENT`**, not at the implementation address. For mandate-backed access it also reads the separately configured `MandateRegistry`. Pinning the current implementation cannot by itself prove that historical storage writes were authorized. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
+The prototype SDK reads the EIP-7702 delegation pointer at `0xAGENT` and compares it to the implementation address supplied in trusted service startup configuration, captured for that SDK instance. It then calls methods at **`0xAGENT`**, not at the implementation address. `owner` mode reads `owner()` there at the same block as ERC-1271 verification; `manual` mode uses service-local enrollment and need not read `owner()`. Neither mode requires a registry. Pinning the current implementation cannot by itself prove that historical storage writes were authorized. A claimed version or ERC-165 response alone is not a security guarantee about arbitrary account code.
 
 The account's ERC-1271 method checks the digest and signature against its current authentication policy. On success it returns the standard magic value `0x1626ba7e`. The method is read-only; it cannot consume the service's challenge. The service therefore consumes the challenge atomically after successful verification, so two concurrent submissions cannot create two sessions from one nonce. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271)
 
@@ -225,7 +275,7 @@ When AWS KMS signs an already computed EIP-712 digest, its request must use `Mes
 
 ### Session and revocation semantics
 
-A successful handshake may produce a short-lived, opaque service-local session. A 60-second lifetime is a demo default, not a protocol rule. The service may cache a *mandate-verified* principal address with the agent ID in that session. The token is a cached authentication result, not the agent's identity, mandate, or a grant of resource access; the service checks its own policy and the principal's current service-side entitlement on use.
+A successful request proof or challenge handshake may produce a short-lived, opaque service-local session. A 60-second lifetime is a demo default, not a protocol rule. In `owner` mode, the service caches the owner address read at authentication; in `manual` mode it stores only the agent ID. The SDK re-runs the service's association callback when reading a session. The token is a cached authentication result, not the agent's identity, a behavioral mandate, or a grant of resource access; the service checks its own policy and current entitlements on use.
 
 ### Requests after session creation
 
@@ -243,18 +293,18 @@ sequenceDiagram
     S->>S: Hash token
     S->>DB: Lookup session
 
-    DB-->>S: agentId = 0xAGENT<br/>verifiedPrincipal = 0xHUMAN or none<br/>expiresAt
+    DB-->>S: agentId = 0xAGENT<br/>optional owner<br/>expiresAt
 
     S->>S: Check session expiry
 
     alt Session valid
         S->>DB: Lookup direct grant for 0xAGENT
         DB-->>S: Direct grant or none
-        S->>DB: If mandated, check principal's account and paid entitlement
-        DB-->>S: Active principal entitlement or none
-        S->>S: Apply service policy for mandate-backed requests
+        S->>DB: Resolve user by manual enrollment or owner wallet
+        DB-->>S: Local user and current entitlement or none
+        S->>S: Apply service's agent-eligible route policy
 
-        alt Direct or mandate-backed access allowed
+        alt Service authorizes agent access
             S->>R: Execute requested operation
             R-->>S: Result
             S-->>A: 200 Result
@@ -269,15 +319,15 @@ sequenceDiagram
 
 Rotating or revoking the authenticator blocks *new* authentication once the service observes the changed chain state. An existing session may remain usable until its expiry unless the service checks an authentication epoch or another revocation signal on each request. Immediate invalidation is an open product decision; the prototype must describe whichever behavior it implements. The root EOA can also change delegated code, so services must not treat a prior verification as a permanent guarantee about current account behavior.
 
-## User mandate and service authorization
+## Service association and authorization
 
-After authenticating `0xAGENT`, a service can check a direct local grant for that agent. Alternatively, it can verify a user mandate, match its principal `0xHUMAN` to an existing paid or registered account, and permit the agent to request selected resources on that principal's behalf. The service must explicitly mark those resources as eligible for mandated agents. Neither agent authentication nor the mandate alone grants resource access, and the agent never receives the human's credential.
+After authenticating `0xAGENT`, the service SDK supports two association modes. In `manual`, the service looks up an explicit enrollment of `agentId` by one of its authenticated users. In `owner`, it reads `0xAGENT.owner()` through the pinned implementation at the authentication block and asks the service's `resolveUser(owner)` callback for a matching verified account. The owner-mode result assumes the agent root key is controlled separately from the runtime and does not authorize untrusted delegates. Neither mode itself grants resource access or a behavioral mandate. The service may also grant access directly to an agent ID without a human association.
 
-For example, Service A has already verified that `0xHUMAN` controls its registered address and has an active paid `dataset.read` entitlement. On first connection, Service A authenticates `0xAGENT`, reads `owner() = 0xHUMAN`, and confirms `MandateRegistry.principalOf(0xAGENT) = 0xHUMAN`. On a dataset request, it checks that the paid entitlement is still active and that its own policy permits mandated agents to request `dataset.read`. It may then serve the data under the agent's *own* short-lived session. Service A can still require a direct agent grant or fresh human approval for `billing.manage`, destructive writes, or any other excluded operation. Service B can make a different choice using the same agent identity and mandate.
+For example, Service A has already verified that `0xHUMAN` controls its registered wallet and has an active paid `dataset.read` entitlement. On the signed dataset request, Service A authenticates `0xAGENT`, obtains `owner() = 0xHUMAN` in owner mode, and resolves that wallet to its local user. It then checks that the subscription is active and its own rules permit agents to request `dataset.read`. It may serve the data under the agent's *own* short-lived session. Service A can still require explicit manual enrollment or fresh human approval for billing changes, destructive writes, or any excluded operation. Service B can make a different choice using the same agent identity.
 
-This feature depends on two independent facts: the principal genuinely mandated this agent, and the service intentionally allows the particular request. Neither a self-reported `owner()` nor a pinned current implementation proves the mandate, because another delegate could previously have modified the same storage. The registry record is written by a transaction from the principal, guarded by an agent-root permit, and cannot be rewritten by the agent's EIP-7702 storage operations. The current registry state is shared across services; an existing service session may still cache an older result until expiry unless it rechecks on each request.
+The `owner()` field is initialized from the human transaction and has no owner setter in `AgentAccount`. It remains mutable under a different EIP-7702 delegation authorized by the root key. Current pointer pinning detects an unexpected delegate *now*, not every historical delegate. This is the explicit trust boundary of owner mode, not a reason to require every service to use another contract. Services that cannot accept it should choose manual enrollment or require a separate human-signed proof.
 
-### Onchain mandate registration for the prototype
+### Legacy optional onchain owner-binding registration
 
 The owner sends `MandateRegistry.register(agent, nonce, deadline, agentRootSignature)` directly. The registry stores `principalOf(agent) = msg.sender`. The agent root EOA signs this EIP-712 permit, which is separate from the operating authenticator's `AgentAuthentication` proof:
 
@@ -301,28 +351,28 @@ agentRootSignature = signature by the 0xAGENT root EOA
 
 The principal's transaction is the approval: no separate EIP-712 owner signature is needed for direct registration. The agent-root permit binds the agent, principal, registry, chain, nonce, and deadline so someone else cannot register the agent first. The registry rejects duplicate registrations; only the current principal can call `revoke(agent)`. After revocation, its nonce advances, so an old registration permit cannot be replayed. A relayer would change `msg.sender`, so relayed registration requires a future principal-signed variant.
 
-The registry means: “This principal approved this agent as acting on their behalf.” It does **not** authorize account spending, transfer the principal's session, or compel any service to grant access. At authentication, the SDK checks the expected registry address, reads the active `principalOf(agent)`, and compares it to `0xAGENT.owner()`. Only then may it expose a *mandate-verified principal* to service code. Revocation updates the shared onchain fact immediately; an already-issued session remains bounded by the service's chosen lifetime unless the service rechecks registry state on each request.
+The registry means only: “This human registered an association with this agent.” It does **not** certify the agent's intent, manage a behavioral mandate, authorize account spending, transfer the human's session, or compel any service to grant access. If configured, the SDK reads the active `principalOf(agent)` and compares it to `0xAGENT.owner()`. Only then may it expose a *binding-verified human address* to service code. Revocation updates the shared onchain fact immediately; an already-issued session remains bounded by the service's chosen lifetime unless the service rechecks registry state on each request.
 
-## Per-request authentication
+## Subsequent requests
 
-A service may require a fresh signature for each request or for selected sensitive actions. That message must additionally bind the HTTP method, canonical path, body hash, and a fresh replay value. The session establishment message above does not need request fields. Per-request signing is optional for the hackathon prototype.
+The first resource request can carry a request-bound proof as above. The agent may continue signing every request or use the optional short service-local session. A service may demand fresh request signatures for sensitive actions. When using a session, the service must still apply its own authorization and revocation policy.
 
 ## Account execution policy
 
 The delegated account now enforces an owner-defined, default-deny [execution policy](POLICY.md) for actions submitted by the operating authenticator. A matching rule returns `ALLOW`, `REQUIRE_OWNER_SIGNATURE`, or `DENY`. The constrained v1 vocabulary checks target, selector, native value, and—only for the explicit demo purchase ABI—token and amount. Required approvals bind the exact agent, chain, target, native value, calldata hash, current policy hash and revision, approval nonce, and deadline. Only the owner can change the policy; service authentication signatures cannot approve execution.
 
-This is a separate authorization boundary from service ACLs and the mandate registry. The policy bounds the declared amount of `purchaseCompute(address,uint256)` on a pinned target, not arbitrary ERC-20 transfers or cumulative spend. The root EOA retains ultimate EIP-7702 authority and is outside the delegated execution policy's control. The owner can author policy and register a mandate in the [owner portal](PORTAL.md) after the agent is bootstrapped.
+This is a separate authorization boundary from service ACLs and the optional owner-binding registry. The policy bounds the declared amount of `purchaseCompute(address,uint256)` on a pinned target, not arbitrary ERC-20 transfers or cumulative spend. The root EOA retains ultimate EIP-7702 authority and is outside the delegated execution policy's control. The owner can author policy and register an optional binding in the [owner portal](PORTAL.md) after the agent is bootstrapped.
 
 ## Demo acceptance cases
 
-- The same `0xAGENT` authenticates independently to two services using one operating key, without sharing their challenge or session databases.
-- A proof issued for Service A fails at Service B; an expired or already consumed challenge fails at Service A.
+- The same `0xAGENT` authenticates independently to two services using one operating key, without sharing their nonce or session databases.
+- A signed request for Service A fails at Service B; an expired or already consumed request nonce fails at Service A.
 - The service denies a resource when its local permission is absent, even after successful authentication.
-- A registered and paid principal can mandate an agent to request a service-approved resource without giving the agent human credentials; a request excluded by service policy is still denied.
-- An agent that merely claims someone else's paid address through an untrusted `owner()` implementation cannot establish that person's mandate.
+- A service may use manual enrollment or owner association as one input to its own paid-account and route rules without giving the agent human credentials; a request excluded by service policy is still denied.
+- The service rejects an agent whose current EIP-7702 pointer is not its pinned implementation, even if that agent claims a paid user's address.
 - After the owner rotates the authenticator, the old key cannot create a new session and the new key can, while `0xAGENT` remains unchanged.
 - The operating key cannot approve an owner-only action or expand its own execution limits.
 
 ## Decisions still open
 
-The contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, an owner-transaction mandate registry, and a constrained v1 execution policy with one token-purchase action shape. The two SDKs choose canonical HTTPS origins and share a tested signature envelope. Remaining decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, broader ERC-20 rules, and the independent-service demo. These are prototype choices until that demo validates them end to end.
+The contracts choose a pinned EIP-7702 implementation, root-authorized bootstrap, a currently optional owner-binding registry (historically named `MandateRegistry`), and a constrained v1 execution policy with one token-purchase action shape. The two SDKs choose canonical HTTPS origins and share tested request and challenge signature envelopes. Whether the owner-binding registry remains in the core protocol is still open. Other decisions include optional authenticator expiry and epoch, immediate session invalidation, deployment networks and addresses, broader ERC-20 rules, and the independent-service demo.
