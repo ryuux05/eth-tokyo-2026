@@ -1,0 +1,13 @@
+@import "../demo-service/styles.css";
+
+.intro{max-width:1040px}
+.intro h1{font-size:clamp(38px,5vw,64px);line-height:1.08;letter-spacing:-.035em}
+.button.secondary{background:#fff;color:#132d2e;border-color:#9fb9b4}
+.button.secondary:hover{border-color:#006d66}
+.wallet-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:22px}
+.wallet-actions code{color:#506768;font-size:13px;max-width:100%}
+.owner-summary{margin-top:22px}
+.main-column .section-head code{font-size:13px;overflow-wrap:anywhere}
+.test-column .result+.result{margin-top:10px}
+.event[data-kind="AUTH_REQUIRED"] .event-kind,.event[data-kind="SESSION_DENIED"] .event-kind{color:#a33b34}
+@media(max-width:620px){.wallet-actions{align-items:stretch;flex-direction:column}.wallet-actions .button{width:100%}.intro h1{font-size:38px}}

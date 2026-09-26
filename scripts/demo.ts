@@ -6,11 +6,13 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, http, parseAbiItem, type Address } from "viem";
 import { startDemoService } from "../demo-service/server.js";
+import { startDemoServiceB } from "../demo-service-b/server.js";
 import { signerPublicKey } from "../mcp/local-signer.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let rpcPort = 8545;
 let servicePort = 8787;
+let serviceBPort = 8797;
 let rpcUrl = `http://127.0.0.1:${rpcPort}`;
 const configPath = resolve(root, ".agentic-world.demo.json");
 const statePath = resolve(root, ".agentic-world.demo-state.json");
@@ -23,6 +25,7 @@ type Deployment = { chainId: number; entryPoint: Address; factory: Address; impl
   deploymentBlockNumber: string; deploymentBlockHash: string };
 let node: ChildProcess | undefined;
 let service: Awaited<ReturnType<typeof startDemoService>> | undefined;
+let serviceB: Awaited<ReturnType<typeof startDemoServiceB>> | undefined;
 let eventTimer: ReturnType<typeof setInterval> | undefined;
 let stopping = false;
 let runtimeDeployment: Deployment | undefined;
@@ -88,7 +91,8 @@ async function writeMcpConfig(deployment: Deployment, agentId?: Address): Promis
 function demoState(): object | undefined {
   if (!runtimeDeployment) return undefined;
   return { rpcUrl, serviceUrl: `http://127.0.0.1:${servicePort}`,
-    audience: "https://service-a.example", chainId: runtimeDeployment.chainId,
+    audience: "https://service-a.example", serviceBUrl: `http://127.0.0.1:${serviceBPort}`,
+    serviceBAudience: "https://service-b.example", chainId: runtimeDeployment.chainId,
     factory: runtimeDeployment.factory, implementation: runtimeDeployment.implementation,
     ...(runtimeAgent ? { agentId: runtimeAgent } : {}) };
 }
@@ -103,6 +107,7 @@ async function stop(exitCode = 0): Promise<void> {
   if (stopping) return;
   stopping = true;
   if (eventTimer) clearInterval(eventTimer);
+  if (serviceB) await serviceB.close().catch(() => {});
   if (service) await service.close().catch(() => {});
   if (node && node.exitCode === null) node.kill("SIGTERM");
   process.exitCode = exitCode;
@@ -112,9 +117,9 @@ process.once("SIGINT", () => { void stop(0); });
 process.once("SIGTERM", () => { void stop(0); });
 
 try {
-  [rpcPort, servicePort] = await Promise.all([firstFree(8545), firstFree(8787)]);
+  [rpcPort, servicePort, serviceBPort] = await Promise.all([firstFree(8545), firstFree(8787), firstFree(8797)]);
   rpcUrl = `http://127.0.0.1:${rpcPort}`;
-  process.stdout.write("Building contracts and Service A…\n");
+  process.stdout.write("Building contracts, Service A, and Service B…\n");
   await run("npm", ["run", "build:demo"]);
   node = spawn(hardhatPath, ["node", "--hostname", "127.0.0.1", "--port", String(rpcPort)],
     { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
@@ -134,6 +139,8 @@ try {
   await writeMcpConfig(deployment);
   service = await startDemoService({ client, chainId: deployment.chainId, implementation: deployment.implementation,
     audience: "https://service-a.example", port: servicePort });
+  serviceB = await startDemoServiceB({ client, chainId: deployment.chainId, implementation: deployment.implementation,
+    audience: "https://service-b.example", port: serviceBPort });
   await writeDemoState();
   let cursor = await client.getBlockNumber({ cacheTime: 0 });
   let selectedAgent: Address | undefined;
@@ -164,7 +171,7 @@ try {
     finally { checking = false; }
   }, 3000);
   node.once("exit", code => { if (!stopping) { process.stderr.write(`Hardhat node stopped (${code}). Shutting down demo.\n`); void stop(1); } });
-  process.stdout.write(`\nAGENTIC WORLD DEMO READY\nService A:    ${service.baseUrl}\nOperator key: ${service.operatorToken}\nChain:        ${rpcUrl} (31337)\nFactory:      ${deployment.factory}\nImplementation: ${deployment.implementation}\nMCP config:   ${configPath}\nAgent discovery: ${statePath}\n\n`);
+  process.stdout.write(`\nAGENTIC WORLD DEMO READY\nService A (manual agent registration): ${service.baseUrl}\nService B (register your wallet):     ${serviceB.baseUrl}\nOperator key for Service A:          ${service.operatorToken}\nChain:                               ${rpcUrl} (31337)\nFactory:                             ${deployment.factory}\nImplementation:                      ${deployment.implementation}\nMCP config:                          ${configPath}\nAgent discovery:                     ${statePath}\n\n`);
   process.stdout.write(`The repo skill is already at .agents/skills/agentic-world/SKILL.md. MCP and signer setup are separate from this demo:\n`);
   process.stdout.write("npm run build:mcp\nnpm run build:signer\n");
   process.stdout.write(`Then register MCP in Codex once:\n`);

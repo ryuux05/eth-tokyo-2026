@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a2c">
+  <title>Service B · Owner association</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">A<span>·</span>W</span><span>Agentic World <span class="slash">/</span> Service B</span></div>
+    <span class="top-note">OWNER ASSOCIATION <span class="live-dot" aria-hidden="true"></span> <span id="chain-label">CONNECTING</span></span>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <p class="eyebrow">SERVICE-OWNED AUTHORIZATION <span>WALLET → AGENT</span></p>
+      <h1>Register yourself<span class="period">.</span><br>Let the agent prove itself.</h1>
+      <p class="lede">Your wallet becomes a Service B customer. An agent still needs its own onchain identity and authenticator before it can access your private report.</p>
+    </div>
+    <div class="workbench">
+      <section class="main-column" aria-label="Register owner wallet and inspect agent">
+        <div class="section-head"><span class="step">01</span><div><h2>Register your wallet</h2><p>Sign a one-time message to prove control. This costs no gas and does not give Service B your wallet key.</p></div></div>
+        <div class="wallet-actions"><button id="register-wallet" class="button primary" type="button">Connect and register wallet</button><code id="wallet-address">No wallet connected</code></div>
+        <p id="wallet-state" class="inline-state" role="status">No owner wallet registered in this service yet.</p>
+        <div class="identity-row owner-summary"><div><span class="mini-label">SERVICE B REPORT ENTITLEMENT</span><strong id="entitlement-value">Not registered</strong></div><div><span class="mini-label">AGENT ASSOCIATION</span><strong>Checked from onchain owner()</strong></div></div>
+
+        <div class="section-head separated"><span class="step">02</span><div><h2>Create an agent identity</h2><p>In Codex, use <code>$agentic-world agentic-world:create</code>. Approve the account creation with the same wallet you registered above.</p></div></div>
+        <p class="inline-state">Service B never enrolls agent IDs manually. It reads <code>owner()</code> from the pinned AgentAccount after the agent proves its signature.</p>
+        <form id="inspect-form" class="inline-form">
+          <label class="field grow" for="agent-id"><span>AGENT ACCOUNT · 0xAGENT</span><input id="agent-id" type="text" autocomplete="off" spellcheck="false" placeholder="Paste the ID returned by Codex" required></label>
+          <button class="button secondary" type="submit">Check association</button>
+        </form>
+        <p id="agent-state" class="inline-state" role="status">No agent account checked yet.</p>
+        <div id="agent-details" class="identity-row" hidden><div><span class="mini-label">ONCHAIN OWNER</span><code id="agent-owner"></code></div><div><span class="mini-label">SERVICE ACCESS</span><strong id="agent-access"></strong></div></div>
+      </section>
+      <aside class="test-column" aria-label="Before and after access test">
+        <div class="test-heading"><span class="eyebrow">LIVE TEST · SERVICE B</span><h2>See the boundary</h2><p>Same private resource, two different outcomes. The agent must prove its own identity; wallet registration alone is not a session.</p></div>
+        <div class="test-step"><div class="test-index">A</div><div class="test-body"><h3>Before: no agent identity</h3><p>Request the report without an AgentSession. Service B must return <code>401</code>.</p><button id="before-button" class="button light" type="button">Try without an agent</button></div></div>
+        <div class="test-step last"><div class="test-index">B</div><div class="test-body"><h3>After: agent authenticates</h3><p>Ask Codex to request this report using Agentic World. It obtains a service challenge, signs locally, and sends the proof to Service B.</p><button id="copy-agent-prompt" class="button light" type="button">Copy agent instruction</button><p id="copy-state" class="session-state" role="status">Paste the instruction into the Codex session with your new identity.</p></div></div>
+        <div id="before-result" class="result empty" role="status"><span class="result-code">—</span><div><strong>Before request not tried</strong><p>No AgentSession has been sent.</p></div></div>
+        <div id="after-result" class="result empty" role="status"><span class="result-code">—</span><div><strong>Waiting for agent access</strong><p>A successful request from Codex will appear here automatically.</p></div></div>
+      </aside>
+    </div>
+    <section class="activity" aria-label="Service B decisions"><div class="activity-heading"><div><span class="eyebrow">SERVICE B DECISIONS</span><h2>Live activity</h2></div><button id="refresh-button" type="button" class="text-button">Refresh</button></div><div id="events" class="events"><p>No decisions yet.</p></div></section>
+    <footer><span>AGENTIC WORLD / SERVICE B</span><span>Wallet registration is local to this service. Agent identity is onchain.</span></footer>
+  </main>
+</body>
+</html>
