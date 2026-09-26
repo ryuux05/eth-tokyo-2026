@@ -120,7 +120,12 @@ process.once("SIGINT", () => { void stop(0); });
 process.once("SIGTERM", () => { void stop(0); });
 
 try {
-  [rpcPort, servicePort, serviceBPort] = await Promise.all([firstFree(8545), firstFree(8787), firstFree(8797)]);
+  // Wallets keep the RPC URL for chain 31337. Moving Hardhat to another port
+  // would leave the wallet connected to a different local node.
+  await assertFree(rpcPort).catch(() => {
+    throw new Error("Hardhat RPC port 8545 is occupied. Stop the earlier npm run demo/Hardhat node; this demo will not switch ports because your wallet may connect to the wrong node.");
+  });
+  [servicePort, serviceBPort] = await Promise.all([firstFree(8787), firstFree(8797)]);
   rpcUrl = `http://127.0.0.1:${rpcPort}`;
   process.stdout.write("Building contracts, Service A, and Service B…\n");
   await run("npm", ["run", "build:demo"]);
