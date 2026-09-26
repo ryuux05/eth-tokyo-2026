@@ -18,9 +18,10 @@
   },
   "scripts": {
     "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service",
+    "build:demo": "hardhat build && npm run build:demo-service",
     "build:sdk": "tsc --project tsconfig.sdk.json",
     "build:mcp": "tsc --project tsconfig.mcp.json",
-    "build:signer": "mkdir -p dist/signer && swiftc -module-cache-path dist/signer/module-cache -o dist/signer/agentic-signer signer/AgenticSigner.swift && dist/signer/agentic-signer self-test",
+    "build:signer": "node --import tsx scripts/build-signer.ts",
     "serve:mcp": "node dist/mcp/server.js",
     "build:portal": "esbuild portal/main.ts portal/styles.css portal/index.html --bundle --platform=browser --format=esm --outdir=portal/dist --loader:.html=copy",
     "serve:portal": "python3 -m http.server 4173 --directory portal/dist",

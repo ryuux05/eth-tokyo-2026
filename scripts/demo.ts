@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
+import { rename, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPublicClient, http, parseAbiItem, type Address } from "viem";
@@ -10,10 +10,8 @@ import { signerPublicKey } from "../mcp/local-signer.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 let rpcPort = 8545;
-let portalPort = 4173;
 let servicePort = 8787;
 let rpcUrl = `http://127.0.0.1:${rpcPort}`;
-let portalUrl = `http://127.0.0.1:${portalPort}`;
 const configPath = resolve(root, ".agentic-world.demo.json");
 const statePath = resolve(root, ".agentic-world.demo-state.json");
 const signerPath = resolve(root, "dist/signer/agentic-signer");
@@ -24,7 +22,6 @@ const createdP256 = parseAbiItem("event AgentCreatedP256(address indexed agent,a
 type Deployment = { chainId: number; entryPoint: Address; factory: Address; implementation: Address;
   deploymentBlockNumber: string; deploymentBlockHash: string };
 let node: ChildProcess | undefined;
-let portal: Server | undefined;
 let service: Awaited<ReturnType<typeof startDemoService>> | undefined;
 let eventTimer: ReturnType<typeof setInterval> | undefined;
 let stopping = false;
@@ -78,37 +75,10 @@ async function waitForNode(child: ChildProcess): Promise<void> {
   throw new Error("Hardhat node did not become ready within 20 seconds");
 }
 
-async function startPortal(deployment: Deployment): Promise<Server> {
-  const files: Record<string, { file: string; type: string }> = {
-    "/": { file: "index.html", type: "text/html" },
-    "/index.html": { file: "index.html", type: "text/html" },
-    "/main.js": { file: "main.js", type: "text/javascript" },
-    "/styles.css": { file: "styles.css", type: "text/css" },
-  };
-  const server = createServer(async (request, response) => {
-    if (request.headers.host !== `127.0.0.1:${portalPort}`) { response.writeHead(403).end(); return; }
-    const path = new URL(request.url ?? "/", portalUrl).pathname;
-    if (request.method === "GET" && path === "/demo-deployment.json") {
-      response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(deployment));
-      return;
-    }
-    const match = files[path];
-    if (request.method !== "GET" || !match) { response.writeHead(404).end(); return; }
-    try {
-      const body = await readFile(resolve(root, "portal/dist", match.file));
-      response.writeHead(200, { "content-type": `${match.type}; charset=utf-8`, "cache-control": "no-store", "x-content-type-options": "nosniff" }).end(body);
-    } catch { response.writeHead(500).end("Portal build missing"); }
-  });
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(portalPort, "127.0.0.1", () => { server.off("error", reject); resolve(); });
-  });
-  return server;
-}
-
 async function writeMcpConfig(deployment: Deployment, agentId?: Address): Promise<void> {
   const value = { rpcUrl, chainId: deployment.chainId, factory: deployment.factory,
-    implementation: deployment.implementation, ...(agentId ? { agentId } : {}),
+    implementation: deployment.implementation, deploymentBlockNumber: deployment.deploymentBlockNumber,
+    deploymentBlockHash: deployment.deploymentBlockHash, ...(agentId ? { agentId } : {}),
     signer: { kind: "secure-enclave", binaryPath: signerPath, label: signerLabel } };
   const temp = `${configPath}.${randomBytes(4).toString("hex")}.tmp`;
   await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -117,7 +87,7 @@ async function writeMcpConfig(deployment: Deployment, agentId?: Address): Promis
 
 function demoState(): object | undefined {
   if (!runtimeDeployment) return undefined;
-  return { rpcUrl, portalUrl, serviceUrl: `http://127.0.0.1:${servicePort}`,
+  return { rpcUrl, serviceUrl: `http://127.0.0.1:${servicePort}`,
     audience: "https://service-a.example", chainId: runtimeDeployment.chainId,
     factory: runtimeDeployment.factory, implementation: runtimeDeployment.implementation,
     ...(runtimeAgent ? { agentId: runtimeAgent } : {}) };
@@ -134,7 +104,6 @@ async function stop(exitCode = 0): Promise<void> {
   stopping = true;
   if (eventTimer) clearInterval(eventTimer);
   if (service) await service.close().catch(() => {});
-  if (portal) await new Promise<void>(resolve => portal!.close(() => resolve()));
   if (node && node.exitCode === null) node.kill("SIGTERM");
   process.exitCode = exitCode;
 }
@@ -143,12 +112,10 @@ process.once("SIGINT", () => { void stop(0); });
 process.once("SIGTERM", () => { void stop(0); });
 
 try {
-  [rpcPort, portalPort, servicePort] = await Promise.all([firstFree(8545), firstFree(4173), firstFree(8787)]);
+  [rpcPort, servicePort] = await Promise.all([firstFree(8545), firstFree(8787)]);
   rpcUrl = `http://127.0.0.1:${rpcPort}`;
-  portalUrl = `http://127.0.0.1:${portalPort}`;
-  process.stdout.write("Building contracts, SDK, MCP, pages, and local signer…\n");
-  await run("npm", ["run", "build"]);
-  await run("npm", ["run", "build:signer"]);
+  process.stdout.write("Building contracts and Service A…\n");
+  await run("npm", ["run", "build:demo"]);
   node = spawn(hardhatPath, ["node", "--hostname", "127.0.0.1", "--port", String(rpcPort)],
     { cwd: root, stdio: ["ignore", "pipe", "pipe"] });
   let nodeOutput = "";
@@ -165,7 +132,6 @@ try {
   const client = createPublicClient({ transport: http(rpcUrl) });
   if (deployment.chainId !== 31337 || await client.getChainId() !== 31337) throw new Error("Local chain mismatch");
   await writeMcpConfig(deployment);
-  portal = await startPortal(deployment);
   service = await startDemoService({ client, chainId: deployment.chainId, implementation: deployment.implementation,
     audience: "https://service-a.example", port: servicePort });
   await writeDemoState();
@@ -198,11 +164,13 @@ try {
     finally { checking = false; }
   }, 3000);
   node.once("exit", code => { if (!stopping) { process.stderr.write(`Hardhat node stopped (${code}). Shutting down demo.\n`); void stop(1); } });
-  process.stdout.write(`\nAGENTIC WORLD DEMO READY\nOwner portal: ${portalUrl}\nService A:    ${service.baseUrl}\nOperator key: ${service.operatorToken}\nChain:        ${rpcUrl} (31337)\nFactory:      ${deployment.factory}\nMCP config:   ${configPath}\nAgent discovery: ${statePath}\n\n`);
-  process.stdout.write(`The repo skill is already at .agents/skills/agentic-world/SKILL.md. For Codex, register MCP once:\n`);
+  process.stdout.write(`\nAGENTIC WORLD DEMO READY\nService A:    ${service.baseUrl}\nOperator key: ${service.operatorToken}\nChain:        ${rpcUrl} (31337)\nFactory:      ${deployment.factory}\nImplementation: ${deployment.implementation}\nMCP config:   ${configPath}\nAgent discovery: ${statePath}\n\n`);
+  process.stdout.write(`The repo skill is already at .agents/skills/agentic-world/SKILL.md. MCP and signer setup are separate from this demo:\n`);
+  process.stdout.write("npm run build:mcp\nnpm run build:signer\n");
+  process.stdout.write(`Then register MCP in Codex once:\n`);
   process.stdout.write(`codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG=${configPath} -- node ${resolve(root, "dist/mcp/server.js")}\n\n`);
-  process.stdout.write(`Provision your own Secure Enclave key when ready: ${signerPath} provision ${signerLabel}\n`);
-  process.stdout.write("Create the agent in the owner portal, then open a new Codex session from this repo. Ctrl+C stops the demo.\n");
+  process.stdout.write(`The first no-argument agentic_create_identity call creates or reuses the Secure Enclave key '${signerLabel}'.\n`);
+  process.stdout.write("Ask the skill to create your identity. Its one-time localhost page opens your browser; connect your owner wallet and confirm the factory transaction. Ctrl+C stops the demo.\n");
 } catch (error) {
   process.stderr.write(`Demo startup failed: ${error instanceof Error ? error.message : String(error)}\n`);
   await stop(1);
