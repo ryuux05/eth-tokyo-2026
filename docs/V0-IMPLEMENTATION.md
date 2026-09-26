@@ -28,7 +28,7 @@ The [owner portal](PORTAL.md) is a three-step Protocol Workbench: create or veri
 
 ## What remains before a live demo
 
-- Deploy and pin a real ERC-4337 EntryPoint and factory on the selected chain; integrate a bundler and test a complete UserOperation, including deposits/gas, nonce handling, simulation, and execution. The current `MockAgentEntryPoint` tests the account caller boundary and policy hook, **not** ERC-4337 interoperability.
+- Deploy and pin an ERC-4337 EntryPoint and factory on the selected chain; integrate a bundler and test simulation, gas estimation, and execution on that network. Local tests cover the mock caller boundary plus a signed, funded UserOperation through the official EntryPoint v0.8 contract, including nonce advancement and replay rejection, but **not** bundler interoperability.
 - Connect a real KMS signer and build two independent HTTP services with durable, atomic nonce/session stores and service-owned authorization. The current tests use in-memory stores.
 - Define and test a canonical MCP wire format if MCP is part of the demo. Current request signing is HTTP-specific.
 - Add independent security review, especially around hook reentrancy, token behavior, owner-key custody, RPC consistency/reorgs, and service replay storage. Do not treat local tests as an audit.

@@ -6,7 +6,7 @@ The v0 account uses ERC-4337 for UserOperation validation and execution and a de
 
 | Layer | Implemented locally | Remaining completion gate |
 | --- | --- | --- |
-| Account and modules | `AgentAccount4337`, `AgentAccountFactory`, `AgentValidator`, `AgentPolicyHook`, `PolicyEngine`; deterministic initialized clone, owner-only lifecycle, fixed modules, ERC-1271, default-deny single-call policy | Test against a real configured EntryPoint/bundler, then deploy and verify trusted addresses on the chosen chain; security review |
+| Account and modules | `AgentAccount4337`, `AgentAccountFactory`, `AgentValidator`, `AgentPolicyHook`, `PolicyEngine`; deterministic initialized clone, owner-only lifecycle, fixed modules, ERC-1271, default-deny single-call policy; local EntryPoint v0.8 operation test | Integrate a bundler, then deploy and verify trusted addresses on the chosen chain; security review |
 | Core SDK | Shared account/factory ABIs, typed request/challenge/owner-approval data, clone-code check, policy encoding, execution calldata encoder | Version a deployment manifest and test against live deployed bytecode |
 | Agent SDK | Injected digest signer, exact HTTP request and challenge proofs, `userOpHash` signing helper | Real KMS adapter and a complete UserOperation build/fund/submit/receipt path |
 | Service SDK | `AgenticWorld` manual/owner association, pinned account-code and ERC-1271 checks, request nonce and challenge flows, local session interface | Durable atomic stores, HTTP middleware, service-specific permissions, reorg/freshness policy |
@@ -14,7 +14,7 @@ The v0 account uses ERC-4337 for UserOperation validation and execution and a de
 | Service A and Service B | Not built | Two separate backends independently verify the same agent and enforce different local entitlements |
 | Demo agent | Not built | Exercise both services plus the 2/20 token-policy case without human credentials |
 
-The contract tests currently use `MockAgentEntryPoint`, a caller-boundary fixture. They do **not** establish full ERC-4337 interoperability, gas behavior, nonce handling, or bundler support. The repository has no public factory/EntryPoint deployment, live KMS adapter, production nonce/session stores, running HTTP services, or canonical MCP message format. Do not call the demo end-to-end until those gates are met.
+The tests use both `MockAgentEntryPoint`, a caller-boundary fixture, and the official EntryPoint v0.8 contract locally. The latter covers a funded, signed UserOperation, signature rejection, nonce/replay handling, and service SDK authentication. It does **not** establish bundler support, gas estimation, or public-network behavior. The repository has no public factory/EntryPoint deployment, live KMS adapter, production nonce/session stores, running HTTP services, or canonical MCP message format. Do not call the network demo end-to-end until those gates are met.
 
 ## Contract and account gate
 
@@ -50,4 +50,4 @@ npm test
 npm run typecheck
 ```
 
-Passing local tests is a prototype milestone, not a public deployment, audit, or proof of real bundler interoperability. MCP request signing needs its own canonical wire format before it can be claimed as implemented.
+Passing local tests is a prototype milestone, not a public deployment, audit, or proof of bundler interoperability. MCP request signing needs its own canonical wire format before it can be claimed as implemented.

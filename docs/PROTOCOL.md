@@ -97,7 +97,7 @@ An agent runtime asks its operating key to sign the canonical `userOpHash` for `
 
 Policy defaults to `DENY`. Ordered rules match target, selector, native value, and—for the narrow demo action—`purchaseCompute(address,uint256)` token and amount. A matching rule yields `ALLOW`, `REQUIRE_OWNER_SIGNATURE`, or `DENY`. For the middle case, `executeWithApproval` carries a separate owner EIP-712 signature bound to exact calldata, target, value, policy hash/revision, nonce, deadline, agent, and chain. A service authentication proof cannot satisfy that owner approval. See [policy format](POLICY.md). This is a **per-call** restriction, not a cumulative budget or a general ERC-20 spending firewall.
 
-The local tests use a mock EntryPoint caller boundary. They do not yet prove full integration with a canonical EntryPoint, bundler, deposits, gas accounting, or network execution. Those are [implementation gates](IMPLEMENTATION.md), not claims of v0 completion.
+Local tests cover the mock caller boundary and an operation through the official EntryPoint v0.8 contract, including a deposit, signature rejection, nonce advancement, replay rejection, and policy-allowed execution. The test submits directly to `handleOps`; it does **not** prove bundler interoperability, public-network execution, gas estimation, or production deployment. Those remain [implementation gates](IMPLEMENTATION.md).
 
 ## Acceptance and remaining choices
 

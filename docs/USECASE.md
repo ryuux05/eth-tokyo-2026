@@ -37,7 +37,7 @@ If a KMS-backed signer is replaced or compromised, the owner calls `rotateAuthen
 
 The owner sets a default-deny execution policy through the portal. For the narrow demo action `purchaseCompute(address,uint256)` on a pinned target, a 2-token call can match an autonomous `ALLOW` rule while a 20-token call can require an exact owner signature. The operating signer signs an ERC-4337 UserOperation; the fixed ERC-7579 `AgentPolicyHook` checks the action before execution and token spend afterward. The service separately decides whether that purchase earns any resource entitlement.
 
-**Acceptance:** the small call succeeds under its rule; the larger call needs an owner approval bound to that exact action, policy revision, nonce, deadline, agent, and chain; an unapproved or overcharged call fails. These are per-call limits, not a cumulative budget or a universal token-spending guard. The local tests cover the hook behavior; a real EntryPoint/bundler and live payment service are still outstanding.
+**Acceptance:** the small call succeeds under its rule; the larger call needs an owner approval bound to that exact action, policy revision, nonce, deadline, agent, and chain; an unapproved or overcharged call fails. These are per-call limits, not a cumulative budget or a universal token-spending guard. Local tests cover the hook behavior and one allowed operation through EntryPoint v0.8; a bundler and live payment service are still outstanding.
 
 ## What these cases do not promise
 

@@ -61,8 +61,9 @@ pinned implementation; the service-facing `AgenticWorld` manual/owner API is
 unchanged. The old `AgentAccount` and `MandateRegistry` remain as historical
 prototype code, not v0 deployment components.
 
-This is **not yet a deployed, end-to-end network demo**. The tests use a local
-EntryPoint caller fixture, not a real bundler or production EntryPoint. There is
+This is **not yet a deployed, end-to-end network demo**. A local integration test
+uses the official EntryPoint v0.8 contract to execute a signed UserOperation,
+then authenticates the same agent through the service SDK. It does not use a bundler. There is
 no deployed factory address, live KMS adapter, HTTP service, durable nonce/session
 store, or canonical MCP request format. Only the single-call, revert-on-error
 ERC-7579 execution mode is enabled; all onchain actions are default-denied until

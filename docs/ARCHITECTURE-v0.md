@@ -18,7 +18,7 @@ These are distinct decisions: authenticating `0xAGENT`, associating it with a se
 ## ERC-4337 execution path
 
 1. The agent runtime asks its separate operating key (intended to be KMS-held) to sign a `UserOperation` for `0xAGENT`. It does not hold the owner's key or an agent-root EOA key.
-2. In a live deployment, a bundler submits the operation to the configured ERC-4337 EntryPoint. The account's `validateUserOp` calls its fixed `AgentValidator`. Local tests currently use a caller fixture, not a full EntryPoint or bundler.
+2. In a live deployment, a bundler submits the operation to the configured ERC-4337 EntryPoint. The account's `validateUserOp` calls its fixed `AgentValidator`. Local tests now cover both a caller fixture and a complete operation through the official EntryPoint v0.8 contract; they do not use a bundler.
 3. The EntryPoint calls the account's ERC-7579 single-call execution entrypoint. `AgentPolicyHook` checks the action before execution and checks token spend afterward. Batch, delegatecall, executor, and try modes are unsupported.
 4. The human directly calls owner-only key and policy methods. The operating validator cannot install/remove modules, upgrade the account, or change `owner()`.
 
@@ -35,7 +35,7 @@ For owner association, services pin the trusted implementation, compare the agen
 
 ## Migration and scope
 
-- The account, factory, fixed modules, clone-provenance check, SDK execution encoder, and owner portal are implemented locally. Public deployment, real EntryPoint/bundler integration, KMS adapter, and live services remain outstanding.
+- The account, factory, fixed modules, clone-provenance check, SDK execution encoder, owner portal, and local EntryPoint v0.8 execution test are implemented. Public deployment, bundler integration, KMS adapter, and live services remain outstanding.
 - Recovery of the immutable owner belongs in the owner's wallet architecture. The EIP-7702 bootstrap and optional `MandateRegistry` are **not v0 components**.
 - Keep EIP-8141 frame transactions and ERC-8286 modular frame accounts as a **future migration**, not a v0 dependency. ERC-8286 is currently a draft. In particular, direct `SENDER` frames can execute without passing through the ERC-7579 execution hook; execution policy must be enforced during frame validation before approving them. [EIP-8141](https://eips.ethereum.org/EIPS/eip-8141), [ERC-8286 security considerations](https://eips.ethereum.org/EIPS/eip-8286#security-considerations)
 
