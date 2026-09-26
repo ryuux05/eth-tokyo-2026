@@ -19,6 +19,7 @@ and [design system](DESIGN.md). The [protocol](docs/PROTOCOL.md),
 [policy](docs/POLICY.md), [Core SDK](docs/CORE-SDK.md), [service SDK](docs/SDK.md),
 and [implementation plan](docs/IMPLEMENTATION.md) describe the current v0 path.
 For Codex/Claude Code integration, see the [local MCP server and skills](docs/MCP.md).
+To try live service-owned permissions in a browser, see the [Service A permission workbench](docs/SERVICE-DEMO.md).
 Legacy EIP-7702 code and compatibility helpers are identified separately.
 
 ## Idea
@@ -68,8 +69,10 @@ uses the official EntryPoint v0.8 contract to execute a signed UserOperation.
 A separate local demo has an agent process authenticate to two independent
 SDK-backed HTTP services, and a real stdio MCP client exercises the same identity
 and services through three semantic tools. Neither path uses a bundler. There is
-no deployed factory address, live KMS adapter, persistent HTTP service, durable nonce/session
-store. The local MCP has a challenge-proof tool and a macOS Secure Enclave
+no public factory deployment, live KMS adapter, or production-grade HTTP service
+and durable nonce/session store. The long-running Service A workbench uses
+intentionally in-memory stores and live local permissions. The local MCP has a
+challenge-proof tool and a macOS Secure Enclave
 signer adapter; physical-key provisioning and signing have not yet been exercised
 end-to-end in this repository. Only the single-call, revert-on-error
 ERC-7579 execution mode is enabled; all onchain actions are default-denied until
@@ -83,6 +86,18 @@ npm run build
 npm test
 npm run typecheck
 ```
+
+For the interactive local workbench, run **one command** and leave it open:
+
+```sh
+npm run demo
+```
+
+It builds the project and local signer, starts a fresh Hardhat node, deploys the
+factory, and serves the owner portal plus SDK-backed Service A. It selects free
+loopback ports and prints their URLs, Service A's operator key, and the exact
+Codex MCP registration command. It does **not** provision a Secure Enclave key
+or send an owner-wallet transaction. See the [interactive demo guide](docs/SERVICE-DEMO.md).
 
 To deploy and exercise the complete local RPC + HTTP path, start a Hardhat node
 in one terminal and run the smoke script in another:
@@ -105,7 +120,9 @@ do not copy that exception into a deployed service. It submits directly to
 EntryPoint, not through a bundler. Restarting the Hardhat node clears deployments.
 See [the local demo guide](docs/LOCAL-DEMO.md) for the complete flow.
 
-To build and serve the owner page locally, run `npm run build:portal` and `npm run serve:portal`. Before wallet transactions, set trusted deployment addresses in [`portal/config.ts`](portal/config.ts).
+To build and serve the owner page *without* the launcher, run `npm run build:portal` and `npm run serve:portal`. Before standalone wallet transactions, set trusted deployment addresses in [`portal/config.ts`](portal/config.ts). `npm run demo` supplies its fresh deployment to the page automatically.
+
+To run the separate, SDK-backed Service A page, build it with `npm run build:demo-service` and start `npm run serve:demo-service` against the same local node. It prints a one-time operator key for the page. Grant and revoke report/compute access, then retry with the same agent session; see the [hands-on guide](docs/SERVICE-DEMO.md).
 
 The contract ABI and typed-data details are documented in the [protocol](docs/PROTOCOL.md).
 

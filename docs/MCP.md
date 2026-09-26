@@ -24,11 +24,24 @@ The three owner tools return `status: "OWNER_TRANSACTION_REQUIRED"` and transact
 3. Copy [`mcp/config.example.json`](../mcp/config.example.json) to `.agentic-world.json`, then set the RPC, chain, trusted factory, pinned implementation, absolute signer binary path, and key label. The runtime config is gitignored. You may omit `agentId` until the owner sends the transaction prepared by `agentic_create_identity`; add the resulting address afterward.
 4. Set `AGENTIC_WORLD_CONFIG` to the absolute path of `.agentic-world.json` in the host environment, and start a new Codex/Claude session. Do not place a private key in the prompt or MCP config.
 
-Claude Code discovers `.claude/skills/agentic-world/SKILL.md` and this repo's `.mcp.json`. Codex discovers `.agents/skills/agentic-world/SKILL.md`; register the stdio server once with:
+Claude Code discovers `.claude/skills/agentic-world/SKILL.md` and this repo's `.mcp.json`. Codex discovers `.agents/skills/agentic-world/SKILL.md` when launched from this repository, but the repo skill alone does not register an MCP server. Register the stdio server once with the absolute runtime config path:
 
 ```sh
-codex mcp add agentic-world -- node /absolute/path/to/eth-tokyo-2026/dist/mcp/server.js
+codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG=/absolute/path/to/eth-tokyo-2026/.agentic-world.json -- node /absolute/path/to/eth-tokyo-2026/dist/mcp/server.js
 ```
+
+Start a new Codex session from the repository root after registration. The skill
+is already in the repo; no `$skill-installer` download is needed. `codex mcp list`
+should show `agentic-world` before you try its tools.
+
+For the one-command interactive workbench, `npm run demo` generates a separate
+`.agentic-world.demo.json` with the fresh chain/factory and prints an exact
+`codex mcp add` command using that file. Its `.agentic-world.demo-state.json`
+contains the actual Service A and portal URLs for the repo skill to read. After
+you provision your own key and create the P-256 account in the portal, the
+launcher discovers its factory event and adds `agentId` to both files. Start a
+new Codex session after that update. The launcher does not create a key or send
+the owner's transaction for you.
 
 The MCP host needs access to the chain RPC. The agent's separate HTTP/MCP client needs access to the service challenge, session, and resource endpoints. The challenge audience must be a canonical HTTPS origin. A P-256 deployment requires an EIP-7951-compatible chain with the native `P256VERIFY` precompile at `0x100`; validation fails closed without it.
 

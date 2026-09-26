@@ -33,3 +33,6 @@ broadcast/
 .idea/
 .vscode/
 .agentic-world.json
+.agentic-world.demo.json
+.agentic-world.demo-state.json
+.agentic-world.demo.json.*.tmp

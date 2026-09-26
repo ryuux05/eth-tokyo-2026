@@ -26,6 +26,8 @@
     "serve:portal": "python3 -m http.server 4173 --directory portal/dist",
     "build:demo-service": "esbuild demo-service/app.ts demo-service/styles.css demo-service/index.html --bundle --platform=browser --format=esm --outdir=demo-service/dist --loader:.html=copy",
     "serve:demo-service": "node --import tsx demo-service/server.ts",
+    "deploy:local-service": "hardhat run scripts/deploy-local-service.ts --network localhost",
+    "demo": "node --import tsx scripts/demo.ts",
     "demo:local": "hardhat run scripts/local-e2e.ts --network localhost",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit"
