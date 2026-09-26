@@ -121,6 +121,16 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
   try {
     await connect();
     assert.equal((await call("agentic_identity")).configured, false);
+    browserAction = async url => {
+      const page = await fetch(`${url}/events`);
+      const reader = page.body!.getReader();
+      await reader.read();
+      await reader.cancel();
+    };
+    const closed = await call("agentic_create_identity", { alias: "Closed tab" }, true);
+    assert.equal(closed.code, "FLOW_CANCELLED");
+    assert.equal(closed.retrySafe, true);
+    await browserWork;
     const created = await browserCall("agentic_create_identity", { alias: "Research" });
     assert.equal(created.status, "IDENTITY_CREATED");
     const agentId = created.agentId as Address;
@@ -193,7 +203,10 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     assert.equal(await target.read.calls(), 1n, "new policy denies the next P-256 UserOperation");
 
     browserAction = async url => {
-      assert.equal((await post(url, "/cancel", {}, { origin: new URL(url).origin })).status, 200);
+      const page = await fetch(`${url}/events`);
+      const reader = page.body!.getReader();
+      await reader.read();
+      await reader.cancel();
     };
     assert.equal((await call("agentic_rotate_authenticator", { agentId, scheme: "p256" }, true)).code, "FLOW_CANCELLED");
     await browserWork;
@@ -213,6 +226,46 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     assert.equal((await call("agentic_session_proof", { challenge }, true)).code, "AUTHENTICATOR_REVOKED");
     await session(serviceB.baseUrl, second.agentId);
     assert.equal(await client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked" }), true);
+
+    // A smart owner wallet sends an outer transaction to itself, not the factory
+    // or agent. The actual trusted events and resulting account must still verify.
+    const wallet = await viem.deployContract("OwnerWalletFixture");
+    let creationHash!: Hex;
+    const approveWrapped = async (url: string) => {
+      const context = await (await fetch(`${url}/context`)).json();
+      const intent = context.transaction ? context : await (await post(url, "/prepare", { owner: wallet.address }, { origin: new URL(url).origin })).json();
+      assert.equal(intent.transaction.from.toLowerCase(), wallet.address.toLowerCase());
+      const hash = await wallet.write.forward([intent.transaction.to, intent.transaction.data]);
+      if (!context.transaction) creationHash = hash;
+      const completed = await post(url, "/complete", { hash }, { origin: new URL(url).origin });
+      assert.equal(completed.status, 200, await completed.text());
+    };
+    const wrapped = await browserCall("agentic_create_identity", { alias: "Smart wallet" }, approveWrapped);
+    assert.equal(wrapped.status, "IDENTITY_CREATED");
+    assert.equal(wrapped.owner.toLowerCase(), wallet.address.toLowerCase());
+    assert.equal((await client.readContract({ address: wrapped.agentId, abi: agentAccountAbi, functionName: "entryPoint" })).toLowerCase(), entryPoint.address.toLowerCase());
+    const wrappedPolicy = await browserCall("agentic_set_policy", { agentId: wrapped.agentId, rules }, approveWrapped);
+    assert.equal(wrappedPolicy.status, "CONFIRMED_ONCHAIN");
+    assert.equal((await call("agentic_create_identity", { transactionHash: wrappedPolicy.transactionHash }, true)).code,
+      "CREATION_EVENT_MISSING", "a successful unrelated receipt must not recover an identity");
+
+    // Simulate the old MCP losing confirmation before saving the identity.
+    await mcp.close(); await server.close();
+    const lost = JSON.parse(await readFile(configPath, "utf8"));
+    lost.agentIds = lost.agentIds.filter((id: string) => id.toLowerCase() !== wrapped.agentId.toLowerCase());
+    lost.agentId = agentId;
+    delete lost.aliases[wrapped.agentId.toLowerCase()];
+    await writeFile(configPath, JSON.stringify(lost));
+    await connect();
+    browserAction = async () => { throw new Error("Recovery must not open a wallet or send a transaction"); };
+    const recovered = await call("agentic_create_identity", { transactionHash: creationHash, alias: "Recovered" });
+    assert.equal(recovered.status, "IDENTITY_RECOVERED");
+    assert.equal(recovered.agentId, wrapped.agentId);
+    assert.equal((await call("agentic_list_identities")).count, 3);
+    assert.equal((await call("agentic_create_identity", { transactionHash: creationHash })).agentId, wrapped.agentId);
+    assert.equal((await call("agentic_list_identities")).count, 3, "recovery is idempotent");
+    assert.equal((await browserCall("agentic_rotate_authenticator", { agentId: wrapped.agentId, scheme: "p256" }, approveWrapped)).status, "CONFIRMED_ONCHAIN");
+    assert.equal((await browserCall("agentic_revoke_authenticator", { agentId: wrapped.agentId }, approveWrapped)).status, "CONFIRMED_ONCHAIN");
   } finally {
     if (portalUrl) await post(portalUrl, "api/close", {}, { origin: new URL(portalUrl).origin }).catch(() => {});
     await mcp?.close(); await server?.close();

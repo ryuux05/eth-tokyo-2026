@@ -3,7 +3,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { concatHex, createPublicClient, decodeEventLog, encodeFunctionData, getAddress, http, isAddress, keccak256, parseAbiItem, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, createPublicClient, decodeEventLog, encodeFunctionData, getAddress, http, isAddress, keccak256, parseAbiItem, zeroAddress, type AbiEvent, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
@@ -17,7 +17,7 @@ import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
 import { runOwnerActionFlow, type OwnerActionIntent } from "./owner-action-flow.js";
 import { BrowserLaunchError } from "./open-browser.js";
 import { openDefaultBrowser } from "./open-browser.js";
-import { FlowCancelledError } from "./flow-cancel.js";
+import { FlowCancelledError, FlowInterruptedError } from "./flow-cancel.js";
 
 type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; aliases?: Record<string, string>; factory?: Address; implementation: Address;
   authenticatorLabels?: Record<string, string[]>;
@@ -206,11 +206,14 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     try { return result(await fn()); }
     catch (error) {
       const code = error instanceof ToolError ? error.code : error instanceof BrowserLaunchError ? "BROWSER_UNAVAILABLE"
-        : error instanceof FlowCancelledError ? "FLOW_CANCELLED" : "OPERATION_FAILED";
+        : error instanceof FlowCancelledError ? "FLOW_CANCELLED" : error instanceof FlowInterruptedError ? "FLOW_INTERRUPTED" : "OPERATION_FAILED";
       // Never serialize transport errors: URLs can contain credentials and upstream messages can echo request data.
       return { ...result({ code, message: error instanceof ToolError ? error.message : error instanceof BrowserLaunchError
-        ? "Could not open the local approval page in the default browser" : error instanceof FlowCancelledError
-        ? error.message : "Agentic World operation failed; check server diagnostics" }), isError: true };
+        ? "Could not open the local approval page in the default browser" : error instanceof FlowCancelledError || error instanceof FlowInterruptedError
+        ? error.message : "Agentic World operation failed; check server diagnostics",
+        ...(error instanceof FlowCancelledError ? { retrySafe: true } : {}),
+        ...(error instanceof FlowInterruptedError ? { retrySafe: false, transactionHash: error.transactionHash } : {}),
+      }), isError: true };
     }
   }
 
@@ -368,10 +371,56 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       next: "The human owner must review and send this transaction from the owner wallet, then configure agentId to the deployed address." };
   }
 
+  async function confirmCreatedIdentity(hash: Hex, key: Awaited<ReturnType<typeof signerPublicKey>>,
+    expected?: CreationIntent, alias?: string) {
+    if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
+    if (await client.getChainId() !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
+    const receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 });
+    if (receipt.status !== "success") throw new ToolError("TRANSACTION_REVERTED", "Owner transaction reverted");
+    // Smart wallets may wrap the call or use a relayer. The outer transaction's
+    // from/to/input do not describe the factory call. The pinned factory event
+    // binds the actual msg.sender owner, deterministic agent and exact P-256 key.
+    const event = parseAbiItem("event AgentCreatedP256(address indexed agent,address indexed owner,bytes32 qx,bytes32 qy)");
+    const matches = receipt.logs.flatMap(log => {
+      if (log.address.toLowerCase() !== config.factory!.toLowerCase()) return [];
+      try {
+        const { args } = decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
+        if (args.qx.toLowerCase() !== key.qx.toLowerCase() || args.qy.toLowerCase() !== key.qy.toLowerCase() ||
+            (expected && (args.agent.toLowerCase() !== expected.predictedAgent.toLowerCase() ||
+              args.owner.toLowerCase() !== expected.transaction.from.toLowerCase()))) return [];
+        return [args];
+      } catch { return []; }
+    });
+    if (matches.length !== 1) throw new ToolError("CREATION_EVENT_MISSING", "Receipt must contain exactly one matching agent creation event from the trusted factory");
+    const created = matches[0];
+    const code = await client.getBytecode({ address: created.agent, blockNumber: receipt.blockNumber });
+    if (!isExpectedAgentClone(code, config.implementation)) throw new ToolError("IDENTITY_UNAVAILABLE", "Created agent is not the pinned ERC-4337 account clone");
+    const current = await identity(created.agent);
+    if (current.owner.toLowerCase() !== created.owner.toLowerCase() || current.authenticatorScheme !== 2 ||
+        current.p256PublicKey?.qx.toLowerCase() !== key.qx.toLowerCase() || current.p256PublicKey?.qy.toLowerCase() !== key.qy.toLowerCase() ||
+        current.authenticationRevoked) throw new ToolError("IDENTITY_MISMATCH", "Current onchain owner or active authenticator does not match the approved identity");
+    config.agentIds = [...new Map([...managedAgentIds(), created.agent].map(id => [id.toLowerCase(), id] as const)).values()];
+    config.agentId = created.agent;
+    if (alias) { config.aliases ??= {}; config.aliases[created.agent.toLowerCase()] = alias; }
+    await persistConfig();
+    return { agentId: created.agent, owner: created.owner, transactionHash: hash };
+  }
+
   server.registerTool("agentic_create_identity", {
-    description: "Open a local owner-wallet approval page to create a P-256 agent identity. With explicit owner and salt, only prepare transaction data for a manual flow.",
-    inputSchema: z.object({ owner: z.string().optional(), salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), alias: z.string().optional() }),
-  }, async ({ owner, salt, alias }) => guarded(async () => {
+    description: "Open a local owner-wallet approval page to create a P-256 agent identity. Supply transactionHash to recover an already-created identity without another transaction. With explicit owner and salt, only prepare transaction data for a manual flow.",
+    inputSchema: z.object({ owner: z.string().optional(), salt: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), alias: z.string().optional(),
+      transactionHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional() }),
+  }, async ({ owner, salt, alias, transactionHash }, ctx) => guarded(async () => {
+    if (transactionHash) {
+      if (owner || salt) throw new ToolError("INVALID_CREATION_INPUT", "Use transactionHash alone, optionally with an alias, to recover an identity");
+      if (!config.signer) throw new ToolError("P256_SIGNER_REQUIRED", "Recovery requires the local P-256 authenticator used for creation");
+      if (creatingIdentity) throw new ToolError("CREATION_IN_PROGRESS", "Close the existing creation page before recovery");
+      const displayAlias = alias === undefined ? undefined : validatedAlias(alias);
+      await assertTrustedFactory();
+      const recovered = await confirmCreatedIdentity(transactionHash as Hex, await signerPublicKey(config.signer), undefined, displayAlias);
+      return { status: "IDENTITY_RECOVERED", ...recovered, chainId: config.chainId,
+        next: "Existing onchain identity verified and saved locally. No new transaction was submitted." };
+    }
     if (owner || salt) {
       if (!owner || !salt) throw new ToolError("INVALID_CREATION_INPUT", "Provide both owner and salt, or neither for browser approval");
       return prepareIdentity(owner, salt as Hex);
@@ -388,7 +437,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     const creationSalt = `0x${randomBytes(32).toString("hex")}` as Hex;
     let selected: CreationIntent | undefined;
     const agentId = await runCreationFlow({ chainId: config.chainId, factory: config.factory, rpcUrl: config.rpcUrl, qx: key.qx, qy: key.qy,
-      openBrowser,
+      openBrowser, signal: ctx.mcpReq.signal,
       deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
       prepare: async walletOwner => {
         const prepared = await prepareIdentity(walletOwner, creationSalt, key, true);
@@ -397,42 +446,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       },
       confirm: async (hash, intent) => {
         if (!selected || selected !== intent) throw new ToolError("INVALID_FLOW", "Owner transaction was not prepared by this flow");
-        const receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 });
-        if (receipt.status !== "success") throw new ToolError("TRANSACTION_REVERTED", "Owner transaction reverted");
-        const transaction = await client.getTransaction({ hash });
-        if (transaction.from.toLowerCase() !== intent.transaction.from.toLowerCase() ||
-            transaction.to?.toLowerCase() !== intent.transaction.to.toLowerCase() ||
-            transaction.input.toLowerCase() !== intent.transaction.data.toLowerCase() || transaction.value !== 0n) {
-          throw new ToolError("TRANSACTION_MISMATCH", "Confirmed transaction does not match the owner creation intent");
-        }
-        const event = parseAbiItem("event AgentCreatedP256(address indexed agent,address indexed owner,bytes32 qx,bytes32 qy)");
-        const created = receipt.logs.some(log => {
-          if (log.address.toLowerCase() !== config.factory?.toLowerCase()) return false;
-          try {
-            const decoded = decodeEventLog({ abi: [event], data: log.data, topics: log.topics });
-            return decoded.args.agent.toLowerCase() === intent.predictedAgent.toLowerCase() &&
-              decoded.args.owner.toLowerCase() === intent.transaction.from.toLowerCase() &&
-              decoded.args.qx.toLowerCase() === key.qx.toLowerCase() && decoded.args.qy.toLowerCase() === key.qy.toLowerCase();
-          } catch { return false; }
-        });
-        if (!created) throw new ToolError("CREATION_EVENT_MISSING", "Factory did not emit the expected agent creation event");
-        const code = await client.getBytecode({ address: intent.predictedAgent });
-        if (!isExpectedAgentClone(code, config.implementation)) throw new ToolError("IDENTITY_UNAVAILABLE", "Created agent is not the pinned account clone");
-        const [chainOwner, publicKey, scheme] = await Promise.all([
-          client.readContract({ address: intent.predictedAgent, abi: agentAccountAbi, functionName: "owner" }),
-          client.readContract({ address: intent.predictedAgent, abi: agentAccountAbi, functionName: "authenticatorP256" }),
-          client.readContract({ address: intent.predictedAgent, abi: agentAccountAbi, functionName: "authenticatorScheme" }),
-        ]);
-        if (chainOwner.toLowerCase() !== intent.transaction.from.toLowerCase() || scheme !== 2 ||
-            publicKey[0].toLowerCase() !== key.qx.toLowerCase() || publicKey[1].toLowerCase() !== key.qy.toLowerCase()) {
-          throw new ToolError("IDENTITY_MISMATCH", "Onchain owner or authenticator does not match the approved identity");
-        }
-        config.agentIds = [...new Map([...managedAgentIds(), intent.predictedAgent]
-          .map(id => [id.toLowerCase(), id] as const)).values()];
-        config.agentId = intent.predictedAgent;
-        if (displayAlias) { config.aliases ??= {}; config.aliases[intent.predictedAgent.toLowerCase()] = displayAlias; }
-        await persistConfig();
-        return intent.predictedAgent;
+        return (await confirmCreatedIdentity(hash, key, intent, displayAlias)).agentId;
       },
     });
     return { status: "IDENTITY_CREATED", agentId, alias: displayAlias ?? null, owner: selected?.transaction.from, chainId: config.chainId,
@@ -442,23 +456,32 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
 
   const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 
-  async function approveOwnerAction<T>(intent: OwnerActionIntent, verifyState: () => Promise<T>) {
+  async function approveOwnerAction<T>(intent: OwnerActionIntent, verifyState: () => Promise<T>,
+    expectedEvent: { module: "agentValidator" | "policyHook"; abi: AbiEvent; matches: (args: Record<string, unknown>) => boolean },
+    signal?: AbortSignal) {
     if (ownerActionInProgress) throw new ToolError("OWNER_ACTION_IN_PROGRESS", "An owner approval page is already open");
     ownerActionInProgress = true;
     try {
       const confirmed = await runOwnerActionFlow({ intent, rpcUrl: config.rpcUrl,
-        openBrowser,
+        openBrowser, signal,
         deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
         confirm: async hash => {
           const receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 });
           if (receipt.status !== "success") throw new ToolError("TRANSACTION_REVERTED", "Owner transaction reverted");
-          const transaction = await client.getTransaction({ hash });
-          if (transaction.from.toLowerCase() !== intent.transaction.from.toLowerCase() ||
-              transaction.to?.toLowerCase() !== intent.transaction.to.toLowerCase() ||
-              transaction.input.toLowerCase() !== intent.transaction.data.toLowerCase() || transaction.value !== 0n ||
-              (await client.getChainId()) !== intent.transaction.chainId) {
-            throw new ToolError("TRANSACTION_MISMATCH", "Confirmed transaction does not match the prepared owner action");
-          }
+          if ((await client.getChainId()) !== intent.transaction.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain changed during owner approval");
+          // Smart wallets may wrap or relay the owner call. Verify its effect
+          // in this receipt using the account's immutable module as the emitter.
+          const module = await client.readContract({ address: intent.agentId, abi: agentAccountAbi,
+            functionName: expectedEvent.module, blockNumber: receipt.blockNumber });
+          const matched = receipt.logs.some(log => {
+            if (log.address.toLowerCase() !== module.toLowerCase()) return false;
+            try {
+              const { args } = decodeEventLog({ abi: [expectedEvent.abi], data: log.data, topics: log.topics });
+              const fields = args as Record<string, unknown>;
+              return typeof fields.account === "string" && fields.account.toLowerCase() === intent.agentId.toLowerCase() && expectedEvent.matches(fields);
+            } catch { return false; }
+          });
+          if (!matched) throw new ToolError("TRANSACTION_MISMATCH", "Receipt does not contain the expected account module event for this owner action");
           return verifyState();
         },
       });
@@ -480,7 +503,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       target: z.string(), selector: z.string().regex(/^0x[0-9a-fA-F]{8}$/), token: z.string(),
       maxValueWei: decimal, maxAmount: decimal, decision: z.enum(["DENY", "ALLOW", "REQUIRE_OWNER_SIGNATURE"]),
     })).max(32) }),
-  }, async ({ agentId, rules, prepareOnly }) => guarded(async () => {
+  }, async ({ agentId, rules, prepareOnly }, ctx) => guarded(async () => {
     const current = await identity(selectManagedAgentId(agentId));
     const parsed: PolicyRule[] = rules.map(rule => {
       if (!isAddress(rule.target) || !isAddress(rule.token)) throw new ToolError("INVALID_POLICY", "Invalid policy address");
@@ -507,7 +530,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
           BigInt(updated.policyRevision) <= BigInt(current.policyRevision))
         throw new ToolError("POLICY_STATE_MISMATCH", "Confirmed transaction did not activate the expected policy");
       return { policyHash: updated.policyHash, policyRevision: updated.policyRevision };
-    });
+    }, { module: "policyHook", abi: parseAbiItem("event PolicyUpdated(address indexed account, bytes32 indexed policyHash, uint256 revision)"),
+      matches: args => args.policyHash === policyHash && typeof args.revision === "bigint" && args.revision > BigInt(current.policyRevision) }, ctx.mcpReq.signal);
   }));
 
   server.registerTool("agentic_rotate_authenticator", {
@@ -518,7 +542,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         keyLabel: z.string().min(1).refine(label => Buffer.byteLength(label) <= 128 && !/[\x00-\x1f\x7f]/.test(label)).optional() }),
       z.strictObject({ scheme: z.literal("secp256k1"), agentId: z.string().optional(), prepareOnly: z.boolean().optional(), address: z.string() }),
     ]),
-  }, async input => guarded(async () => {
+  }, async (input, ctx) => guarded(async () => {
     if (ownerActionInProgress) throw new ToolError("OWNER_ACTION_IN_PROGRESS", "An owner approval page is already open");
     const current = await identity(selectManagedAgentId(input.agentId));
     if (current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_REVOKED", "A revoked authenticator must be restored by a separate owner action");
@@ -574,13 +598,17 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       return { authenticatorScheme: updated.authenticatorScheme,
         authenticator: updated.authenticator, p256PublicKey: updated.p256PublicKey,
         authenticationRevoked: updated.authenticationRevoked };
-    });
+    }, replacement
+      ? { module: "agentValidator", abi: parseAbiItem("event P256AuthenticatorRotated(address indexed account, bytes32 qx, bytes32 qy)"),
+        matches: args => args.qx === replacement.qx.toLowerCase() && args.qy === replacement.qy.toLowerCase() }
+      : { module: "agentValidator", abi: parseAbiItem("event AuthenticatorRotated(address indexed account, address indexed authenticator)"),
+        matches: args => input.scheme === "secp256k1" && typeof args.authenticator === "string" && args.authenticator.toLowerCase() === input.address.toLowerCase() }, ctx.mcpReq.signal);
   }));
 
   server.registerTool("agentic_revoke_authenticator", {
     description: "Open owner-wallet approval to revoke one configured agent authenticator; optionally return a read-only transaction preview.",
     inputSchema: z.object({ agentId: z.string().optional(), prepareOnly: z.boolean().optional() }),
-  }, async ({ agentId, prepareOnly }) => guarded(async () => {
+  }, async ({ agentId, prepareOnly }, ctx) => guarded(async () => {
     const current = await identity(selectManagedAgentId(agentId));
     if (current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_ALREADY_REVOKED", "This agent authenticator is already revoked");
     const data = encodeFunctionData({ abi: agentAccountAbi, functionName: "revokeAuthenticator" });
@@ -595,7 +623,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       const updated = await identity(current.agentId);
       if (!updated.authenticationRevoked) throw new ToolError("REVOCATION_STATE_MISMATCH", "Confirmed transaction did not revoke this authenticator");
       return { authenticationRevoked: true };
-    });
+    }, { module: "agentValidator", abi: parseAbiItem("event AuthenticationRevokedFor(address indexed account)"), matches: () => true }, ctx.mcpReq.signal);
   }));
 
   async function sessionProof(challenge: AuthenticationChallenge) {
