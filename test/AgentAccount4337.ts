@@ -113,7 +113,61 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0xffffffff");
     assert.equal(await publicClient.simulateContract({ address: entryPoint.address, abi: entryPoint.abi,
       functionName: "validate", args: [agentId, op, userOpHash] }).then(r => r.result), 1n);
+    const replacementSecret = p256.utils.randomPrivateKey();
+    const replacementPublicKey = p256.getPublicKey(replacementSecret, false);
+    const replacementQx = toHex(replacementPublicKey.slice(1, 33));
+    const replacementQy = toHex(replacementPublicKey.slice(33, 65));
+    const restored = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "restoreP256Authenticator",
+      args: [replacementQx, replacementQy] });
+    await publicClient.waitForTransactionReceipt({ hash: restored });
+    assert.deepEqual(await account.read.authenticatorP256(), [replacementQx, replacementQy]);
+    assert.equal(await account.read.protocolVersion(), 3n);
+    const replacementSignature = `0x${p256.sign(toBytes(digest), replacementSecret, { prehash: false }).toCompactHex()}` as Hex;
+    assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof({ ...proof, signature: replacementSignature })]), "0x1626ba7e");
+    const rotated = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "rotateP256Authenticator",
+      args: [qx, qy] });
+    await publicClient.waitForTransactionReceipt({ hash: rotated });
+    assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof({ ...proof, signature: replacementSignature })]), "0xffffffff");
   });
+
+  it("applies an owner-updated policy to the next P-256 account execution", async () => {
+    const { viem } = await hre.network.create();
+    const [owner, stranger] = await viem.getWalletClients();
+    const publicClient = await viem.getPublicClient();
+    const entryPoint = await viem.deployContract("MockAgentEntryPoint");
+    const factory = await viem.deployContract("AgentAccountFactory", [entryPoint.address]);
+    const publicKey = p256.getPublicKey(p256.utils.randomPrivateKey(), false);
+    const qx = toHex(publicKey.slice(1, 33));
+    const qy = toHex(publicKey.slice(33, 65));
+    const agentId = await factory.read.predictAgent([owner.account.address, salt]) as Address;
+    const created = await factory.write.createAgentP256([qx, qy, salt]);
+    await publicClient.waitForTransactionReceipt({ hash: created });
+    const account = await viem.getContractAt("AgentAccount4337", agentId);
+    const target = await viem.deployContract("PolicyActionTarget");
+    const data = encodeFunctionData({ abi: target.abi, functionName: "purchase", args: [keccak256(toBytes("p256-policy"))] });
+    const callData = encodeFunctionData({ abi: account.abi, functionName: "execute", args: [mode, single(target.address, 0n, data)] });
+    const run = () => owner.writeContract({ address: entryPoint.address, abi: entryPoint.abi, functionName: "run", args: [agentId, callData] });
+    await assert.rejects(run());
+    const allowed = encodePolicy([{ target: target.address, selector: data.slice(0, 10) as Hex, token: zeroAddress,
+      maxValue: 0n, maxAmount: 0n, decision: Decision.ALLOW }]);
+    await assert.rejects(stranger.writeContract({ address: agentId, abi: account.abi, functionName: "setPolicy", args: [allowed] }));
+    const allowTx = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "setPolicy", args: [allowed] });
+    await publicClient.waitForTransactionReceipt({ hash: allowTx });
+    assert.equal(await account.read.policyRevision(), 1n);
+    assert.equal(await account.read.evaluateAction([target.address, 0n, data]), Decision.ALLOW);
+    const executed = await run();
+    await publicClient.waitForTransactionReceipt({ hash: executed });
+    assert.equal(await target.read.calls(), 1n);
+    const denied = encodePolicy([{ target: target.address, selector: data.slice(0, 10) as Hex, token: zeroAddress,
+      maxValue: 0n, maxAmount: 0n, decision: Decision.DENY }]);
+    const denyTx = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "setPolicy", args: [denied] });
+    await publicClient.waitForTransactionReceipt({ hash: denyTx });
+    assert.equal(await account.read.policyRevision(), 2n);
+    assert.equal(await account.read.evaluateAction([target.address, 0n, data]), Decision.DENY);
+    await assert.rejects(run());
+    assert.equal(await target.read.calls(), 1n);
+  });
+
   it("deploys an initialized clone with owner = factory transaction sender and fixed modules", async () => {
     const c = await setup();
     const code = await c.publicClient.getCode({ address: c.agent });

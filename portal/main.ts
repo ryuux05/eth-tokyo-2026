@@ -8,8 +8,10 @@ import {
   decodePolicy, encodePolicy, isExpectedAgentClone, type PolicyRule,
 } from "../sdk/core.js";
 import { DEPLOYMENTS, type Deployment } from "./config.js";
+import { validP256PublicKey } from "./p256.js";
 
 type RuleKind = "native" | "token";
+type OperatingKey = { scheme: "p256"; qx: Hex; qy: Hex } | { scheme: "secp256k1"; address: Address };
 type DraftRule = {
   id: number; kind: RuleKind; target: string; selector: string; token: string;
   maxValue: string; maxAmount: string; decimals: string; decision: Decision;
@@ -33,6 +35,10 @@ function element<T extends HTMLElement>(id: string): T {
 const ui = {
   connect: element<HTMLButtonElement>("connectButton"), network: element<HTMLElement>("networkBadge"),
   configNotice: element<HTMLElement>("configNotice"), status: element<HTMLElement>("statusMessage"),
+  creationScheme: element<HTMLSelectElement>("creationScheme"),
+  creationP256Fields: element<HTMLElement>("creationP256Fields"),
+  creationLegacyFields: element<HTMLElement>("creationLegacyFields"),
+  creationQx: element<HTMLInputElement>("creationQx"), creationQy: element<HTMLInputElement>("creationQy"),
   authenticator: element<HTMLInputElement>("authenticatorInput"), salt: element<HTMLInputElement>("saltInput"),
   newSalt: element<HTMLButtonElement>("newSaltButton"), predicted: element<HTMLElement>("predictedAgent"),
   create: element<HTMLButtonElement>("createButton"), agent: element<HTMLInputElement>("agentAddress"),
@@ -41,6 +47,9 @@ const ui = {
   ownerValue: element<HTMLElement>("ownerValue"), validatorValue: element<HTMLElement>("validatorValue"),
   policyHookValue: element<HTMLElement>("policyHookValue"), entryPointValue: element<HTMLElement>("entryPointValue"),
   signerState: element<HTMLElement>("signerState"), signerValue: element<HTMLElement>("signerValue"),
+  replacementP256Fields: element<HTMLElement>("replacementP256Fields"),
+  replacementLegacyFields: element<HTMLElement>("replacementLegacyFields"),
+  replacementQx: element<HTMLInputElement>("replacementQx"), replacementQy: element<HTMLInputElement>("replacementQy"),
   replacement: element<HTMLInputElement>("rotationInput"), rotate: element<HTMLButtonElement>("rotateButton"),
   restore: element<HTMLButtonElement>("restoreButton"), revoke: element<HTMLButtonElement>("revokeButton"),
   policyState: element<HTMLElement>("policyState"), addNative: element<HTMLButtonElement>("addNativeButton"),
@@ -56,8 +65,9 @@ let provider: EIP1193Provider | undefined;
 let owner: Address | undefined;
 let chainId: number | undefined;
 let deployment: Deployment | undefined;
+let demoFingerprint: { number: bigint; hash: Hex } | undefined;
 let verifiedAgent: Address | undefined;
-let currentSigner: Address | undefined;
+let currentKey: OperatingKey | undefined;
 let revoked = false;
 let currentPolicy: Hex = "0x";
 let savedRules: PolicyRule[] = [];
@@ -104,6 +114,29 @@ function validSigner(value: string): value is Address {
   return !!owner && isAddress(value) && !same(value, zeroAddress) && !same(value, owner) &&
     (!verifiedAgent || !same(value, verifiedAgent)) && (!predictedAgent || !same(value, predictedAgent));
 }
+function creationKeyValid(): boolean {
+  return ui.creationScheme.value === "p256"
+    ? validP256PublicKey(ui.creationQx.value.trim(), ui.creationQy.value.trim())
+    : validSigner(ui.authenticator.value.trim());
+}
+function replacementKeyValid(): boolean {
+  if (!currentKey) return false;
+  if (currentKey.scheme === "p256") {
+    const qx = ui.replacementQx.value.trim(); const qy = ui.replacementQy.value.trim();
+    return validP256PublicKey(qx, qy) && (!same(qx, currentKey.qx) || !same(qy, currentKey.qy));
+  }
+  const address = ui.replacement.value.trim();
+  return validSigner(address) && !same(address, currentKey.address);
+}
+function keyLabel(key: OperatingKey): string {
+  return key.scheme === "p256" ? `P-256 · qx ${key.qx} · qy ${key.qy}` : `secp256k1 · ${key.address}`;
+}
+function renderKeyFields(): void {
+  ui.creationP256Fields.hidden = ui.creationScheme.value !== "p256";
+  ui.creationLegacyFields.hidden = ui.creationScheme.value === "p256";
+  ui.replacementP256Fields.hidden = currentKey?.scheme !== "p256";
+  ui.replacementLegacyFields.hidden = currentKey?.scheme !== "secp256k1";
+}
 function validSalt(value: string): value is Hex { return /^0x[0-9a-fA-F]{64}$/.test(value); }
 
 function makeRule(kind: RuleKind): DraftRule {
@@ -127,13 +160,14 @@ function encodeDraft(): Hex {
   return encodePolicy(rules);
 }
 function refresh(): void {
+  renderKeyFields();
   ui.connect.disabled = busy;
   ui.newSalt.disabled = busy;
   ui.predicted.textContent = predictedAgent ?? (owner && deployment ? "Enter a valid 32-byte salt" : "Connect a wallet to preview");
-  ui.create.disabled = busy || !owner || !deployment || !predictedAgent || !validSigner(ui.authenticator.value.trim());
+  ui.create.disabled = busy || !owner || !deployment || !predictedAgent || !creationKeyValid();
   ui.verify.disabled = busy || !owner || !deployment || !isAddress(ui.agent.value.trim());
-  ui.rotate.disabled = busy || !verifiedAgent || revoked || !validSigner(ui.replacement.value.trim()) || same(ui.replacement.value.trim(), currentSigner ?? "");
-  ui.restore.disabled = busy || !verifiedAgent || !revoked || !validSigner(ui.replacement.value.trim());
+  ui.rotate.disabled = busy || !verifiedAgent || revoked || !replacementKeyValid();
+  ui.restore.disabled = busy || !verifiedAgent || !revoked || !replacementKeyValid();
   ui.revoke.disabled = busy || !verifiedAgent || revoked;
   ui.addNative.disabled = busy || !verifiedAgent;
   ui.addToken.disabled = busy || !verifiedAgent;
@@ -250,7 +284,22 @@ async function connect(): Promise<void> {
   owner = getAddress(accounts[0]);
   chainId = await client().getChainId();
   deployment = DEPLOYMENTS[chainId];
-  verifiedAgent = undefined; predictedAgent = undefined; currentSigner = undefined; revoked = false;
+  demoFingerprint = undefined;
+  try {
+    const response = await fetch("/demo-deployment.json", { cache: "no-store" });
+    if (response.ok) {
+      const local: unknown = await response.json();
+      if (local && typeof local === "object" && "chainId" in local && local.chainId === chainId &&
+          "factory" in local && typeof local.factory === "string" && isAddress(local.factory) &&
+          "implementation" in local && typeof local.implementation === "string" && isAddress(local.implementation) &&
+          "deploymentBlockNumber" in local && typeof local.deploymentBlockNumber === "string" && /^\d+$/.test(local.deploymentBlockNumber) &&
+          "deploymentBlockHash" in local && typeof local.deploymentBlockHash === "string" && /^0x[0-9a-fA-F]{64}$/.test(local.deploymentBlockHash)) {
+        deployment = { factory: getAddress(local.factory), implementation: getAddress(local.implementation) };
+        demoFingerprint = { number: BigInt(local.deploymentBlockNumber), hash: local.deploymentBlockHash as Hex };
+      }
+    }
+  } catch { /* Standalone portal uses its checked-in pins. */ }
+  verifiedAgent = undefined; predictedAgent = undefined; currentKey = undefined; revoked = false;
   currentPolicy = "0x"; savedRules = []; draftRules.splice(0, draftRules.length);
   ui.summaryPolicy.textContent = "0 draft rules";
   renderRules();
@@ -264,6 +313,12 @@ async function connect(): Promise<void> {
     ui.configNotice.textContent = `No v0 deployment is pinned for chain ${chainId}. Add its factory and implementation addresses to portal/config.ts before creating or verifying an agent.`;
   } else {
     try {
+      if (demoFingerprint) {
+        const block = await client().getBlock({ blockNumber: demoFingerprint.number });
+        if (block.hash.toLowerCase() !== demoFingerprint.hash.toLowerCase()) {
+          throw new Error("Wallet RPC is pointed at a different local Hardhat node. Set it to the RPC URL printed by npm run demo.");
+        }
+      }
       await assertFactory();
       ui.configNotice.hidden = true;
       await updatePrediction();
@@ -279,15 +334,19 @@ async function connect(): Promise<void> {
 }
 
 async function createAgent(): Promise<void> {
-  if (!owner || !deployment || !validSigner(ui.authenticator.value.trim()) || !validSalt(ui.salt.value.trim())) {
-    throw new Error("Connect your owner wallet, enter a distinct operating signer, and use a valid 32-byte salt.");
+  if (!owner || !deployment || !creationKeyValid() || !validSalt(ui.salt.value.trim())) {
+    throw new Error("Connect your owner wallet, enter a valid operating public key, and use a valid 32-byte salt.");
   }
   await assertFactory();
   const predicted = await client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi,
     functionName: "predictAgent", args: [owner, ui.salt.value.trim() as Hex] });
   status("Confirm the factory transaction in your owner wallet. The factory will store your wallet as owner().");
-  const hash = await wallet().writeContract({ account: owner, chain: null, address: deployment.factory,
-    abi: agentAccountFactoryAbi, functionName: "createAgent", args: [getAddress(ui.authenticator.value.trim()), ui.salt.value.trim() as Hex] });
+  const hash = ui.creationScheme.value === "p256"
+    ? await wallet().writeContract({ account: owner, chain: null, address: deployment.factory,
+      abi: agentAccountFactoryAbi, functionName: "createAgentP256",
+      args: [ui.creationQx.value.trim() as Hex, ui.creationQy.value.trim() as Hex, ui.salt.value.trim() as Hex] })
+    : await wallet().writeContract({ account: owner, chain: null, address: deployment.factory,
+      abi: agentAccountFactoryAbi, functionName: "createAgent", args: [getAddress(ui.authenticator.value.trim()), ui.salt.value.trim() as Hex] });
   status(`Deployment ${short(hash)} submitted. Waiting for confirmation…`);
   const receipt = await client().waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("Deployment reverted. No agent was created.");
@@ -305,26 +364,35 @@ async function verifyAgent(input?: Address): Promise<void> {
   const blockNumber = await client().getBlockNumber();
   const code = await client().getCode({ address: agent, blockNumber });
   if (!isExpectedAgentClone(code, deployment.implementation)) throw new Error("This is not a clone of the pinned v0 implementation on this chain.");
-  const [accountOwner, version, validator, hook, factoryValidator, factoryHook, entryPoint, signer, isRevoked, loadedPolicy] = await Promise.all([
+  const [accountOwner, version, scheme, validator, hook, factoryValidator, factoryHook, entryPoint, signer, coordinates, isRevoked, loadedPolicy] = await Promise.all([
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "owner", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "protocolVersion", blockNumber }),
+    client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "agentValidator", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "policyHook", blockNumber }),
     client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi, functionName: "validator", blockNumber }),
     client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi, functionName: "policyHook", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "entryPoint", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
+    client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorP256", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
     client().readContract({ address: agent, abi: agentPolicyAbi, functionName: "policy", blockNumber }),
   ]);
-  if (version !== 2n || !same(accountOwner, owner)) throw new Error(`This account is not v0 or is owned by another wallet (${accountOwner}).`);
+  if (!same(accountOwner, owner)) throw new Error(`This account is owned by another wallet (${accountOwner}).`);
+  if (!((version === 3n && scheme === 2) || (version === 2n && scheme === 1))) {
+    throw new Error("Unsupported account version or operating key scheme.");
+  }
   if (!same(validator, factoryValidator) || !same(hook, factoryHook)) throw new Error("Account modules differ from the pinned factory.");
   const [validatorInstalled, hookInstalled] = await Promise.all([
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "isModuleInstalled", args: [1n, validator, "0x"], blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "isModuleInstalled", args: [4n, hook, "0x"], blockNumber }),
   ]);
   if (!validatorInstalled || !hookInstalled) throw new Error("The required validator or policy hook is not installed.");
-  verifiedAgent = agent; currentSigner = signer; revoked = isRevoked;
+  verifiedAgent = agent;
+  currentKey = scheme === 2
+    ? { scheme: "p256", qx: coordinates[0], qy: coordinates[1] }
+    : { scheme: "secp256k1", address: signer };
+  revoked = isRevoked;
   currentPolicy = loadedPolicy; savedRules = loadedPolicy === "0x" ? [] : decodePolicy(loadedPolicy);
   ui.agent.value = agent; ui.identityDetails.hidden = false;
   ui.activeAgent.textContent = agent; ui.ownerValue.textContent = accountOwner;
@@ -350,35 +418,54 @@ async function verifyAgent(input?: Address): Promise<void> {
 }
 
 function renderSigner(): void {
-  ui.signerValue.textContent = currentSigner ?? "—";
-  ui.summarySigner.textContent = currentSigner ? short(currentSigner) : "Not loaded";
+  ui.signerValue.textContent = currentKey ? keyLabel(currentKey) : "—";
+  ui.summarySigner.textContent = currentKey
+    ? currentKey.scheme === "p256" ? `P-256 ${short(currentKey.qx)}` : short(currentKey.address)
+    : "Not loaded";
   tag(ui.signerState, revoked ? "Revoked" : "Active", revoked ? "danger" : "ready");
   refresh();
 }
 async function refreshSigner(): Promise<void> {
   const { agent } = context();
-  const [signer, isRevoked] = await Promise.all([
+  const [scheme, signer, coordinates, isRevoked] = await Promise.all([
+    client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorScheme" }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticator" }),
+    client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorP256" }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticationRevoked" }),
   ]);
-  currentSigner = signer; revoked = isRevoked; renderSigner();
+  if (scheme !== 1 && scheme !== 2) throw new Error("Unsupported operating key scheme.");
+  currentKey = scheme === 2
+    ? { scheme: "p256", qx: coordinates[0], qy: coordinates[1] }
+    : { scheme: "secp256k1", address: signer };
+  revoked = isRevoked; renderSigner();
 }
 async function changeSigner(operation: "rotateAuthenticator" | "restoreAuthenticator" | "revokeAuthenticator"): Promise<void> {
   const { owner, agent } = context();
   await assertChain();
   if (operation === "revokeAuthenticator" && !window.confirm("Revoke this operating key? New agent signatures will fail until you restore a key.")) return;
-  const signer = ui.replacement.value.trim();
-  if (operation !== "revokeAuthenticator" && !validSigner(signer)) throw new Error("Enter a valid replacement signer that differs from the owner wallet.");
+  if (operation !== "revokeAuthenticator" && !replacementKeyValid()) throw new Error("Enter a valid new public key for this account's operating key type.");
   status("Confirm the signer change in your owner wallet…");
-  const hash = operation === "revokeAuthenticator"
-    ? await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: operation })
-    : await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: operation, args: [getAddress(signer)] });
+  let hash: Hex;
+  if (operation === "revokeAuthenticator") {
+    hash = await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: operation });
+  } else if (currentKey?.scheme === "p256") {
+    const args = [ui.replacementQx.value.trim() as Hex, ui.replacementQy.value.trim() as Hex] as const;
+    hash = operation === "rotateAuthenticator"
+      ? await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "rotateP256Authenticator", args })
+      : await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "restoreP256Authenticator", args });
+  } else {
+    const args = [getAddress(ui.replacement.value.trim())] as const;
+    hash = operation === "rotateAuthenticator"
+      ? await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "rotateAuthenticator", args })
+      : await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "restoreAuthenticator", args });
+  }
   status(`Transaction ${short(hash)} submitted. Waiting for confirmation…`);
   const receipt = await client().waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("The signer transaction reverted. Nothing changed.");
   ui.replacement.value = "";
+  ui.replacementQx.value = ""; ui.replacementQy.value = "";
   await refreshSigner();
-  status(revoked ? "Operating signer revoked. New agent signatures will fail." : `Operating signer active: ${short(currentSigner!)}.`);
+  status(revoked ? "Operating signer revoked. New agent signatures will fail." : `Operating signer active: ${currentKey ? keyLabel(currentKey) : "unknown"}.`);
 }
 async function savePolicy(): Promise<void> {
   const { owner, agent } = context();
@@ -416,8 +503,13 @@ ui.connect.addEventListener("click", () => { void action(connect); });
 ui.newSalt.addEventListener("click", () => { ui.salt.value = newSalt(); void action(updatePrediction); });
 ui.salt.addEventListener("input", () => { void updatePrediction().catch(error => status(readableError(error), "error")); });
 ui.authenticator.addEventListener("input", refresh);
+ui.creationScheme.addEventListener("change", refresh);
+ui.creationQx.addEventListener("input", refresh);
+ui.creationQy.addEventListener("input", refresh);
 ui.agent.addEventListener("input", refresh);
 ui.replacement.addEventListener("input", refresh);
+ui.replacementQx.addEventListener("input", refresh);
+ui.replacementQy.addEventListener("input", refresh);
 ui.create.addEventListener("click", () => { void action(createAgent); });
 ui.verify.addEventListener("click", () => { void action(() => verifyAgent()); });
 ui.rotate.addEventListener("click", () => { void action(() => changeSigner("rotateAuthenticator")); });

@@ -33,9 +33,20 @@
           <div class="create-grid">
             <div class="create-form">
               <h3>Create a new account</h3>
-              <label for="authenticatorInput">Operating signer address</label>
-              <input id="authenticatorInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x… KMS-backed key" aria-describedby="authHelp" />
-              <p class="field-help" id="authHelp">The agent runtime uses this key to sign requests and UserOperations. It must differ from your owner wallet.</p>
+              <label for="creationScheme">Operating key type</label>
+              <select id="creationScheme"><option value="p256">P-256 / Secure Enclave</option><option value="secp256k1">Legacy Ethereum signer</option></select>
+              <div id="creationP256Fields">
+                <label for="creationQx">P-256 public key · qx</label>
+                <input id="creationQx" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" aria-describedby="p256Help" />
+                <label for="creationQy">P-256 public key · qy</label>
+                <input id="creationQy" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" aria-describedby="p256Help" />
+                <p class="field-help" id="p256Help">Copy qx and qy from the local signer’s provision output. Only the public coordinates go onchain; keep its private key in Secure Enclave.</p>
+              </div>
+              <div id="creationLegacyFields" hidden>
+                <label for="authenticatorInput">Legacy operating signer address</label>
+                <input id="authenticatorInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x… KMS-backed key" aria-describedby="authHelp" />
+                <p class="field-help" id="authHelp">For older secp256k1 agents only. This address must differ from your owner wallet.</p>
+              </div>
               <label for="saltInput">Deployment salt</label>
               <div class="input-row"><input id="saltInput" type="text" spellcheck="false" autocomplete="off" aria-describedby="saltHelp" /><button id="newSaltButton" class="button button-secondary" type="button">New salt</button></div>
               <p class="field-help" id="saltHelp">A 32-byte value makes the address deterministic. Save it if you need to predict the address again.</p>
@@ -64,8 +75,15 @@
         <div class="section-head"><span class="section-number">02</span><div><h2 id="signerTitle">Operating signer</h2><p>Rotate or revoke the key without changing the agent ID or its owner.</p></div><span id="signerState" class="state-pill">Load an agent</span></div>
         <div class="section-content">
           <div class="signer-row"><span>Current signer</span><code id="signerValue">—</code></div>
-          <label for="rotationInput">Replacement signer address</label>
-          <div class="input-row signer-controls"><input id="rotationInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x…" /><button id="rotateButton" class="button button-secondary" type="button" disabled>Rotate</button><button id="restoreButton" class="button button-secondary" type="button" disabled>Restore</button></div>
+          <div id="replacementP256Fields" hidden>
+            <label for="replacementQx">Replacement P-256 public key · qx</label>
+            <input id="replacementQx" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" />
+            <label for="replacementQy">Replacement P-256 public key · qy</label>
+            <input id="replacementQy" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" />
+            <p class="field-help">Provision a new local key first, then enter only its public coordinates. Keep the old key until this transaction confirms.</p>
+          </div>
+          <div id="replacementLegacyFields" hidden><label for="rotationInput">Replacement signer address</label><input id="rotationInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x…" /></div>
+          <div class="input-row signer-controls"><button id="rotateButton" class="button button-secondary" type="button" disabled>Rotate</button><button id="restoreButton" class="button button-secondary" type="button" disabled>Restore</button></div>
           <button id="revokeButton" class="text-action text-danger" type="button" disabled>Revoke current signer</button>
           <p class="field-help">Revocation stops new signatures from validating onchain. Service sessions already issued may last until their short expiry.</p>
         </div>
@@ -89,7 +107,7 @@
         <div class="route" aria-hidden="true"><span>HUMAN</span><i></i><span>AGENT</span><i></i><span>SERVICE</span></div>
         <div class="fact"><span>Owner wallet</span><strong id="summaryOwner">Not connected</strong><small>Controls signer and policy.</small></div>
         <div class="fact"><span>Agent identity</span><strong id="summaryAgent">Not loaded</strong><small>Signs as itself, never as the human.</small></div>
-        <div class="fact"><span>Operating key</span><strong id="summarySigner">Not loaded</strong><small>KMS key; no owner permissions.</small></div>
+        <div class="fact"><span>Operating key</span><strong id="summarySigner">Not loaded</strong><small>Separate signer; no owner permissions.</small></div>
         <div class="fact"><span>Execution policy</span><strong id="summaryPolicy">Default deny</strong><small>Checked before onchain execution.</small></div>
         <div class="boundary"><strong>Service access is separate.</strong><p>A service verifies the agent's signature, then applies its own enrollment, owner association, subscriptions, and route permissions. This page cannot grant API access.</p></div>
       </div>

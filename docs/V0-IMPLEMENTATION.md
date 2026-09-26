@@ -24,13 +24,13 @@ The operating key cannot set policy. A rule may require a separate owner EIP-712
 
 ## Portal
 
-The [owner portal](PORTAL.md) is a three-step Protocol Workbench: create or verify an agent, manage its operating key, and author/test its onchain policy. Chain-specific trusted factory and implementation addresses must be configured in `portal/config.ts`; the map is intentionally empty until deployment. The portal sends owner wallet transactions directly and never asks for an agent-root secret or KMS private key.
+The [owner portal](PORTAL.md) is a three-step Protocol Workbench: create or verify an agent, manage its operating key, and author/test its onchain policy. P-256 creation and key management use the public `qx`/`qy` coordinates supplied by a separately provisioned local Secure Enclave helper; legacy secp256k1 accounts remain supported. Chain-specific trusted factory and implementation addresses must be configured in `portal/config.ts`; the map is intentionally empty until deployment. The portal sends owner wallet transactions directly and never asks for an agent-root secret or KMS private key.
 
 ## What remains before a live demo
 
 - Deploy and pin an ERC-4337 EntryPoint and factory on the selected chain; integrate a bundler and test simulation, gas estimation, and execution on that network. Local tests cover the mock caller boundary plus a signed, funded UserOperation through the official EntryPoint v0.8 contract, including nonce advancement and replay rejection, but **not** bundler interoperability.
 - Exercise the Secure Enclave helper with a provisioned key on supported hardware and replace in-memory service nonce/session stores with durable, atomic stores; integrate actual customer/payment systems and deploy the services.
-- Complete the owner portal's P-256 provisioning/registration flow. The current portal still centers the earlier secp256k1 account path.
+- Provision and exercise a physical Secure Enclave key, configure a trusted deployment in the portal, and test the P-256 owner-wallet creation/rotation/policy flow on the selected chain. The portal does not create Secure Enclave keys itself.
 - Add independent security review, especially around hook reentrancy, token behavior, owner-key custody, RPC consistency/reorgs, and service replay storage. Do not treat local tests as an audit.
 
 The ERC-1167 implementation pointer is immutable. This makes exact runtime provenance straightforward to check, but a future EIP-8141 / ERC-8286 implementation **cannot upgrade this v0 account at the same address**. A later account generation can use those standards with a new address, or an explicit migration/upgrade design must be agreed before deployment if preserving the same agent address is required. Service sessions also remain locally valid until their TTL unless a service rechecks onchain state; immediate key-revocation invalidation of existing sessions is not implemented.
