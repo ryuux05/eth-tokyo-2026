@@ -135,19 +135,22 @@ wallet registration and associates an authenticated agent through its onchain
 `owner()`. Service-local state resets on restart; onchain identities persist.
 The legacy local-chain launcher is available explicitly as `npm run demo:hardhat`.
 
-Service C is a **Next.js policy-decision workbench, not a payment service**. Enter your agent ID,
-deploy or reuse a demo target through your browser wallet, and read the default-deny
-policy. Set a 5 USDC boundary (this explicitly replaces the entire policy), then check
-5 versus 5.000001 USDC. Update the boundary and check again to see the next confirmed
-policy revision. The token is Sepolia USDC, `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`,
+Service C is a **Next.js compute-credit storefront with read-only purchase checks**.
+Register your owner wallet, select a 5 or 20 USDC pack, and copy the agent prompt.
+Deploy or reuse its purchase contract once. Configure Token purchase rules in the
+existing **Agentic World portal**, not in Service C. Enter an agent address to read
+its policy, then update the policy in the portal and check again after confirmation.
+The token is Sepolia USDC, `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`,
 with six decimals. The threshold is per operation, not a cumulative budget or live USD price.
 No USDC approval or payment is submitted from this page; do not fund the agent for this preview.
 
 An agent can authenticate directly at `GET /private/quote?target=0xTARGET&amount=5`
 on Service C using the same 401 challenge / proof-header / Agent-Session flow as A/B.
 The response reports `evaluateAction()` and its block; HTTP 200 means the quote was
-returned, **not** that spending was authorized or executed. Every verified agent may
-read its own quote. `npm run dev:demo-service-c` runs only this workbench in development;
+returned, **not** that spending was authorized or executed. A verified agent may
+read its own quote when its owner is registered. Quotes include the proposed call
+for an independent MCP policy check and explicitly report NOT_PAID; no credits are delivered.
+`npm run dev:demo-service-c` runs only this storefront in development;
 for production, build with `npm run build:demo-service-c` then run `npm run serve:demo-service-c`.
 See [Service C deployment instructions](demo-service-c/README.md) for Vercel, browser wallet
 support, and required shared Redis storage. The hosted audience uses the deployed origin.
