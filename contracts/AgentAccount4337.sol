@@ -30,6 +30,7 @@ contract AgentAccount4337 is AccountERC7579Hooked {
     error UnsupportedExecutionMode();
 
     event AgentInitialized(address indexed agent, address indexed owner, address indexed authenticator);
+    event AgentInitializedP256(address indexed agent, address indexed owner, bytes32 qx, bytes32 qy);
 
     constructor(address factory_, AgentValidator validator_, AgentPolicyHook hook_, IEntryPoint entryPoint_) {
         require(factory_ != address(0) && address(validator_) != address(0) && address(hook_) != address(0) &&
@@ -59,9 +60,27 @@ contract AgentAccount4337 is AccountERC7579Hooked {
         emit AgentInitialized(address(this), humanOwner, initialAuthenticator);
     }
 
+    /// @dev The factory binds the same persistent agent identity to a non-exportable P-256 operating key.
+    function initializeP256(address humanOwner, bytes32 qx, bytes32 qy) external {
+        if (msg.sender != factory) revert NotFactory();
+        if (_owner != address(0)) revert AlreadyInitialized();
+        if (humanOwner == address(0) || humanOwner == address(this)) revert InvalidOwner();
+        _owner = humanOwner;
+        _createdAt = uint64(block.timestamp);
+        _installModule(MODULE_TYPE_VALIDATOR, address(agentValidator), abi.encode(uint8(2), qx, qy));
+        _installModule(MODULE_TYPE_HOOK, address(policyHook), "");
+        emit AgentInitializedP256(address(this), humanOwner, qx, qy);
+    }
+
     function owner() external view returns (address) { return _owner; }
     function createdAt() external view returns (uint64) { return _createdAt; }
     function authenticator() external view returns (address) { return agentValidator.authenticator(address(this)); }
+    function authenticatorScheme() external view returns (uint8) {
+        return agentValidator.authenticatorScheme(address(this));
+    }
+    function authenticatorP256() external view returns (bytes32 qx, bytes32 qy) {
+        return agentValidator.authenticatorP256(address(this));
+    }
     function authenticationRevoked() external view returns (bool) {
         return agentValidator.authenticationRevoked(address(this));
     }
@@ -71,7 +90,9 @@ contract AgentAccount4337 is AccountERC7579Hooked {
     function ownerApprovalNonce() external view returns (uint256) {
         return policyHook.ownerApprovalNonce(address(this));
     }
-    function protocolVersion() external pure returns (uint64) { return 2; }
+    function protocolVersion() external view returns (uint64) {
+        return agentValidator.authenticatorScheme(address(this)) == 2 ? 3 : 2;
+    }
     function accountId() public pure override returns (string memory) { return "agentic.world.AgentAccount4337.v0"; }
     function entryPoint() public view override returns (IEntryPoint) { return _entryPoint; }
 
@@ -79,10 +100,16 @@ contract AgentAccount4337 is AccountERC7579Hooked {
         if (signer == _owner) revert InvalidOwner();
         agentValidator.rotateAuthenticator(signer);
     }
+    function rotateP256Authenticator(bytes32 qx, bytes32 qy) external onlyOwner {
+        agentValidator.rotateP256Authenticator(qx, qy);
+    }
     function revokeAuthenticator() external onlyOwner { agentValidator.revokeAuthenticator(); }
     function restoreAuthenticator(address signer) external onlyOwner {
         if (signer == _owner) revert InvalidOwner();
         agentValidator.restoreAuthenticator(signer);
+    }
+    function restoreP256Authenticator(bytes32 qx, bytes32 qy) external onlyOwner {
+        agentValidator.restoreP256Authenticator(qx, qy);
     }
     function setPolicy(bytes calldata encoded) external onlyOwner { policyHook.setPolicy(encoded); }
     function evaluateAction(address target, uint256 value, bytes calldata data)

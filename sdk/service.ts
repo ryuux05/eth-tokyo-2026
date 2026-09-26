@@ -128,7 +128,8 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     assertAddress(agentId);
     if (sameAddress(agentId, zeroAddress)) throw new Error("Zero agent ID");
     if (await config.client.getChainId() !== config.chainId) throw new Error("RPC chain ID mismatch");
-    const blockNumber = await config.client.getBlockNumber();
+    // Authentication must not reuse viem's cached chain head after key revocation.
+    const blockNumber = await config.client.getBlockNumber({ cacheTime: 0 });
     const code = await config.client.getCode({ address: agentId, blockNumber });
     if (!isExpectedAgentAccountCode(code, config.implementation)) throw new Error("Unexpected agent account implementation");
     const owner = config.readOwner || config.registry
@@ -145,7 +146,7 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     async authenticateRequest(proof: RequestAuthenticationProof, request: HttpRequest): Promise<{ token: string; session: Session }> {
       if (!config.requestNonces) throw new Error("Request nonce store is not configured");
       assertHttpRequest(request);
-      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x[0-9a-fA-F]{64}$/.test(proof.bodyHash) || !/^0x[0-9a-fA-F]{130}$/.test(proof.signature)) throw new Error("Malformed request proof");
+      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x[0-9a-fA-F]{64}$/.test(proof.bodyHash) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new Error("Malformed request proof");
       if (proof.audience !== config.audience || proof.chainId !== config.chainId || proof.method !== request.method || proof.target !== request.target || proof.bodyHash.toLowerCase() !== keccak256(request.body).toLowerCase()) {
         throw new Error("Request proof does not match this HTTP request");
       }
@@ -186,7 +187,7 @@ export function createServiceSdk(config: ServiceSdkConfig) {
 
     async authenticate(proof: AuthenticationProof): Promise<{ token: string; session: Session }> {
       if (!config.challenges) throw new Error("Challenge store is not configured");
-      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x[0-9a-fA-F]{130}$/.test(proof.signature)) throw new Error("Malformed proof");
+      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new Error("Malformed proof");
       const challenge = await config.challenges.get(proof.nonce);
       if (!challenge || !sameChallenge(proof, challenge)) throw new Error("Unknown or mismatched challenge");
       const timestamp = now();

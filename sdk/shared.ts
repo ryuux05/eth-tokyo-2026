@@ -52,9 +52,11 @@ export const agentAccountAbi = [
   ], outputs: [] },
   { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "authenticator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "authenticatorScheme", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "authenticatorP256", stateMutability: "view", inputs: [], outputs: [{ name: "qx", type: "bytes32" }, { name: "qy", type: "bytes32" }] },
   { type: "function", name: "createdAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "authenticationRevoked", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
-  { type: "function", name: "protocolVersion", stateMutability: "pure", inputs: [], outputs: [{ type: "uint64" }] },
+  { type: "function", name: "protocolVersion", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "agentValidator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "policyHook", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
   { type: "function", name: "entryPoint", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
@@ -63,8 +65,10 @@ export const agentAccountAbi = [
     { name: "additionalContext", type: "bytes" },
   ], outputs: [{ type: "bool" }] },
   { type: "function", name: "rotateAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
+  { type: "function", name: "rotateP256Authenticator", stateMutability: "nonpayable", inputs: [{ name: "qx", type: "bytes32" }, { name: "qy", type: "bytes32" }], outputs: [] },
   { type: "function", name: "revokeAuthenticator", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "restoreAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
+  { type: "function", name: "restoreP256Authenticator", stateMutability: "nonpayable", inputs: [{ name: "qx", type: "bytes32" }, { name: "qy", type: "bytes32" }], outputs: [] },
   { type: "function", name: "isValidSignature", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes" }], outputs: [{ type: "bytes4" }] },
 ] as const;
 
@@ -77,6 +81,9 @@ export const agentAccountFactoryAbi = [
   ], outputs: [{ type: "address" }] },
   { type: "function", name: "createAgent", stateMutability: "nonpayable", inputs: [
     { name: "authenticator", type: "address" }, { name: "salt", type: "bytes32" },
+  ], outputs: [{ type: "address" }] },
+  { type: "function", name: "createAgentP256", stateMutability: "nonpayable", inputs: [
+    { name: "qx", type: "bytes32" }, { name: "qy", type: "bytes32" }, { name: "salt", type: "bytes32" },
   ], outputs: [{ type: "address" }] },
 ] as const;
 

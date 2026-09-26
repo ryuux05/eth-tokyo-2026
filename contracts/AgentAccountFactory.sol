@@ -14,6 +14,7 @@ contract AgentAccountFactory {
     AgentPolicyHook public immutable policyHook;
 
     event AgentCreated(address indexed agent, address indexed owner, address indexed authenticator);
+    event AgentCreatedP256(address indexed agent, address indexed owner, bytes32 qx, bytes32 qy);
 
     constructor(IEntryPoint entryPoint) {
         validator = new AgentValidator();
@@ -25,6 +26,12 @@ contract AgentAccountFactory {
         agent = Clones.cloneDeterministic(implementation, _salt(msg.sender, salt));
         AgentAccount4337(payable(agent)).initialize(msg.sender, authenticator);
         emit AgentCreated(agent, msg.sender, authenticator);
+    }
+
+    function createAgentP256(bytes32 qx, bytes32 qy, bytes32 salt) external returns (address agent) {
+        agent = Clones.cloneDeterministic(implementation, _salt(msg.sender, salt));
+        AgentAccount4337(payable(agent)).initializeP256(msg.sender, qx, qy);
+        emit AgentCreatedP256(agent, msg.sender, qx, qy);
     }
 
     function predictAgent(address humanOwner, bytes32 salt) external view returns (address) {

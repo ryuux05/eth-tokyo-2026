@@ -13,6 +13,13 @@ import {
 
 export type DigestSigner = (digest: Hex) => Promise<Hex>;
 
+function assertOperatingSignature(signature: Hex): void {
+  // secp256k1 uses r||s||v; Secure Enclave P-256 uses normalized r||s.
+  if (!/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(signature)) {
+    throw new Error("Signer returned an invalid operating signature");
+  }
+}
+
 /** Attach these to the resource request that was signed. Never reuse them on a different request. */
 export function requestProofHeaders(proof: RequestAuthenticationProof): Record<string, string> {
   return {
@@ -41,7 +48,7 @@ export function createAgentSdk(config: {
     async signUserOperationHash(userOpHash: Hex): Promise<Hex> {
       if (!/^0x[0-9a-fA-F]{64}$/.test(userOpHash)) throw new Error("Invalid UserOperation hash");
       const signature = await config.signDigest(userOpHash);
-      if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error("Signer returned an invalid ECDSA signature");
+      assertOperatingSignature(signature);
       return signature;
     },
     async signRequest(request: HttpRequest, expectedAudience: string): Promise<RequestAuthenticationProof> {
@@ -60,7 +67,7 @@ export function createAgentSdk(config: {
         bodyHash: keccak256(request.body),
       };
       const signature = await config.signDigest(requestAuthenticationDigest(unsigned));
-      if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error("Signer returned an invalid ECDSA signature");
+      assertOperatingSignature(signature);
       return { ...unsigned, signature };
     },
     async answerChallenge(challenge: AuthenticationChallenge, expectedAudience: string): Promise<AuthenticationProof> {
@@ -73,7 +80,7 @@ export function createAgentSdk(config: {
         throw new Error("Expired or invalid challenge");
       }
       const signature = await config.signDigest(authenticationDigest(challenge));
-      if (!/^0x[0-9a-fA-F]{130}$/.test(signature)) throw new Error("Signer returned an invalid ECDSA signature");
+      assertOperatingSignature(signature);
       return { ...challenge, signature };
     },
   };

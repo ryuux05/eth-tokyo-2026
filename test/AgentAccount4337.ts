@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import hre from "hardhat";
 import { concatHex, encodeFunctionData, keccak256, parseUnits, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { p256 } from "@noble/curves/nist.js";
 import { Decision, encodePolicy, isExpectedAgentClone, ownerActionTypedData, requestAuthenticationDigest, encodeRequestAuthenticationProof } from "../sdk/core.js";
 import { createAgentSdk } from "../sdk/agent.js";
 import { AgenticWorld, type Session } from "../sdk/service.js";
@@ -38,6 +39,49 @@ function packedOp(sender: Address, callData: Hex, signature: Hex) {
 }
 
 describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
+  it("authenticates a P-256 operating key through ERC-1271 and ERC-4337 without exposing its private key", async () => {
+    const { viem } = await hre.network.create();
+    const [owner] = await viem.getWalletClients();
+    const publicClient = await viem.getPublicClient();
+    const entryPoint = await viem.deployContract("MockAgentEntryPoint");
+    const factory = await viem.deployContract("AgentAccountFactory", [entryPoint.address]);
+    const agentId = await factory.read.predictAgent([owner.account.address, salt]) as Address;
+    const secret = p256.utils.randomPrivateKey();
+    const publicKey = p256.getPublicKey(secret, false);
+    const qx = toHex(publicKey.slice(1, 33));
+    const qy = toHex(publicKey.slice(33, 65));
+    const created = await factory.write.createAgentP256([qx, qy, salt]);
+    await publicClient.waitForTransactionReceipt({ hash: created });
+    const account = await viem.getContractAt("AgentAccount4337", agentId);
+    assert.equal(await account.read.authenticatorScheme(), 2);
+    assert.equal(await account.read.protocolVersion(), 3n);
+    assert.deepEqual(await account.read.authenticatorP256(), [qx, qy]);
+    assert.equal((await account.read.owner() as Address).toLowerCase(), owner.account.address.toLowerCase());
+    const signDigest = async (digest: Hex) => `0x${p256.sign(toBytes(digest), secret, { prehash: false }).toCompactHex()}` as Hex;
+    const agent = createAgentSdk({ agentId, chainId: await publicClient.getChainId(), signDigest });
+    const request = { method: "GET", target: "/private/report", body: new Uint8Array() };
+    const proof = await agent.signRequest(request, "https://service-a.example");
+    const digest = requestAuthenticationDigest(proof);
+    assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0x1626ba7e");
+    const sessions = new Map<Hex, Session>();
+    const nonces = new Set<Hex>();
+    const service = new AgenticWorld({ client: publicClient, chainId: await publicClient.getChainId(),
+      audience: "https://service-a.example", pinnedImplementation: await factory.read.implementation() as Address,
+      requestNonces: { async consume(_id, nonce) { if (nonces.has(nonce)) return false; nonces.add(nonce); return true; } },
+      sessions: { async put(hash, session) { sessions.set(hash, session); }, async get(hash) { return sessions.get(hash); } },
+      association: { mode: "owner", async resolveUser(address) { return address.toLowerCase() === owner.account.address.toLowerCase() ? { id: "owner" } : null; } },
+    });
+    assert.equal((await service.authenticateRequest(proof, request)).user?.id, "owner");
+    const userOpHash = keccak256(toBytes("p256-userop"));
+    const op = packedOp(agentId, "0x", await signDigest(userOpHash));
+    assert.equal(await publicClient.simulateContract({ address: entryPoint.address, abi: entryPoint.abi,
+      functionName: "validate", args: [agentId, op, userOpHash] }).then(r => r.result), 0n);
+    const revoked = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "revokeAuthenticator" });
+    await publicClient.waitForTransactionReceipt({ hash: revoked });
+    assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0xffffffff");
+    assert.equal(await publicClient.simulateContract({ address: entryPoint.address, abi: entryPoint.abi,
+      functionName: "validate", args: [agentId, op, userOpHash] }).then(r => r.result), 1n);
+  });
   it("deploys an initialized clone with owner = factory transaction sender and fixed modules", async () => {
     const c = await setup();
     const code = await c.publicClient.getCode({ address: c.agent });
