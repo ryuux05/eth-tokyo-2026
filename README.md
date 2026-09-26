@@ -65,7 +65,7 @@ unchanged. The old `AgentAccount` and `MandateRegistry` remain as historical
 prototype code, not v0 deployment components.
 
 The factory, implementation, validator, hook, and EntryPoint are pinned to
-Sepolia in `sdk/deployments.ts`. `npm run demo` runs two loopback HTTP services
+Sepolia in `sdk/deployments.ts`. `npm run demo` runs three loopback HTTP services
 against that deployment. The local MCP supports macOS Secure Enclave and Windows
 TPM signers, multiple identities, aliases, an owner portal, and browser-approved
 creation, policy updates, rotation, and revocation.
@@ -122,11 +122,11 @@ For the interactive local workbench, run **one command** and leave it open:
 npm run demo
 ```
 
-It builds and serves Service A at `http://127.0.0.1:8787` and Service B at
-`http://127.0.0.1:8797`, verifies the pinned Sepolia deployment, and prints the
+It builds and serves Service A at `http://127.0.0.1:8787`, Service B at
+`http://127.0.0.1:8797`, and Service C at `http://127.0.0.1:8807`, verifies the pinned Sepolia deployment, and prints the
 Service A operator key. Their report endpoints are `/private/report`; Service A
 also offers `/private/compute`. Set `AGENTIC_SERVICE_A_PORT` or
-`AGENTIC_SERVICE_B_PORT` to explicitly change ports. The command uses Sepolia;
+`AGENTIC_SERVICE_B_PORT` or `AGENTIC_SERVICE_C_PORT` to explicitly change ports. The command uses Sepolia;
 it does not start Hardhat, deploy contracts, or build the local signer.
 
 Service A requires each end user to enroll their agent with an owner-wallet
@@ -134,6 +134,27 @@ signature; the operator then grants resource permissions. Service B requires
 wallet registration and associates an authenticated agent through its onchain
 `owner()`. Service-local state resets on restart; onchain identities persist.
 The legacy local-chain launcher is available explicitly as `npm run demo:hardhat`.
+
+Service C is a **Next.js policy-decision workbench, not a payment service**. Enter your agent ID,
+deploy or reuse a demo target through your browser wallet, and read the default-deny
+policy. Set a 5 USDC boundary (this explicitly replaces the entire policy), then check
+5 versus 5.000001 USDC. Update the boundary and check again to see the next confirmed
+policy revision. The token is Sepolia USDC, `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`,
+with six decimals. The threshold is per operation, not a cumulative budget or live USD price.
+No USDC approval or payment is submitted from this page; do not fund the agent for this preview.
+
+An agent can authenticate directly at `GET /private/quote?target=0xTARGET&amount=5`
+on Service C using the same 401 challenge / proof-header / Agent-Session flow as A/B.
+The response reports `evaluateAction()` and its block; HTTP 200 means the quote was
+returned, **not** that spending was authorized or executed. Every verified agent may
+read its own quote. `npm run dev:demo-service-c` runs only this workbench in development;
+for production, build with `npm run build:demo-service-c` then run `npm run serve:demo-service-c`.
+See [Service C deployment instructions](demo-service-c/README.md) for Vercel, browser wallet
+support, and required shared Redis storage. The hosted audience uses the deployed origin.
+`npm run test:service-c` separately proves real ERC-4337 execution locally: P-256
+UserOperations, exact threshold, missing/wrong/replayed owner approvals, policy updates,
+and token balance changes. These tests use the corrected source contracts and test keys,
+not the older pinned Sepolia bytecode or your Secure Enclave/TPM key.
 
 ### Use the skill in Codex or Claude Code
 
