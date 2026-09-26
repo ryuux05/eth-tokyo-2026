@@ -7,6 +7,7 @@ type DemoConfig = {
   kind: "owner" | "manual";
   chainId: number;
   audience: string;
+  rpcUrl: string;
   implementation: Address;
   agentId: Address;
   owner: Address;
@@ -18,7 +19,7 @@ const config = JSON.parse(rawConfig) as DemoConfig;
 if (!isAddress(config.implementation) || !isAddress(config.agentId) || !isAddress(config.owner)) {
   throw new Error("Invalid local demo address");
 }
-const client = createPublicClient({ transport: http("http://127.0.0.1:8545") });
+const client = createPublicClient({ transport: http(config.rpcUrl) });
 const nonceExpiries = new Map<string, number>();
 const sessions = new Map<Hex, Session>();
 

@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
 import { network } from "hardhat";
-import { concatHex, encodeFunctionData, keccak256, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, decodeFunctionData, encodeFunctionData, keccak256, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createAgentSdk, Decision, encodeAgentExecution, encodePolicy } from "../sdk/agent.js";
+import { agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi } from "../sdk/core.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
@@ -16,6 +17,7 @@ const userOperationEvent = parseAbiItem("event UserOperationEvent(bytes32 indexe
 
 const { viem, networkName } = await network.create();
 if (networkName !== "localhost") throw new Error("This demo must run with --network localhost");
+const rpcUrl = process.env.DEMO_RPC_URL ?? "http://127.0.0.1:8545";
 const client = await viem.getPublicClient();
 const [owner] = await viem.getWalletClients();
 const chainId = await client.getChainId();
@@ -64,6 +66,7 @@ assert.equal(await entryPoint.read.getNonce([agent, 0n]), 1n);
 const serviceScript = fileURLToPath(new URL("./demo/service.ts", import.meta.url));
 const agentScript = fileURLToPath(new URL("./demo/agent.ts", import.meta.url));
 const mcpScript = fileURLToPath(new URL("../mcp/server.ts", import.meta.url));
+const signerFixtureScript = fileURLToPath(new URL("./demo/LocalSignerFixture.mjs", import.meta.url));
 const children: ChildProcess[] = [];
 
 function childScript(path: string, envKey: string, config: object): ChildProcess {
@@ -79,7 +82,7 @@ function childScript(path: string, envKey: string, config: object): ChildProcess
 async function startService(kind: "owner" | "manual"): Promise<{ url: string; audience: string }> {
   const audience = kind === "owner" ? "https://service-a.example" : "https://service-b.example";
   const child = childScript(serviceScript, "DEMO_SERVICE_CONFIG", {
-    kind, chainId, audience, implementation: await factory.read.implementation(),
+    kind, chainId, audience, rpcUrl, implementation: await factory.read.implementation(),
     agentId: agent, owner: owner.account.address,
   });
   const port = await new Promise<number>((resolve, reject) => {
@@ -116,7 +119,8 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
   try {
     const configPath = join(temporary, "config.json");
     await writeFile(configPath, JSON.stringify({
-      rpcUrl: "http://127.0.0.1:8545", chainId, agentId: agent, implementation: await factory.read.implementation(),
+      rpcUrl, chainId, agentId: agent, factory: factory.address,
+      implementation: await factory.read.implementation(),
       services: {
         owner: { baseUrl: serviceA.url, audience: serviceA.audience, methods: ["GET"], paths: ["/private/report"] },
         manual: { baseUrl: serviceB.url, audience: serviceB.audience, methods: ["GET"], paths: ["/private/compute", "/private/admin"] },
@@ -134,13 +138,35 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
     };
     try {
       const tools = await mcp.listTools();
-      assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_identity", "agentic_policy_check", "agentic_request"]);
+      assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_authenticate", "agentic_create_identity",
+        "agentic_identity", "agentic_policy_check", "agentic_request", "agentic_rotate_authenticator", "agentic_set_policy"]);
       const identity = await call("agentic_identity", {});
       assert.equal(identity.error, false);
       assert.equal(String(identity.data.agentId).toLowerCase(), agent.toLowerCase());
       assert.equal(identity.data.authenticationRevoked, phase === "revoked");
       const preview = await call("agentic_policy_check", { target: target.address, valueWei: "0", data });
       assert.equal(preview.data.decision, "ALLOW");
+      if (phase === "active") {
+        const prepared = await call("agentic_create_identity", { owner: owner.account.address, salt: generatePrivateKey() });
+        assert.equal(prepared.error, false);
+        assert.equal(prepared.data.status, "OWNER_TRANSACTION_REQUIRED");
+        assert.equal((prepared.data.transaction as { to: Address }).to.toLowerCase(), factory.address.toLowerCase());
+        assert.equal(decodeFunctionData({ abi: agentAccountFactoryAbi,
+          data: (prepared.data.transaction as { data: Hex }).data }).functionName, "createAgent");
+        const policyIntent = await call("agentic_set_policy", { rules: [{ target: target.address,
+          selector: "0x12345678", token: zeroAddress, maxValueWei: "0", maxAmount: "0", decision: "DENY" }] });
+        assert.equal(policyIntent.error, false);
+        assert.equal(policyIntent.data.status, "OWNER_TRANSACTION_REQUIRED");
+        assert.equal((policyIntent.data.transaction as { from: Address }).from.toLowerCase(), owner.account.address.toLowerCase());
+        assert.equal(decodeFunctionData({ abi: agentPolicyAbi,
+          data: (policyIntent.data.transaction as { data: Hex }).data }).functionName, "setPolicy");
+        const rotation = await call("agentic_rotate_authenticator", { scheme: "secp256k1",
+          address: privateKeyToAccount(generatePrivateKey()).address });
+        assert.equal(rotation.error, false);
+        assert.equal(rotation.data.status, "OWNER_TRANSACTION_REQUIRED");
+        assert.equal(decodeFunctionData({ abi: agentAccountAbi,
+          data: (rotation.data.transaction as { data: Hex }).data }).functionName, "rotateAuthenticator");
+      }
       const first = await call("agentic_request", { url: `${serviceA.audience}/private/report`, method: "GET" });
       if (phase === "revoked") {
         assert.equal(first.error, true);
@@ -148,6 +174,9 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
       } else {
         assert.equal(first.data.status, 200);
         assert.equal(first.data.sessionEstablished, true);
+        const authenticated = await call("agentic_authenticate", { url: `${serviceA.audience}/private/report` });
+        assert.equal(authenticated.data.status, 200);
+        assert.equal(authenticated.data.sessionActive, true);
         const repeated = await call("agentic_request", { url: `${serviceA.audience}/private/report`, method: "GET" });
         assert.equal(repeated.data.status, 200);
         assert.equal(repeated.data.usedSession, true);
@@ -161,6 +190,33 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
       }
       console.log(`MCP_RESULT ${JSON.stringify({ phase, agentId: agent, tools: tools.tools.length, status: first.data.status ?? first.data.code })}`);
     } finally { await mcp.close(); }
+    if (phase === "active") {
+      const launcher = join(temporary, "test-p256-signer");
+      await writeFile(launcher, `#!/bin/sh\nexec "${process.execPath}" --import tsx "${signerFixtureScript}" "$@"\n`);
+      await chmod(launcher, 0o700);
+      await writeFile(configPath, JSON.stringify({ rpcUrl, chainId, factory: factory.address,
+        implementation: await factory.read.implementation(), signer: { kind: "secure-enclave", binaryPath: launcher, label: "test-key" } }));
+      const bootstrapTransport = new StdioClientTransport({ command: process.execPath, args: ["--import", "tsx", mcpScript],
+        env: { ...process.env, AGENTIC_WORLD_CONFIG: configPath, AGENTIC_WORLD_OPERATING_KEY: "" } as Record<string, string> });
+      const bootstrap = new Client({ name: "agentic-world-bootstrap-test", version: "0.1.0" });
+      await bootstrap.connect(bootstrapTransport);
+      try {
+        const state = await bootstrap.callTool({ name: "agentic_identity", arguments: {} });
+        const stateBlock = state.content?.[0];
+        assert(stateBlock?.type === "text");
+        assert.equal(JSON.parse(stateBlock.text).configured, false);
+        const creation = await bootstrap.callTool({ name: "agentic_create_identity",
+          arguments: { owner: owner.account.address, salt: generatePrivateKey() } });
+        const creationBlock = creation.content?.[0];
+        assert(creationBlock?.type === "text");
+        assert.equal(creation.isError, undefined);
+        const intent = JSON.parse(creationBlock.text) as { status: string; authenticator: { scheme: string }; transaction: { data: Hex } };
+        assert.equal(intent.status, "OWNER_TRANSACTION_REQUIRED");
+        assert.equal(intent.authenticator.scheme, "p256");
+        assert.equal(decodeFunctionData({ abi: agentAccountFactoryAbi, data: intent.transaction.data }).functionName, "createAgentP256");
+        console.log(`MCP_BOOTSTRAP ${JSON.stringify({ status: intent.status, scheme: intent.authenticator.scheme })}`);
+      } finally { await bootstrap.close(); }
+    }
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 

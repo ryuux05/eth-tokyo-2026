@@ -1,7 +1,7 @@
 {
   "rpcUrl": "https://YOUR_RPC_ENDPOINT",
   "chainId": 11155111,
-  "agentId": "0x0000000000000000000000000000000000000001",
+  "factory": "0x0000000000000000000000000000000000000003",
   "implementation": "0x0000000000000000000000000000000000000002",
   "signer": {
     "kind": "secure-enclave",
