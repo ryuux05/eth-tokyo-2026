@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { isAbsolute } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { concatHex, createPublicClient, decodeEventLog, encodeFunctionData, getAddress, http, isAddress, keccak256, parseAbiItem, zeroAddress, type AbiEvent, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -706,7 +706,9 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves the module URL through symlinks, but argv can retain aliases
+// such as /var vs /private/var or an npx bin link. Compare canonical paths.
+if (process.argv[1] && fileURLToPath(import.meta.url) === await realpath(process.argv[1]).catch(() => undefined)) {
   const configPath = process.env.AGENTIC_WORLD_CONFIG;
   const key = process.env.AGENTIC_WORLD_OPERATING_KEY as Hex | undefined;
   if (!configPath) {

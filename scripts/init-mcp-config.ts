@@ -1,8 +1,8 @@
-import { readFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, mkdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { SEPOLIA_CHAIN_ID } from "../sdk/deployments.js";
 import { parseConfig } from "../mcp/server.js";
 import { createPublicClient, http } from "viem";
@@ -86,7 +86,7 @@ export async function initializeMcpConfig(options: InitOptions = {}): Promise<{ 
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === await realpath(process.argv[1]).catch(() => undefined)) {
   try {
     const args = process.argv.slice(2);
     let rpcUrl: string | undefined;
