@@ -48,12 +48,12 @@ library PolicyEngine {
         bytes storage encoded,
         address target,
         uint256 value,
-        bytes calldata data
+        bytes memory data
     ) internal view returns (Decision) {
         if (encoded.length == 0 || data.length > 0 && data.length < 4) return Decision.DENY;
         (uint8 version, Rule[] memory rules) = abi.decode(encoded, (uint8, Rule[]));
         if (version != VERSION) return Decision.DENY;
-        bytes4 selector = data.length == 0 ? bytes4(0) : bytes4(data[:4]);
+        bytes4 selector = data.length == 0 ? bytes4(0) : bytes4(data);
         (bool supportedPurchase, address actionToken, uint256 actionAmount) = tokenPurchaseDetails(data);
         for (uint256 i; i < rules.length; ++i) {
             Rule memory rule = rules[i];
@@ -71,14 +71,14 @@ library PolicyEngine {
         return Decision.DENY;
     }
 
-    function tokenPurchaseDetails(bytes calldata data)
+    function tokenPurchaseDetails(bytes memory data)
         internal pure returns (bool supported, address token, uint256 amount)
     {
-        if (data.length != 68 || bytes4(data[:4]) != TOKEN_PURCHASE_SELECTOR) return (false, address(0), 0);
+        if (data.length != 68 || bytes4(data) != TOKEN_PURCHASE_SELECTOR) return (false, address(0), 0);
         uint256 tokenWord;
         assembly {
-            tokenWord := calldataload(add(data.offset, 4))
-            amount := calldataload(add(data.offset, 36))
+            tokenWord := mload(add(data, 36))
+            amount := mload(add(data, 68))
         }
         if (tokenWord >> 160 != 0) return (false, address(0), 0);
         return (true, address(uint160(tokenWord)), amount);

@@ -1,4 +1,5 @@
 import {
+  concatHex,
   encodeAbiParameters,
   hashTypedData,
   isAddress,
@@ -10,6 +11,9 @@ import {
 
 export const ERC1271_MAGIC = "0x1626ba7e";
 export const DELEGATION_PREFIX = "0xef0100";
+export const CLONE_PREFIX = "0x363d3d373d3d3d363d73";
+export const CLONE_SUFFIX = "5af43d82803e903d91602b57fd5bf3";
+export const REQUEST_PROOF_PREFIX = "0x41575231";
 
 export type AuthenticationChallenge = {
   agentId: Address;
@@ -24,6 +28,23 @@ export type AuthenticationProof = AuthenticationChallenge & {
   signature: Hex;
 };
 
+/** The HTTP origin-form target includes the path and raw query, but no fragment. */
+export type HttpRequest = { method: string; target: string; body: Uint8Array };
+
+export type RequestAuthentication = {
+  agentId: Address;
+  audience: string;
+  chainId: number;
+  nonce: Hex;
+  issuedAt: number;
+  expiresAt: number;
+  method: string;
+  target: string;
+  bodyHash: Hex;
+};
+
+export type RequestAuthenticationProof = RequestAuthentication & { signature: Hex };
+
 export const agentAccountAbi = [
   { type: "function", name: "initialize", stateMutability: "nonpayable", inputs: [
     { name: "initialAuthenticator", type: "address" }, { name: "nonce", type: "uint256" },
@@ -34,10 +55,29 @@ export const agentAccountAbi = [
   { type: "function", name: "createdAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
   { type: "function", name: "authenticationRevoked", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   { type: "function", name: "protocolVersion", stateMutability: "pure", inputs: [], outputs: [{ type: "uint64" }] },
+  { type: "function", name: "agentValidator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "policyHook", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "entryPoint", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "isModuleInstalled", stateMutability: "view", inputs: [
+    { name: "moduleTypeId", type: "uint256" }, { name: "module", type: "address" },
+    { name: "additionalContext", type: "bytes" },
+  ], outputs: [{ type: "bool" }] },
   { type: "function", name: "rotateAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
   { type: "function", name: "revokeAuthenticator", stateMutability: "nonpayable", inputs: [], outputs: [] },
   { type: "function", name: "restoreAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
   { type: "function", name: "isValidSignature", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes" }], outputs: [{ type: "bytes4" }] },
+] as const;
+
+export const agentAccountFactoryAbi = [
+  { type: "function", name: "implementation", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "validator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "policyHook", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "predictAgent", stateMutability: "view", inputs: [
+    { name: "humanOwner", type: "address" }, { name: "salt", type: "bytes32" },
+  ], outputs: [{ type: "address" }] },
+  { type: "function", name: "createAgent", stateMutability: "nonpayable", inputs: [
+    { name: "authenticator", type: "address" }, { name: "salt", type: "bytes32" },
+  ], outputs: [{ type: "address" }] },
 ] as const;
 
 export const mandateRegistryAbi = [
@@ -62,6 +102,21 @@ const authProofAbi = [{
   ],
 }] as const;
 
+const requestProofAbi = [{
+  type: "tuple",
+  components: [
+    { name: "agentId", type: "address" },
+    { name: "audienceHash", type: "bytes32" },
+    { name: "nonce", type: "bytes32" },
+    { name: "issuedAt", type: "uint64" },
+    { name: "expiresAt", type: "uint64" },
+    { name: "methodHash", type: "bytes32" },
+    { name: "targetHash", type: "bytes32" },
+    { name: "bodyHash", type: "bytes32" },
+    { name: "authenticatorSignature", type: "bytes" },
+  ],
+}] as const;
+
 export function assertAddress(address: string): asserts address is Address {
   if (!isAddress(address)) throw new Error("Invalid agent address");
 }
@@ -73,6 +128,14 @@ export function assertAudience(audience: string): void {
   if (url.protocol !== "https:" || url.origin !== audience || url.username || url.password || url.pathname !== "/" || url.search || url.hash) {
     throw new Error("Audience must be a canonical HTTPS origin");
   }
+}
+
+export function assertHttpRequest(request: HttpRequest): void {
+  if (!/^[A-Z]+$/.test(request.method)) throw new Error("HTTP method must be uppercase ASCII");
+  if (!request.target.startsWith("/") || request.target.startsWith("//") || /[\s#]/.test(request.target)) {
+    throw new Error("Request target must be an exact origin-form path and query");
+  }
+  if (!(request.body instanceof Uint8Array)) throw new Error("Request body must be raw bytes");
 }
 
 export function authenticationTypedData(challenge: AuthenticationChallenge) {
@@ -112,4 +175,52 @@ export function encodeAuthenticationProof(proof: AuthenticationProof): Hex {
     ...authenticationTypedData(proof).message,
     authenticatorSignature: proof.signature,
   }]);
+}
+
+export function requestAuthenticationTypedData(request: RequestAuthentication) {
+  assertAudience(request.audience);
+  assertHttpRequest({ method: request.method, target: request.target, body: new Uint8Array() });
+  if (!/^0x[0-9a-fA-F]{64}$/.test(request.bodyHash)) throw new Error("Invalid body hash");
+  return {
+    domain: {
+      name: "Agentic World AgentAccount",
+      version: "1",
+      chainId: request.chainId,
+      verifyingContract: request.agentId,
+    },
+    types: {
+      AgentRequest: [
+        { name: "agentId", type: "address" },
+        { name: "audienceHash", type: "bytes32" },
+        { name: "nonce", type: "bytes32" },
+        { name: "issuedAt", type: "uint64" },
+        { name: "expiresAt", type: "uint64" },
+        { name: "methodHash", type: "bytes32" },
+        { name: "targetHash", type: "bytes32" },
+        { name: "bodyHash", type: "bytes32" },
+      ],
+    },
+    primaryType: "AgentRequest" as const,
+    message: {
+      agentId: request.agentId,
+      audienceHash: keccak256(toBytes(request.audience)),
+      nonce: request.nonce,
+      issuedAt: BigInt(request.issuedAt),
+      expiresAt: BigInt(request.expiresAt),
+      methodHash: keccak256(toBytes(request.method)),
+      targetHash: keccak256(toBytes(request.target)),
+      bodyHash: request.bodyHash,
+    },
+  } as const;
+}
+
+export function requestAuthenticationDigest(request: RequestAuthentication): Hex {
+  return hashTypedData(requestAuthenticationTypedData(request));
+}
+
+export function encodeRequestAuthenticationProof(proof: RequestAuthenticationProof): Hex {
+  return concatHex([REQUEST_PROOF_PREFIX, encodeAbiParameters(requestProofAbi, [{
+    ...requestAuthenticationTypedData(proof).message,
+    authenticatorSignature: proof.signature,
+  }])]);
 }

@@ -4,7 +4,7 @@ pragma solidity ^0.8.28;
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 
-/// @notice Shared principal-agent mandate, not a service permission registry.
+/// @notice Legacy-named optional owner-agent binding, not a behavioral mandate or permission registry.
 /// @dev The principal registers by sending the transaction, so msg.sender is
 ///      the principal. The agent root EOA separately permits the pairing.
 contract MandateRegistry is EIP712 {
@@ -31,7 +31,7 @@ contract MandateRegistry is EIP712 {
         return _principalOf[agent];
     }
 
-    /// @notice Register a mandate with one owner transaction and an agent-root permit.
+    /// @notice Register an owner-agent association with one owner transaction and an agent-root permit.
     function register(
         address agent,
         uint256 nonce,

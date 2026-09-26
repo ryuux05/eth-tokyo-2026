@@ -3,8 +3,8 @@ import { describe, it } from "node:test";
 import hre from "hardhat";
 import { encodeAbiParameters, hashTypedData, keccak256, toBytes } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { createAgentSdk } from "../sdk/agent.js";
-import { createServiceSdk, type ChallengeStore, type SessionStore } from "../sdk/service.js";
+import { createAgentSdk, requestProofHeaders } from "../sdk/agent.js";
+import { AgenticWorld, createServiceSdk, requestProofFromHeaders, type ChallengeStore, type SessionStore } from "../sdk/service.js";
 import type { AuthenticationChallenge } from "../sdk/core.js";
 
 const VALID = "0x1626ba7e";
@@ -394,6 +394,145 @@ describe("MandateRegistry", () => {
 });
 
 describe("Agent and service SDK interoperability", () => {
+  it("pins the implementation and resolves manual or owner associations only after agent authentication", async () => {
+    const context = await setup();
+    await initialize(context);
+    const now = Math.floor(Date.now() / 1000);
+    const request = { method: "GET", target: "/private/report", body: new Uint8Array() };
+    const agent = createAgentSdk({
+      agentId: context.agentRoot.address,
+      chainId: context.chainId,
+      signDigest: digest => context.authenticator.sign({ hash: digest }),
+      now: () => now,
+    });
+    const stores = () => {
+      const nonces = new Set<string>();
+      const sessions = new Map<string, { agentId: `0x${string}`; owner?: `0x${string}`; expiresAt: number }>();
+      return {
+        requestNonces: { async consume(agentId: `0x${string}`, nonce: `0x${string}`) {
+          const key = `${agentId.toLowerCase()}:${nonce.toLowerCase()}`;
+          if (nonces.has(key)) return false;
+          nonces.add(key);
+          return true;
+        } },
+        sessions: { async put(hash: `0x${string}`, session: { agentId: `0x${string}`; owner?: `0x${string}`; expiresAt: number }) { sessions.set(hash, session); },
+          async get(hash: `0x${string}`) { return sessions.get(hash); } },
+      };
+    };
+    const base = {
+      client: context.publicClient,
+      chainId: context.chainId,
+      audience: "https://service-a.example",
+      pinnedImplementation: context.implementation.address,
+      now: () => now,
+    };
+    let ownerLookups = 0;
+    const ownerConfig = {
+      ...base,
+      ...stores(),
+      association: { mode: "owner" as const, async resolveUser(owner: `0x${string}`) {
+        ownerLookups += 1;
+        return owner.toLowerCase() === context.owner.account.address.toLowerCase() ? { id: "paid-user" } : null;
+      } },
+    };
+    const ownerSdk = new AgenticWorld(ownerConfig);
+    // Mutating the caller's config after construction must not retarget verification.
+    ownerConfig.pinnedImplementation = context.stranger.account.address;
+    const proof = await agent.signRequest(request, base.audience);
+    const ownerResult = await ownerSdk.authenticateRequest(proof, request);
+    assert.equal(ownerResult.session.owner?.toLowerCase(), context.owner.account.address.toLowerCase());
+    assert.deepEqual(ownerResult.user, { id: "paid-user" });
+    assert.equal(ownerLookups, 1);
+    await assert.rejects(ownerSdk.authenticateRequest(proof, request));
+    assert.equal(ownerLookups, 1);
+
+    const wrongPin = new AgenticWorld({
+      ...base,
+      pinnedImplementation: context.stranger.account.address,
+      ...stores(),
+      association: { mode: "owner", async resolveUser() { ownerLookups += 1; return { id: "wrong" }; } },
+    });
+    await assert.rejects(wrongPin.authenticateRequest(await agent.signRequest(request, base.audience), request));
+    assert.equal(ownerLookups, 1);
+
+    const enrolled = new Set<string>();
+    const manualSdk = new AgenticWorld({
+      ...base,
+      ...stores(),
+      association: { mode: "manual", async resolveUser(agentId: `0x${string}`) {
+        return enrolled.has(agentId.toLowerCase()) ? { id: "manual-user" } : null;
+      } },
+    });
+    const manualResult = await manualSdk.authenticateRequest(await agent.signRequest(request, base.audience), request);
+    assert.equal(manualResult.session.owner, undefined);
+    assert.equal(manualResult.user, null);
+    enrolled.add(context.agentRoot.address.toLowerCase());
+    assert.deepEqual((await manualSdk.readSession(manualResult.token))?.user, { id: "manual-user" });
+  });
+
+  it("authenticates a first resource request without a challenge and rejects replay or request changes", async () => {
+    const context = await setup();
+    await initialize(context);
+    let clock = Math.floor(Date.now() / 1000);
+    const sessions = new Map<string, { agentId: `0x${string}`; principal?: `0x${string}`; expiresAt: number }>();
+    const createService = (audience: string, withRegistry = true) => {
+      const used = new Set<string>();
+      return createServiceSdk({
+      client: context.publicClient,
+      chainId: context.chainId,
+      audience,
+      implementation: context.implementation.address,
+      ...(withRegistry ? { registry: context.registry.address } : {}),
+      sessions: { async put(hash, session) { sessions.set(hash, session); }, async get(hash) { return sessions.get(hash); } },
+      requestNonces: { async consume(agentId, nonce) {
+        const key = `${agentId.toLowerCase()}:${nonce.toLowerCase()}`;
+        if (used.has(key)) return false;
+        used.add(key);
+        return true;
+      } },
+      now: () => clock,
+      });
+    };
+    const serviceA = createService("https://service-a.example");
+    const serviceB = createService("https://service-b.example");
+    const serviceC = createService("https://service-c.example", false);
+    const agent = createAgentSdk({
+      agentId: context.agentRoot.address,
+      chainId: context.chainId,
+      signDigest: digest => context.authenticator.sign({ hash: digest }),
+      now: () => clock,
+    });
+    const request = { method: "GET", target: "/private/report?year=2026", body: new Uint8Array() };
+    const proof = await agent.signRequest(request, "https://service-a.example");
+    assert.deepEqual(requestProofFromHeaders(requestProofHeaders(proof), request, "https://service-a.example"), proof);
+    assert.throws(() => requestProofFromHeaders({ ...requestProofHeaders(proof), "agent-id": context.stranger.account.address }, request, "https://service-a.example"));
+    assert.throws(() => requestProofFromHeaders({ ...requestProofHeaders(proof), "Agent-Nonce": [proof.nonce, proof.nonce] }, request, "https://service-a.example"));
+    assert.notEqual(requestProofFromHeaders(requestProofHeaders(proof), { ...request, target: "/private/report?year=2025" }, "https://service-a.example").target, proof.target);
+    await assert.rejects(serviceB.authenticateRequest(proof, request));
+    await assert.rejects(serviceA.authenticateRequest(proof, { ...request, target: "/private/report?year=2025" }));
+    await assert.rejects(serviceA.authenticateRequest(proof, { ...request, method: "POST" }));
+    await assert.rejects(serviceA.authenticateRequest(proof, { ...request, body: toBytes("tampered") }));
+    const first = await serviceA.authenticateRequest(proof, request);
+    assert.equal(first.session.agentId, context.agentRoot.address);
+    assert.equal(first.session.principal, undefined);
+    assert.deepEqual(await serviceA.readSession(first.token), first.session);
+    await assert.rejects(serviceA.authenticateRequest(proof, request));
+
+    const directProof = await agent.signRequest(request, "https://service-c.example");
+    const direct = await serviceC.authenticateRequest(directProof, request);
+    assert.equal(direct.session.principal, undefined);
+
+    const secondProof = await agent.signRequest(request, "https://service-a.example");
+    const rotationTx = await context.owner.writeContract({
+      address: context.agentRoot.address, abi: context.implementation.abi,
+      functionName: "rotateAuthenticator", args: [privateKeyToAccount(generatePrivateKey()).address],
+    });
+    await context.publicClient.waitForTransactionReceipt({ hash: rotationTx });
+    await assert.rejects(serviceA.authenticateRequest(secondProof, request));
+    clock += 61;
+    assert.equal(await serviceA.readSession(first.token), undefined);
+  });
+
   it("authenticates independently, prevents replay, and exposes only an active mandate", async () => {
     const context = await setup();
     await initialize(context);

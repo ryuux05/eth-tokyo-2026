@@ -10,6 +10,7 @@ import {
   decodePolicy,
   encodePolicy,
   isExpectedDelegation,
+  requestAuthenticationDigest,
 } from "../sdk/core.js";
 
 describe("Core SDK protocol definitions", () => {
@@ -38,5 +39,24 @@ describe("Core SDK protocol definitions", () => {
       maxValue: 5n, maxAmount: 0n, decision: Decision.ALLOW }]);
     assert.deepEqual(decodePolicy(encoded), [{ target: implementation, selector: "0x12345678", token: zeroAddress,
       maxValue: 5n, maxAmount: 0n, decision: Decision.ALLOW }]);
+  });
+
+  it("binds one-request proofs to method, raw target, body, and audience", () => {
+    const base = {
+      agentId: "0x1111111111111111111111111111111111111111" as const,
+      audience: "https://service-a.example",
+      chainId: 31337,
+      nonce: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" as const,
+      issuedAt: 100,
+      expiresAt: 160,
+      method: "GET",
+      target: "/private/report?year=2026",
+      bodyHash: "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470" as const,
+    };
+    const digest = requestAuthenticationDigest(base);
+    assert.notEqual(digest, requestAuthenticationDigest({ ...base, method: "POST" }));
+    assert.notEqual(digest, requestAuthenticationDigest({ ...base, target: "/private/report?year=2025" }));
+    assert.notEqual(digest, requestAuthenticationDigest({ ...base, bodyHash: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }));
+    assert.notEqual(digest, requestAuthenticationDigest({ ...base, audience: "https://service-b.example" }));
   });
 });

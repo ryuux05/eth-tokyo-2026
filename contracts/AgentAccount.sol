@@ -20,6 +20,10 @@ contract AgentAccount is EIP712, IERC1271 {
     bytes32 private constant _AUTHENTICATION_TYPEHASH = keccak256(
         "AgentAuthentication(address agentId,bytes32 audienceHash,bytes32 nonce,uint64 issuedAt,uint64 expiresAt)"
     );
+    bytes32 private constant _REQUEST_TYPEHASH = keccak256(
+        "AgentRequest(address agentId,bytes32 audienceHash,bytes32 nonce,uint64 issuedAt,uint64 expiresAt,bytes32 methodHash,bytes32 targetHash,bytes32 bodyHash)"
+    );
+    bytes4 private constant _REQUEST_PROOF_PREFIX = 0x41575231; // "AWR1"
     bytes32 private constant _OWNER_ACTION_TYPEHASH = keccak256(
         "OwnerActionApproval(address agent,uint256 chainId,address target,uint256 value,bytes32 dataHash,bytes32 policyHash,uint256 policyRevision,uint256 nonce,uint64 deadline)"
     );
@@ -48,6 +52,19 @@ contract AgentAccount is EIP712, IERC1271 {
         bytes32 nonce;
         uint64 issuedAt;
         uint64 expiresAt;
+        bytes authenticatorSignature;
+    }
+
+    /// @dev ERC-1271 request signatures are 0x41575231 || abi.encode(RequestProof).
+    struct RequestProof {
+        address agentId;
+        bytes32 audienceHash;
+        bytes32 nonce;
+        uint64 issuedAt;
+        uint64 expiresAt;
+        bytes32 methodHash;
+        bytes32 targetHash;
+        bytes32 bodyHash;
         bytes authenticatorSignature;
     }
 
@@ -267,12 +284,35 @@ contract AgentAccount is EIP712, IERC1271 {
     receive() external payable onlyDelegated {}
 
     /// @inheritdoc IERC1271
-    /// @dev Only an EIP-712 AgentAuthentication proof is recognized. Arbitrary
-    ///      digests signed by the operating key are deliberately rejected.
+    /// @dev Only structured AgentAuthentication or AgentRequest proofs are recognized.
+    ///      Arbitrary digests signed by the operating key are deliberately rejected.
     function isValidSignature(bytes32 digest, bytes calldata signature) external view returns (bytes4) {
         if (address(this) == _implementationAddress) return _INVALID_SIGNATURE;
         State storage state = _state();
         if (!state.initialized || state.authRevoked) return _INVALID_SIGNATURE;
+
+        if (signature.length >= 4 && bytes4(signature[:4]) == _REQUEST_PROOF_PREFIX) {
+            try this.decodeRequestProof(signature[4:]) returns (RequestProof memory proof) {
+                if (proof.agentId != address(this) || proof.issuedAt > proof.expiresAt || block.timestamp > proof.expiresAt) {
+                    return _INVALID_SIGNATURE;
+                }
+                bytes32 structHash = keccak256(abi.encode(
+                    _REQUEST_TYPEHASH,
+                    proof.agentId,
+                    proof.audienceHash,
+                    proof.nonce,
+                    proof.issuedAt,
+                    proof.expiresAt,
+                    proof.methodHash,
+                    proof.targetHash,
+                    proof.bodyHash
+                ));
+                if (_hashTypedDataV4(structHash) != digest) return _INVALID_SIGNATURE;
+                return _checkOperatingSignature(state.authenticator, digest, proof.authenticatorSignature);
+            } catch {
+                return _INVALID_SIGNATURE;
+            }
+        }
 
         try this.decodeAuthProof(signature) returns (AuthProof memory proof) {
             if (proof.agentId != address(this)) return _INVALID_SIGNATURE;
@@ -292,13 +332,7 @@ contract AgentAccount is EIP712, IERC1271 {
             );
             if (_hashTypedDataV4(structHash) != digest) return _INVALID_SIGNATURE;
 
-            (address recovered, ECDSA.RecoverError error,) = ECDSA.tryRecover(
-                digest, proof.authenticatorSignature
-            );
-            if (error != ECDSA.RecoverError.NoError || recovered != state.authenticator) {
-                return _INVALID_SIGNATURE;
-            }
-            return _VALID_SIGNATURE;
+            return _checkOperatingSignature(state.authenticator, digest, proof.authenticatorSignature);
         } catch {
             return _INVALID_SIGNATURE;
         }
@@ -308,6 +342,17 @@ contract AgentAccount is EIP712, IERC1271 {
     ///      malformed ABI instead of reverting the service's eth_call.
     function decodeAuthProof(bytes calldata encoded) external pure returns (AuthProof memory) {
         return abi.decode(encoded, (AuthProof));
+    }
+
+    function decodeRequestProof(bytes calldata encoded) external pure returns (RequestProof memory) {
+        return abi.decode(encoded, (RequestProof));
+    }
+
+    function _checkOperatingSignature(address signer, bytes32 digest, bytes memory signature)
+        private pure returns (bytes4)
+    {
+        (address recovered, ECDSA.RecoverError error,) = ECDSA.tryRecover(digest, signature);
+        return error == ECDSA.RecoverError.NoError && recovered == signer ? _VALID_SIGNATURE : _INVALID_SIGNATURE;
     }
 
     function _checkAuthenticator(address signer, address accountOwner) private view {
