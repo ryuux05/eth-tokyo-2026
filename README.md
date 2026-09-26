@@ -1,8 +1,15 @@
 # Agentic World
 
-Agent-native, portable identity and authentication for independent services.
+Agentic World gives AI agents their own onchain identity to authenticate across services without impersonating humans, with owner-defined policies for onchain actions.
 
-Built for ETHGlobal Tokyo 2026.
+## Team
+
+Built for ETHGlobal Tokyo 2026 by two developers:
+
+- **[ryuux05 · GitHub](https://github.com/ryuux05)** — Blockchain engineer with over four years of experience across two startups.
+- **[marcofernandioo · X](https://x.com/marcofernandioo)** — Frontend and robotics engineer.
+
+## Overview
 
 **Architecture freeze:** Agentic World v0 uses an ERC-4337 / ERC-7579 smart
 account, an `AgentValidator` for operating-key authentication and ERC-1271, and an
