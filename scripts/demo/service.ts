@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createPublicClient, http, isAddress, type Address, type Hex } from "viem";
-import { AgenticWorld, requestProofFromHeaders, type Session } from "../../sdk/service.js";
+import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../../sdk/service.js";
 
 type DemoUser = { id: string; routes: readonly string[] };
 type DemoConfig = {
@@ -20,10 +20,11 @@ if (!isAddress(config.implementation) || !isAddress(config.agentId) || !isAddres
   throw new Error("Invalid local demo address");
 }
 const client = createPublicClient({ transport: http(config.rpcUrl) });
-const nonceExpiries = new Map<string, number>();
+const challenges = new Map<Hex, AuthenticationChallenge>();
+const consumedChallenges = new Set<Hex>();
 const sessions = new Map<Hex, Session>();
 
-// Each process owns its own user/agent enrollment, entitlements, nonces and sessions.
+// Each process owns its own user/agent enrollment, entitlements, challenges and sessions.
 const paidOwners = new Map<string, DemoUser>([[config.owner.toLowerCase(), {
   id: "paid-owner", routes: ["/private/report"],
 }]]);
@@ -40,38 +41,54 @@ const service = new AgenticWorld<DemoUser>({
   audience: config.audience,
   pinnedImplementation: config.implementation,
   association,
-  requestNonces: { async consume(agentId, nonce, expiresAt) {
-    const key = `${agentId.toLowerCase()}:${nonce.toLowerCase()}`;
-    if ((nonceExpiries.get(key) ?? 0) > Date.now() / 1000) return false;
-    nonceExpiries.set(key, expiresAt);
-    return true;
-  } },
+  authorizeSession: async (_identity, user) => user.routes.length > 0,
+  challenges: {
+    async put(challenge) { challenges.set(challenge.nonce, challenge); },
+    async get(nonce) { return consumedChallenges.has(nonce) ? undefined : challenges.get(nonce); },
+    async consume(nonce) {
+      if (consumedChallenges.has(nonce) || !challenges.has(nonce)) return false;
+      consumedChallenges.add(nonce);
+      return true;
+    },
+  },
   sessions: { async put(hash, session) { sessions.set(hash, session); }, async get(hash) { return sessions.get(hash); } },
 });
 
 const server = createServer(async (request, response) => {
   const target = request.url ?? "";
+  if (request.method === "POST" && ["/agent/challenge", "/agent/session"].includes(target)) {
+    try {
+      const chunks: Buffer[] = [];
+      let size = 0;
+      for await (const chunk of request) {
+        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        size += bytes.length;
+        if (size > 4096) throw new Error("Authentication payload too large");
+        chunks.push(bytes);
+      }
+      const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+      if (target === "/agent/challenge") {
+        if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Invalid agent ID");
+        const challenge = await service.createChallenge(input.agentId);
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(challenge));
+      } else {
+        const authenticated = await service.authenticate(input as AuthenticationProof);
+        response.writeHead(200, { "content-type": "application/json", "Agent-Session": authenticated.token })
+          .end(JSON.stringify({ agentId: authenticated.session.agentId, owner: authenticated.session.owner }));
+      }
+    } catch {
+      response.writeHead(401).end();
+    }
+    return;
+  }
   if (request.method !== "GET" || !["/private/report", "/private/compute", "/private/admin"].includes(target)) {
     response.writeHead(404).end();
     return;
   }
-  let authenticated: Awaited<ReturnType<typeof service.authenticateRequest>> | Awaited<ReturnType<typeof service.readSession>>;
+  let authenticated: Awaited<ReturnType<typeof service.readSession>>;
   try {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of request) {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += bytes.length;
-      if (size > 64 * 1024) throw new Error("Demo request body too large");
-      chunks.push(bytes);
-    }
-    const actualRequest = { method: request.method, target, body: new Uint8Array(Buffer.concat(chunks)) };
     const sessionHeader = request.headers["agent-session"];
-    authenticated = typeof sessionHeader === "string"
-      ? await service.readSession(sessionHeader)
-      : await service.authenticateRequest(
-        requestProofFromHeaders(request.headers, actualRequest, config.audience), actualRequest,
-      );
+    authenticated = typeof sessionHeader === "string" ? await service.readSession(sessionHeader) : undefined;
   } catch {
     response.writeHead(401).end();
     return;
@@ -84,12 +101,8 @@ const server = createServer(async (request, response) => {
     response.writeHead(403).end();
     return;
   }
-  const token = "token" in authenticated && typeof authenticated.token === "string"
-    ? authenticated.token : undefined;
-  response.writeHead(200, {
-    "content-type": "application/json",
-    ...(token ? { "Agent-Session": token } : {}),
-  }).end(JSON.stringify({ service: config.kind, resource: target, agentId: authenticated.session.agentId }));
+  response.writeHead(200, { "content-type": "application/json" })
+    .end(JSON.stringify({ service: config.kind, resource: target, agentId: authenticated.session.agentId }));
 });
 
 await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));

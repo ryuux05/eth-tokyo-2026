@@ -121,10 +121,6 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
     await writeFile(configPath, JSON.stringify({
       rpcUrl, chainId, agentId: agent, factory: factory.address,
       implementation: await factory.read.implementation(),
-      services: {
-        owner: { baseUrl: serviceA.url, audience: serviceA.audience, methods: ["GET"], paths: ["/private/report"] },
-        manual: { baseUrl: serviceB.url, audience: serviceB.audience, methods: ["GET"], paths: ["/private/compute", "/private/admin"] },
-      },
     }));
     const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", "tsx", mcpScript],
       env: { ...process.env, AGENTIC_WORLD_CONFIG: configPath, AGENTIC_WORLD_OPERATING_KEY: operatingKey } as Record<string, string> });
@@ -138,8 +134,8 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
     };
     try {
       const tools = await mcp.listTools();
-      assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_authenticate", "agentic_create_identity",
-        "agentic_identity", "agentic_policy_check", "agentic_request", "agentic_rotate_authenticator", "agentic_set_policy"]);
+      assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_create_identity",
+        "agentic_identity", "agentic_policy_check", "agentic_rotate_authenticator", "agentic_session_proof", "agentic_set_policy"]);
       const identity = await call("agentic_identity", {});
       assert.equal(identity.error, false);
       assert.equal(String(identity.data.agentId).toLowerCase(), agent.toLowerCase());
@@ -167,28 +163,45 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
         assert.equal(decodeFunctionData({ abi: agentAccountAbi,
           data: (rotation.data.transaction as { data: Hex }).data }).functionName, "rotateAuthenticator");
       }
-      const first = await call("agentic_request", { url: `${serviceA.audience}/private/report`, method: "GET" });
+      const challengeResponse = await fetch(`${serviceA.url}/agent/challenge`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: agent }) });
+      assert.equal(challengeResponse.status, 200);
+      const challenge = await challengeResponse.json() as Record<string, unknown>;
+      const first = await call("agentic_session_proof", { challenge });
       if (phase === "revoked") {
         assert.equal(first.error, true);
         assert.equal(first.data.code, "AUTHENTICATOR_REVOKED");
       } else {
-        assert.equal(first.data.status, 200);
-        assert.equal(first.data.sessionEstablished, true);
-        const authenticated = await call("agentic_authenticate", { url: `${serviceA.audience}/private/report` });
-        assert.equal(authenticated.data.status, 200);
-        assert.equal(authenticated.data.sessionActive, true);
-        const repeated = await call("agentic_request", { url: `${serviceA.audience}/private/report`, method: "GET" });
-        assert.equal(repeated.data.status, 200);
-        assert.equal(repeated.data.usedSession, true);
-        const second = await call("agentic_request", { url: `${serviceB.audience}/private/compute`, method: "GET" });
-        assert.equal(second.data.status, 200);
-        const forbidden = await call("agentic_request", { url: `${serviceB.audience}/private/admin`, method: "GET" });
-        assert.equal(forbidden.data.status, 403);
-        const blocked = await call("agentic_request", { url: `${serviceA.audience}/private/admin`, method: "GET" });
-        assert.equal(blocked.error, true);
-        assert.equal(blocked.data.code, "REQUEST_NOT_ALLOWED");
+        assert.equal(first.error, false);
+        const sendProof = (baseUrl: string, proof: Record<string, unknown>) => fetch(`${baseUrl}/agent/session`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(proof),
+        });
+        const crossProof = await sendProof(serviceB.url, first.data);
+        assert.equal(crossProof.status, 401);
+        const aAuth = await sendProof(serviceA.url, first.data);
+        assert.equal(aAuth.status, 200);
+        const aToken = aAuth.headers.get("Agent-Session");
+        assert(aToken);
+        const replay = await sendProof(serviceA.url, first.data);
+        assert.equal(replay.status, 401);
+        const aResource = await fetch(`${serviceA.url}/private/report`, { headers: { "Agent-Session": aToken } });
+        assert.equal(aResource.status, 200);
+        const bChallengeResponse = await fetch(`${serviceB.url}/agent/challenge`, { method: "POST",
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: agent }) });
+        assert.equal(bChallengeResponse.status, 200);
+        const bProof = await call("agentic_session_proof", { challenge: await bChallengeResponse.json() });
+        assert.equal(bProof.error, false);
+        const bAuth = await sendProof(serviceB.url, bProof.data);
+        assert.equal(bAuth.status, 200);
+        const bToken = bAuth.headers.get("Agent-Session");
+        assert(bToken);
+        const bResource = await fetch(`${serviceB.url}/private/compute`, { headers: { "Agent-Session": bToken } });
+        assert.equal(bResource.status, 200);
+        const forbidden = await fetch(`${serviceB.url}/private/admin`, { headers: { "Agent-Session": bToken } });
+        assert.equal(forbidden.status, 403);
       }
-      console.log(`MCP_RESULT ${JSON.stringify({ phase, agentId: agent, tools: tools.tools.length, status: first.data.status ?? first.data.code })}`);
+      console.log(`MCP_RESULT ${JSON.stringify({ phase, agentId: agent, tools: tools.tools.length,
+        status: phase === "revoked" ? first.data.code : "SESSION_ESTABLISHED" })}`);
     } finally { await mcp.close(); }
     if (phase === "active") {
       const launcher = join(temporary, "test-p256-signer");

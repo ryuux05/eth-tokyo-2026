@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createAgentSdk, requestProofHeaders } from "../../sdk/agent.js";
+import { createAgentSdk, type AuthenticationChallenge, type AuthenticationProof } from "../../sdk/agent.js";
 
 type Endpoint = { url: string; audience: string };
 type DemoConfig = {
@@ -23,16 +23,20 @@ const signer = privateKeyToAccount(config.operatingKey);
 const agent = createAgentSdk({ agentId: config.agentId, chainId: config.chainId,
   signDigest: digest => signer.sign({ hash: digest }) });
 
-async function signedGet(endpoint: Endpoint, target: string) {
-  const proof = await agent.signRequest({ method: "GET", target, body: new Uint8Array() }, endpoint.audience);
-  const headers = requestProofHeaders(proof);
-  const response = await fetch(`${endpoint.url}${target}`, { headers });
-  return { response, headers };
+async function establishSession(endpoint: Endpoint): Promise<{ response: Response; proof: AuthenticationProof }> {
+  const challengeResponse = await fetch(`${endpoint.url}/agent/challenge`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: config.agentId }) });
+  assert.equal(challengeResponse.status, 200);
+  const challenge = await challengeResponse.json() as AuthenticationChallenge;
+  const proof = await agent.answerChallenge(challenge, endpoint.audience);
+  const response = await fetch(`${endpoint.url}/agent/session`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify(proof) });
+  return { response, proof };
 }
 
 if (config.phase === "revoked") {
-  const afterRevokeA = await signedGet(config.serviceA, "/private/report");
-  const afterRevokeB = await signedGet(config.serviceB, "/private/compute");
+  const afterRevokeA = await establishSession(config.serviceA);
+  const afterRevokeB = await establishSession(config.serviceB);
   assert.equal(afterRevokeA.response.status, 401, "revoked operating key must fail at Service A");
   assert.equal(afterRevokeB.response.status, 401, "revoked operating key must fail at Service B");
   console.log(`DEMO_RESULT ${JSON.stringify({ phase: "revoked", agentId: config.agentId,
@@ -42,35 +46,41 @@ if (config.phase === "revoked") {
 
 if (config.phase !== "active") throw new Error("Invalid demo agent phase");
 
-const ownerResource = await signedGet(config.serviceA, "/private/report");
-assert.equal(ownerResource.response.status, 200, "paid owner-associated Service A resource");
-assert.equal((await ownerResource.response.json()).agentId.toLowerCase(), config.agentId.toLowerCase());
-const aSession = ownerResource.response.headers.get("Agent-Session");
+const ownerAuth = await establishSession(config.serviceA);
+assert.equal(ownerAuth.response.status, 200);
+const aSession = ownerAuth.response.headers.get("Agent-Session");
 assert(aSession, "Service A must create a session");
+const ownerResource = await fetch(`${config.serviceA.url}/private/report`, { headers: { "Agent-Session": aSession } });
+assert.equal(ownerResource.status, 200, "paid owner-associated Service A resource");
+assert.equal((await ownerResource.json()).agentId.toLowerCase(), config.agentId.toLowerCase());
 
-const crossAudience = await fetch(`${config.serviceB.url}/private/report`, { headers: ownerResource.headers });
+const crossAudience = await fetch(`${config.serviceB.url}/agent/session`, { method: "POST",
+  headers: { "content-type": "application/json" }, body: JSON.stringify(ownerAuth.proof) });
 assert.equal(crossAudience.status, 401, "Service A proof must fail at Service B");
 const crossSession = await fetch(`${config.serviceB.url}/private/compute`, {
   headers: { "Agent-Session": aSession },
 });
 assert.equal(crossSession.status, 401, "Service A session must fail at Service B");
 
-const manualResource = await signedGet(config.serviceB, "/private/compute");
-assert.equal(manualResource.response.status, 200, "manually enrolled Service B resource");
-const bSession = manualResource.response.headers.get("Agent-Session");
+const manualAuth = await establishSession(config.serviceB);
+assert.equal(manualAuth.response.status, 200);
+const bSession = manualAuth.response.headers.get("Agent-Session");
 assert(bSession, "Service B must create its own session");
+const manualResource = await fetch(`${config.serviceB.url}/private/compute`, { headers: { "Agent-Session": bSession } });
+assert.equal(manualResource.status, 200, "manually enrolled Service B resource");
 const repeatedSession = await fetch(`${config.serviceB.url}/private/compute`, {
   headers: { "Agent-Session": bSession },
 });
 assert.equal(repeatedSession.status, 200, "Service B session should work at Service B");
 
-const forbiddenRoute = await signedGet(config.serviceB, "/private/admin");
-assert.equal(forbiddenRoute.response.status, 403, "valid authentication must not grant admin access");
-const replay = await fetch(`${config.serviceA.url}/private/report`, { headers: ownerResource.headers });
-assert.equal(replay.status, 401, "reusing one signed request must fail");
+const forbiddenRoute = await fetch(`${config.serviceB.url}/private/admin`, { headers: { "Agent-Session": bSession } });
+assert.equal(forbiddenRoute.status, 403, "valid authentication must not grant admin access");
+const replay = await fetch(`${config.serviceA.url}/agent/session`, { method: "POST",
+  headers: { "content-type": "application/json" }, body: JSON.stringify(ownerAuth.proof) });
+assert.equal(replay.status, 401, "reusing one challenge must fail");
 
 console.log(`DEMO_RESULT ${JSON.stringify({ agentId: config.agentId,
-  ownerResource: ownerResource.response.status, manualResource: manualResource.response.status,
+  ownerResource: ownerResource.status, manualResource: manualResource.status,
   crossAudience: crossAudience.status, crossSession: crossSession.status,
-  manualSession: repeatedSession.status, forbiddenRoute: forbiddenRoute.response.status,
+  manualSession: repeatedSession.status, forbiddenRoute: forbiddenRoute.status,
   replay: replay.status })}`);
