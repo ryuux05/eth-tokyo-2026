@@ -61,10 +61,53 @@ test("Codex registration uses absolute paths and reuses only exact enabled entri
   await assert.rejects(planRegistration("codex", c, async () => ({ stdout: JSON.stringify([existing]) })), /disabled/);
   assert.equal(sameEntry({ ...entry(c), args: ["other.js"] }, c.server, c.configPath, c.nodePath), false);
 });
+test("Codex user registration remains reusable after its config file is written", async t => {
+  const c = await fixture(t);
+  const existing = { name: "agentic-world", enabled: true, transport: entry(c) };
+  const lookup = async () => ({ stdout: JSON.stringify([existing]) });
+  await put(join(c.home, ".codex/config.toml"), '[mcp_servers.agentic-world]\ncommand = "node"');
+  assert.equal((await planRegistration("codex", c, lookup)).reuse, true);
+  // Installing from the home directory must work too.
+  assert.equal((await planRegistration("codex", { ...c, cwd: c.home }, lookup)).reuse, true);
+  existing.enabled = false;
+  await assert.rejects(planRegistration("codex", c, lookup), /disabled/);
+});
+test("Codex custom user config in an ancestor is not mistaken for a project override", async t => {
+  const c = await fixture(t);
+  c.env.CODEX_HOME = join(c.cwd, ".codex");
+  await put(join(c.env.CODEX_HOME, "config.toml"), '[mcp_servers."agentic-world"]\ncommand = "node"');
+  const existing = { name: "agentic-world", enabled: true, transport: entry(c) };
+  assert.equal((await planRegistration("codex", c, async () => ({ stdout: JSON.stringify([existing]) }))).reuse, true);
+});
 test("Codex project override is reported rather than silently shadowing user configuration", async t => {
   const c = await fixture(t);
   await put(join(c.cwd, ".codex/config.toml"), '[mcp_servers."agentic-world"]\ncommand = "other"');
   await assert.rejects(planRegistration("codex", c, async () => { throw new Error("must not run"); }), /Project MCP override/);
+});
+test("Codex upgrades a verified installer runtime while preserving custom or disabled entries", async t => {
+  const c = await fixture(t);
+  const prefix = join(dirname(c.configPath), "runtime/0.0.2");
+  const oldServer = join(prefix, "node_modules/agenticworld/runtime/dist/mcp/server.js");
+  const existing = { name: "agentic-world", enabled: true, transport: { ...entry(c), args: [oldServer] } };
+  const lookup = async () => ({ stdout: JSON.stringify([existing]) });
+  await put(oldServer, "// Previous installed server");
+  await put(join(prefix, "ready.json"), { version: "0.0.2" });
+  await put(join(prefix, "node_modules/agenticworld/package.json"), { name: "agenticworld", version: "0.0.2" });
+  const planned = await planRegistration("codex", c, lookup);
+  assert.equal(planned.upgrade, true);
+  assert.equal(planned.reuse, false);
+  assert.equal(planned.args.at(-1), c.server);
+  existing.enabled = false;
+  await assert.rejects(planRegistration("codex", c, lookup), /disabled/);
+  existing.enabled = true;
+  existing.enabled_tools = ["agentic_identity"];
+  await assert.rejects(planRegistration("codex", c, lookup), /different/);
+  delete existing.enabled_tools;
+  existing.transport.env.EXTRA = "preserve-me";
+  await assert.rejects(planRegistration("codex", c, lookup), /different/);
+  delete existing.transport.env.EXTRA;
+  await rm(join(prefix, "ready.json"));
+  await assert.rejects(planRegistration("codex", c, lookup), /different/);
 });
 test("Claude uses user scope normally, local scope for a checked-in MCP override", async t => {
   const c = await fixture(t);

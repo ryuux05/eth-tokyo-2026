@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, lstat } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile, rm, lstat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
@@ -17,7 +17,7 @@ test("fresh persistent install, MCP handshake, and idempotent reinstall", {
   t.after(() => rm(home, { recursive: true, force: true }));
   const cwd = join(home, "project with spaces");
   await mkdir(cwd);
-  const env = { ...process.env, npm_config_cache: join(home, "npm-cache") };
+  const env = { ...process.env, CODEX_HOME: join(home, ".codex"), npm_config_cache: join(home, "npm-cache") };
   delete env.AGENTIC_WORLD_RPC_URL;
   let registration;
   let runtimeBuilds = 0;
@@ -31,6 +31,10 @@ test("fresh persistent install, MCP handshake, and idempotent reinstall", {
         type: "stdio", command: args.at(-2), args: [args.at(-1)],
         env: { AGENTIC_WORLD_CONFIG: args[4].slice("AGENTIC_WORLD_CONFIG=".length) },
       } };
+      // Model the real CLI write: verification must not classify its own new
+      // user registration as a project override.
+      await mkdir(env.CODEX_HOME, { recursive: true });
+      await writeFile(join(env.CODEX_HOME, "config.toml"), '[mcp_servers.agentic-world]\ncommand = "node"\n');
       return { code: 0, stdout: "" };
     }
     if (command === "npm") runtimeBuilds++;

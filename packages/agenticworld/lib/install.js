@@ -1,7 +1,7 @@
 import spawn from "cross-spawn";
 import { access, cp, lstat, mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -110,11 +110,33 @@ export function sameProjectPath(a, b) {
     ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
+// Only update a registration created by this installer. Custom commands,
+// credentials, disabled entries, and tool restrictions still need reconciliation.
+async function managedCodexEntry(entry, { configPath }) {
+  const transport = entry?.transport ?? entry;
+  if (entry?.enabled === false || entry?.enabled_tools != null || entry?.disabled_tools != null ||
+      transport?.type !== "stdio" || transport.cwd || transport.env_vars?.length ||
+      Object.keys(transport.env ?? {}).length !== 1 || transport.env?.AGENTIC_WORLD_CONFIG !== configPath ||
+      transport.args?.length !== 1 || !isAbsolute(transport.args[0]) ||
+      !(transport.command === "node" || (isAbsolute(transport.command ?? "") && /^node(?:\.exe)?$/i.test(basename(transport.command))))) return false;
+  const parts = relative(join(dirname(configPath), "runtime"), transport.args[0]).split(sep);
+  if (parts.length !== 7 || !/^\d+\.\d+\.\d+$/.test(parts[0]) ||
+      parts.slice(1).join("/") !== "node_modules/agenticworld/runtime/dist/mcp/server.js") return false;
+  const prefix = join(dirname(configPath), "runtime", parts[0]);
+  const ready = await json(join(prefix, "ready.json"), {});
+  const pkg = await json(join(prefix, "node_modules/agenticworld/package.json"), {});
+  return ready.version === parts[0] && pkg.name === "agenticworld" && pkg.version === parts[0] && await exists(transport.args[0]);
+}
+
 export async function planRegistration(client, context, execute = run) {
   const { home, cwd, env, server, configPath, nodePath } = context;
   if (client === "codex") {
+    const userConfig = resolve(env.CODEX_HOME || join(home, ".codex"), "config.toml");
     for (const path of ancestors(cwd, home)) {
       const config = join(path, ".codex", "config.toml");
+      // The ancestor scan includes home. Its user entry is inspected by the CLI
+      // below, including immediately after we register it during a fresh install.
+      if (sameProjectPath(resolve(config), userConfig)) continue;
       if (await exists(config) && /^\s*\[mcp_servers\.(?:agentic-world|"agentic-world"|'agentic-world')(?:\]|\.)/m.test(await readFile(config, "utf8")))
         throw new Error(`Project MCP override at ${config}; reconcile it before installing a user entry`);
     }
@@ -123,8 +145,9 @@ export async function planRegistration(client, context, execute = run) {
     try { entries = JSON.parse(result.stdout); if (!Array.isArray(entries)) throw new Error(); }
     catch { throw new Error("Could not inspect Codex MCP entries; no registration was changed"); }
     const entry = entries.find(item => item.name === name);
-    if (entry && !sameEntry(entry, server, configPath, nodePath)) throw new Error("Codex already has a different or disabled agentic-world MCP. Reconcile it explicitly; the installer will not replace it.");
-    return { client, reuse: !!entry, args: ["mcp", "add", name, "--env", `AGENTIC_WORLD_CONFIG=${configPath}`, "--", nodePath, server] };
+    const reuse = !!entry && sameEntry(entry, server, configPath, nodePath);
+    if (entry && !reuse && !await managedCodexEntry(entry, context)) throw new Error("Codex already has a different or disabled agentic-world MCP. Reconcile it explicitly; the installer will not replace it.");
+    return { client, reuse, upgrade: !!entry && !reuse, args: ["mcp", "add", name, "--env", `AGENTIC_WORLD_CONFIG=${configPath}`, "--", nodePath, server] };
   }
   const claudePath = env.CLAUDE_CONFIG_DIR ? join(env.CLAUDE_CONFIG_DIR, ".claude.json") : join(home, ".claude.json");
   const settings = await json(claudePath, {});
@@ -208,7 +231,7 @@ export async function install(options = {}, { home = homedir(), cwd = process.cw
       if (!current.reuse) await execute(current.client, current.args, { cwd, env });
       const verified = await planRegistration(current.client, context, execute);
       if (!verified.reuse) throw new Error(`${current.client} registration could not be verified; restart installation after inspecting its MCP settings`);
-      console.log(`${current.client}: MCP ${current.reuse ? "already registered" : `registered${current.scope ? ` (${current.scope})` : ""}`}.`);
+      console.log(`${current.client}: MCP ${current.reuse ? "already registered" : current.upgrade ? "updated to this runtime" : `registered${current.scope ? ` (${current.scope})` : ""}`}.`);
     }
     for (const planned of skills) {
       const current = await planSkill(planned.client, context);
