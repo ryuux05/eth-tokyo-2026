@@ -11,7 +11,7 @@ import { z } from "zod/v4";
 import { createAgentSdk } from "../sdk/agent.js";
 import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, encodePolicy, Decision,
   SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, type PolicyRule } from "../sdk/core.js";
-import { assertAudience, type AuthenticationChallenge } from "../sdk/core.js";
+import { assertAudience, sessionProofHeaders, type AuthenticationChallenge } from "../sdk/core.js";
 import { ensureSignerPublicKey, signLocalChallenge, signerPublicKey } from "./local-signer.js";
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
 import { runOwnerActionFlow, type OwnerActionIntent } from "./owner-action-flow.js";
@@ -653,12 +653,15 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   }
 
   server.registerTool("agentic_session_proof", {
-    description: "Sign one service-issued AgentAuthentication challenge. Returns a proof; the agent sends it to the service and receives the service-owned session.",
+    description: "Sign a challenge from a resource's AgenticWorld 401. Returns proof fields and ready-to-send headers; retry the same resource with those headers to receive the resource and Agent-Session. Does not send HTTP.",
     inputSchema: z.object({ challenge: z.strictObject({
       agentId: z.string(), audience: z.string(), chainId: z.int().positive(),
       nonce: z.string(), issuedAt: z.int(), expiresAt: z.int(),
     }) }),
-  }, async ({ challenge }) => guarded(() => sessionProof(challenge as AuthenticationChallenge)));
+  }, async ({ challenge }) => guarded(async () => {
+    const proof = await sessionProof(challenge as AuthenticationChallenge);
+    return { ...proof, headers: sessionProofHeaders(proof) };
+  }));
 
   return server;
 }
