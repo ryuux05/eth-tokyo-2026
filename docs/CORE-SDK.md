@@ -1,25 +1,14 @@
 # Core SDK
 
-`agentic-world/core` is the protocol layer between the contracts and the two role-specific SDKs. It contains **definitions and deterministic encoding**, not a hosted authentication service, wallet, session database, or resource permission engine.
+`agentic-world/core` is the deterministic protocol boundary shared by the agent SDK, service SDK, and owner portal. It contains formats and ABIs, not a signer, hosted verification backend, nonce store, session store, or service permission engine.
 
-The core exports:
+The current exports include:
 
-- Contract ABIs used for account verification, mandate registration/revocation, and policy reads/writes.
-- EIP-712 typed-data builders for `AgentInitialization`, `AgentRegistration`, `AgentAuthentication`, and exact `OwnerActionApproval`.
-- The authentication digest and ERC-1271 `AuthProof` ABI envelope.
-- An exact EIP-7702 delegation-pointer check (`0xef0100 || pinnedImplementation`).
-- The canonical versioned policy encoder/decoder, supported token-purchase selector, and decision enum.
+- `agentAccountAbi`, `agentAccountFactoryAbi`, and `agentPolicyAbi` for the v0 account, factory, and policy views/writes.
+- EIP-712 builders and digests for challenge authentication, request-bound authentication, and exact-action owner approval; distinct ERC-1271 proof envelopes.
+- `isExpectedAgentClone(code, pinnedImplementation)`, which compares exact ERC-1167 runtime bytecode. `isExpectedAgentAccountCode` also recognizes the historical EIP-7702 pointer format for compatibility. A v0 service should pin the new account implementation, not the old one.
+- `encodePolicy`, `decodePolicy`, supported token-purchase selector and decision values, and `encodeAgentExecution` for ERC-7579 single-call account calldata.
 
-```ts
-import {
-  agentRegistrationTypedData,
-  encodePolicy,
-  isExpectedDelegation,
-} from "agentic-world/core";
-```
+The [agent SDK](SDK.md) supplies an injected digest signer; the owner wallet separately signs deployment, key-management, and policy transactions. The service SDK supplies its own RPC client, atomic nonce store, sessions, and authorization. Core does not convert `owner()` into a service grant.
 
-The **service SDK** depends on core definitions to verify a challenge against the agent account and mandate registry. The **agent SDK** depends on them to sign the same challenge format. The **owner portal** uses them to read existing policy, encode a new policy, and prepare an agent-root registration permit. None of these layers independently invents an EIP-712 type string or policy ABI.
-
-Core does not sign messages. The agent SDK receives an injected operating-key digest signer; the owner wallet signs transactions and owner approvals; the agent root key signs bootstrap and registration permits outside the portal. Those authorities must stay separate.
-
-The package remains private in this prototype. `npm run build:sdk` emits the `core`, `agent`, and `service` entry points under `dist/sdk`. The onchain ABIs and typed messages are covered by local EIP-7702 integration and core round-trip tests. Public package versioning and deployment-address manifests are not yet in scope.
+`npm run build:sdk` emits JavaScript and declarations under `dist/sdk`. This remains a private prototype package; deployment-address manifests and public package versioning are not yet implemented. Historical `agentInitializationTypedData`, `agentRegistrationTypedData`, `mandateRegistryAbi`, and `isExpectedDelegation` exports remain for the EIP-7702 prototype only; they are not needed for v0 account creation.

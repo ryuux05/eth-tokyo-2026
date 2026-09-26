@@ -1,67 +1,55 @@
-# Core SDK and two role-specific SDKs
+# Agent and service SDKs
 
-The dependency order is `contracts → core → service/agent`. The three entry points share one EIP-712/ABI definition but have different jobs:
+The dependency order is `contracts → core → agent/service`; there is no Agentic World backend on a service's authentication path. Build the private package with `npm run build:sdk`. See [implementation status](V0-IMPLEMENTATION.md) before using it against a network.
 
-| Entry point | Runs with | Responsibility |
+| Entry point | Role | v0 responsibility |
 | --- | --- | --- |
-| `agentic-world/core` | Both SDKs and owner portal | Contract ABIs, typed messages, policy encoding, delegation-pointer check. No signer, sessions, or backend. |
-| `agentic-world/agent` | Agent runtime | Check the challenge's agent, chain, audience, and lifetime; sign the digest using an injected signer. |
-| `agentic-world/service` | Each independent service | Issue challenges, verify EIP-7702 and ERC-1271, resolve the optional mandate, consume nonces, and issue local sessions. |
+| `agentic-world/core` | Shared | Account/factory ABIs, proof formats, policy encoding, exact ERC-1167 clone check, single-call execution encoder. |
+| `agentic-world/agent` | Agent runtime | Sign the exact HTTP request or challenge with an injected KMS digest signer; sign an EntryPoint-provided UserOperation hash. |
+| `agentic-world/service` | Independent service | Pin an implementation, verify account provenance and ERC-1271, atomically consume nonces, issue local sessions, resolve a local user through manual or owner association. |
 
-Build with `npm run build:sdk`. The package is private for the prototype; entry points resolve to JavaScript and declarations under `dist/sdk`. Each service supplies its own RPC client and storage adapters. There is no Agentic World backend dependency. See the [core contract](CORE-SDK.md) for exactly what belongs in the shared layer.
-
-## Agent SDK
+## Agent-side request
 
 ```ts
-import { createAgentSdk } from "agentic-world/agent";
+import { createAgentSdk, requestProofHeaders } from "agentic-world/agent";
 
 const agent = createAgentSdk({
   agentId,
   chainId,
-  // Local dev signer. A KMS adapter must sign the digest exactly once and
-  // convert its DER result to a 65-byte Ethereum r,s,v signature.
-  signDigest: digest => operatingAccount.sign({ hash: digest }),
+  signDigest: digest => kms.signEthereumDigest(digest),
 });
-
-const proof = await agent.answerChallenge(challenge, "https://service-a.example");
-// Send proof to that service's authenticate endpoint; keep its session local.
+const request = { method: "GET", target: "/private/report", body: new Uint8Array() };
+const proof = await agent.signRequest(request, "https://service-a.example");
+const headers = requestProofHeaders(proof);
 ```
 
-The agent SDK does not possess the agent root key or human credentials. The caller passes the expected audience separately, rather than trusting the challenge to select where the signature is valid. Transport and key custody are application concerns.
+`signDigest` must return a 65-byte Ethereum ECDSA signature over the given digest—not an `personal_sign`/EIP-191 signature. The same injected signer may call `agent.signUserOperationHash(userOpHash)` when a bundler or EntryPoint provides the canonical hash. `encodeAgentExecution(target, value, data, approval?)` creates ERC-7579 single-call account calldata. These helpers do not build, fund, estimate, submit, or receipt-track a complete UserOperation.
 
-It also exports the [policy encoder, decoder, supported purchase selector, and owner-approval typed data](POLICY.md) used by the [owner portal](PORTAL.md). These helpers do not give the operating signer authority to update policy or sign as the owner.
-
-## Service SDK
+## Service-side authentication
 
 ```ts
-import { createServiceSdk } from "agentic-world/service";
+import { AgenticWorld, requestProofFromHeaders } from "agentic-world/service";
 
-const service = createServiceSdk({
-  client: publicClient,
+const agentic = new AgenticWorld({
+  client: rpcClient,
   chainId,
   audience: "https://service-a.example",
-  implementation: agentAccountImplementation,
-  registry: mandateRegistryAddress,
-  challenges: durableChallengeStore,
+  pinnedImplementation: trustedFactoryImplementation,
+  requestNonces: durableAtomicNonceStore,
   sessions: durableSessionStore,
+  association: {
+    mode: "owner", // or "manual", with resolveUser(agentId)
+    resolveUser: owner => db.user.findByWallet(owner),
+  },
 });
 
-const challenge = await service.issueChallenge(agentId);
-const { token, session } = await service.authenticate(proof);
-const active = await service.readSession(token);
-// Apply this service's own ACL, subscription and agent-eligible-resource rules.
+const proof = requestProofFromHeaders(headers, actualRequest, "https://service-a.example");
+const { token, session, user } = await agentic.authenticateRequest(proof, actualRequest);
+// Your service still checks whether user and session.agentId may access this route.
 ```
 
-`ChallengeStore.consume(nonce)` **must be atomic** across all service replicas and return `false` if the nonce was already consumed. `SessionStore` receives only `SHA-256(token)` as a key, not the bearer token. Adapters should expire old records and protect the challenge/session database from unauthorized reads and writes. These are injected interfaces, not a shared Agentic World database.
+The configured implementation is a trusted startup pin, never a field accepted from the agent. For v0 accounts, the SDK checks exact ERC-1167 clone bytecode, then calls `0xAGENT.isValidSignature(...)`; owner mode reads `0xAGENT.owner()` at the same block. `manual` mode resolves the agent in the service's own enrollment database. A legacy EIP-7702 pointer check remains for an old implementation, but it is **not** the v0 account format. The optional lower-level legacy registry integration is not part of either `AgenticWorld` association mode.
 
-For mandate-backed routes, `session.principal` is a short-lived cached result. If immediate mandate revocation matters, call `currentPrincipal(session.agentId)` and compare it to `session.principal` on that request. The service must still verify the principal's local account, current entitlement, and whether the route allows agents. Direct agent-specific grants work when `session.principal` is absent.
+The service must reconstruct the signed method, target, and body hash from the actual request, validate the audience/chain/time window, consume each nonce atomically across workers, and store only a hash of its random session token. A short session is an optimization, not a transferable human credential. `readSession` re-runs local association but does not revalidate the chain; a service needing immediate signer-revocation effect must recheck onchain state or invalidate its own sessions. Service permissions, entitlements, payment rules, and agent-eligible routes remain entirely service-local.
 
-## Wire and freshness choices
-
-- `audience` is an exact canonical HTTPS origin, for example `https://service-a.example`. Both SDKs reject paths, queries, fragments, custom default-port spellings, and non-HTTPS origins. The digest hashes its UTF-8 bytes with Keccak-256.
-- `nonce` is 32 cryptographically random bytes. Challenge and session lifetimes default to 60 seconds; the service may configure 1–300 seconds. Timestamps are Unix seconds. The verifier accepts an `issuedAt` no more than 30 seconds in its future.
-- The agent sends `{agentId,audience,chainId,nonce,issuedAt,expiresAt,signature}`. The service checks exact equality to its stored challenge, recomputes the digest, and ABI-encodes `AuthProof` for `0xAGENT.isValidSignature`. The service does not accept a caller-supplied digest or domain.
-- The service checks `eth_getCode(0xAGENT) == 0xef0100 || pinnedImplementation` and reads `owner()` and ERC-1271 at the agent address. It compares the registry's `principalOf(agent)` to that owner before exposing a principal. Onchain reads for one authentication use one block number.
-- A session is a local opaque token; by default it survives authenticator or mandate changes until expiry. `currentPrincipal` is a fresh mandate check. Immediate authenticator revocation of existing sessions is not implemented.
-
-The contracts and SDKs do not implement service resource authorization, human account matching, arbitrary ERC-20 spending limits, or HTTP endpoint conventions. The onchain policy controls native-value calls and one narrow `purchaseCompute(address,uint256)` token action shape through `AgentAccount`.
+The older service-challenge method (`issueChallenge` → `answerChallenge` → `authenticate`) remains available. It also uses ERC-1271 and local nonce/session stores, but the first-request path avoids a separate connection endpoint.
