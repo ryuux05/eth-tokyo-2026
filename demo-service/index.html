@@ -24,19 +24,20 @@
     </div>
     <div class="workbench">
       <section class="main-column" aria-label="Configure service access">
-        <div class="section-head"><span class="step">01</span><div><h2>Open the desk</h2><p>Use the one-time operator key printed by the local service. It stays only in this browser tab.</p></div></div>
+        <div class="section-head"><span class="step">01</span><div><h2>Add your agent</h2><p>Connect the wallet recorded as this agent’s onchain owner and sign a one-time enrollment message. Adding an agent does not grant report or compute access.</p></div></div>
+        <form id="enroll-form" class="inline-form">
+          <label class="field grow" for="agent-id"><span>AGENT ACCOUNT · 0xAGENT</span><input id="agent-id" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="0x…" required></label>
+          <button class="button primary" type="submit">Connect wallet &amp; add agent</button>
+        </form>
+        <p id="enroll-state" class="inline-state" role="status">No agent added yet. The owner wallet must approve the signature.</p>
+        <div id="identity-row" class="identity-row" hidden><div><span class="mini-label">ONCHAIN OWNER</span><code id="owner-value"></code></div><div><span class="mini-label">AUTHENTICATOR</span><strong id="scheme-value"></strong></div></div>
+
+        <div class="section-head separated"><span class="step">02</span><div><h2>Service access desk</h2><p>Service A independently grants or denies resource access. For this local demo, use the operator key printed by the service process.</p></div></div>
         <form id="operator-form" class="inline-form">
           <label class="field grow" for="operator-token"><span>OPERATOR KEY</span><input id="operator-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key from service terminal" required></label>
           <button class="button primary" type="submit">Unlock desk</button>
         </form>
-        <p id="operator-state" class="inline-state" role="status">Desk locked. The public agent endpoints remain available.</p>
-
-        <div class="section-head separated"><span class="step">02</span><div><h2>Enroll an agent</h2><p>Manual association registers an identity with Service A. It does not grant report or compute access.</p></div></div>
-        <form id="enroll-form" class="inline-form">
-          <label class="field grow" for="agent-id"><span>AGENT ACCOUNT · 0xAGENT</span><input id="agent-id" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="0x…" required></label>
-          <button class="button primary" type="submit">Enroll agent</button>
-        </form>
-        <div id="identity-row" class="identity-row" hidden><div><span class="mini-label">ONCHAIN OWNER</span><code id="owner-value"></code></div><div><span class="mini-label">AUTHENTICATOR</span><strong id="scheme-value"></strong></div></div>
+        <p id="operator-state" class="inline-state" role="status">Desk locked. Enrolled agents can still request authentication challenges.</p>
 
         <div class="section-head separated"><span class="step">03</span><div><h2>Service permissions</h2><p>These gates live in this service. Every resource request checks the current setting, even with an existing session.</p></div></div>
         <div class="gate-list" id="gate-list">

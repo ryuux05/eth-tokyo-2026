@@ -1,3 +1,5 @@
+import { stringToHex } from "viem";
+
 type Permission = "report" | "compute";
 type Enrollment = { agentId: string; owner: string; scheme: string; permissions: Record<Permission, boolean> };
 type Activity = { at: string; kind: string; agentId: string; detail: string };
@@ -71,21 +73,27 @@ byId<HTMLFormElement>("operator-form").addEventListener("submit", async event =>
   event.preventDefault();
   operatorToken = operatorInput.value.trim();
   try { await refresh(); setStatus(byId("operator-state"), "Desk unlocked. Operator changes stay local to this service."); }
-  catch (error) { operatorToken = ""; selected = undefined; showIdentity(); setStatus(byId("operator-state"), error instanceof Error ? error.message : "Could not unlock desk", true); }
+  catch (error) { operatorToken = ""; showIdentity(); setStatus(byId("operator-state"), error instanceof Error ? error.message : "Could not unlock desk", true); }
 });
 
 byId<HTMLFormElement>("enroll-form").addEventListener("submit", async event => {
   event.preventDefault();
-  const state = byId("operator-state");
-  if (!operatorToken) { setStatus(state, "Unlock the desk first.", true); return; }
+  const state = byId("enroll-state");
   try {
-    const result = await request("/admin/enroll", { method: "POST", body: JSON.stringify({ agentId: agentInput.value.trim() }) }, true);
+    const provider = (window as Window & { ethereum?: { request: (args: { method: string; params?: unknown[] }) => Promise<unknown> } }).ethereum;
+    if (!provider) throw new Error("Open Service A in a browser with your owner wallet installed.");
+    const accounts = await provider.request({ method: "eth_requestAccounts" }) as string[];
+    if (!accounts.length) throw new Error("The wallet did not return an owner account.");
+    const challengeResult = await request("/user/enrollment-challenge", { method: "POST", body: JSON.stringify({ agentId: agentInput.value.trim() }) });
+    if (challengeResult.status !== 200) throw new Error(challengeResult.body.error ?? "Could not create enrollment challenge");
+    const signature = await provider.request({ method: "personal_sign", params: [stringToHex(challengeResult.body.message as string), accounts[0]] });
+    const result = await request("/user/enroll", { method: "POST", body: JSON.stringify({ agentId: challengeResult.body.agentId, nonce: challengeResult.body.nonce, signature }) });
     if (result.status !== 200) throw new Error(result.body.error ?? "Enrollment failed");
     selected = result.body as Enrollment; sessionToken = ""; sessionExpiry = 0; challenge = undefined;
     byId("challenge-output").hidden = true; byId("copy-challenge").hidden = true;
     setStatus(byId("session-state"), "No session yet");
     showIdentity(); await refresh();
-    setStatus(state, `Enrolled ${selected.agentId}. Both resource gates default to denied.`);
+    setStatus(state, `Your wallet enrolled ${selected.agentId}. Service permissions remain separate.`);
   } catch (error) { setStatus(state, error instanceof Error ? error.message : "Enrollment failed", true); }
 });
 

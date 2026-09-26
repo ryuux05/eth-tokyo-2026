@@ -9,7 +9,7 @@ import { startDemoService } from "../demo-service/server.js";
 describe("Service A operator page backend", () => {
   it("uses the service SDK and applies permission changes to an existing session", async () => {
     const { viem } = await hre.network.create();
-    const [owner] = await viem.getWalletClients();
+    const [owner, stranger] = await viem.getWalletClients();
     const client = await viem.getPublicClient();
     const entryPoint = await viem.deployContract("MockAgentEntryPoint");
     const factory = await viem.deployContract("AgentAccountFactory", [entryPoint.address]);
@@ -33,7 +33,14 @@ describe("Service A operator page backend", () => {
       assert.equal(page.status, 200);
       assert.match(await page.text(), /Agent access desk/);
       assert.equal((await fetch(`${running.baseUrl}/admin/state`)).status, 401);
-      assert.equal((await post("/admin/enroll", { agentId }, true)).status, 200);
+      assert.equal((await post("/admin/enroll", { agentId }, true)).status, 404, "operator cannot silently enroll a user's agent");
+      const firstEnrollment = await (await post("/user/enrollment-challenge", { agentId })).json();
+      const wrongSignature = await stranger.signMessage({ account: stranger.account, message: firstEnrollment.message });
+      assert.equal((await post("/user/enroll", { agentId, nonce: firstEnrollment.nonce, signature: wrongSignature })).status, 401);
+      const enrollment = await (await post("/user/enrollment-challenge", { agentId })).json();
+      const signature = await owner.signMessage({ account: owner.account, message: enrollment.message });
+      assert.equal((await post("/user/enroll", { agentId, nonce: enrollment.nonce, signature })).status, 200);
+      assert.equal((await post("/user/enroll", { agentId, nonce: enrollment.nonce, signature })).status, 401, "owner proof is single-use");
       const challengeResponse = await post("/agent/challenge", { agentId });
       assert.equal(challengeResponse.status, 200);
       const challenge = await challengeResponse.json();

@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, http, isAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
+import { createPublicClient, getAddress, http, isAddress, recoverMessageAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
 import { agentAccountAbi, agentAccountFactoryAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { DEPLOYMENTS } from "../portal/config.js";
@@ -57,6 +57,7 @@ export async function startDemoService(options: Options) {
   if (host !== "127.0.0.1") throw new Error("The demo service may only bind to 127.0.0.1");
   const operatorToken = options.operatorToken ?? randomBytes(24).toString("base64url");
   const enrollments = new Map<string, Enrollment>();
+  const enrollmentChallenges = new Map<string, { agentId: Address; message: string; expiresAt: number }>();
   const challenges = new Map<Hex, AuthenticationChallenge>();
   const sessions = new Map<Hex, Session>();
   const events: Event[] = [];
@@ -123,28 +124,6 @@ export async function startDemoService(options: Options) {
         sendJson(response, 200, { enrollments: [...enrollments.values()], events });
         return;
       }
-      if (request.method === "POST" && path === "/admin/enroll") {
-        try {
-          const input = await readJson(request);
-          if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Enter a valid agent address");
-          const agentId = input.agentId as Address;
-          const blockNumber = await options.client.getBlockNumber({ cacheTime: 0 });
-          const code = await options.client.getCode({ address: agentId, blockNumber });
-          if (!isExpectedAgentClone(code, options.implementation)) throw new Error("This is not an account from the pinned implementation");
-          const [owner, scheme] = await Promise.all([
-            options.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
-            options.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
-          ]);
-          if (owner === zeroAddress || (scheme !== 1 && scheme !== 2)) throw new Error("Agent account is not initialized");
-          const previous = enrollments.get(agentId.toLowerCase());
-          const enrollment: Enrollment = { agentId, owner, scheme: scheme === 2 ? "P-256" : "secp256k1",
-            permissions: previous?.permissions ?? { report: false, compute: false } };
-          enrollments.set(agentId.toLowerCase(), enrollment);
-          record("ENROLLED", agentId, `Manual association; owner ${owner}`);
-          sendJson(response, 200, enrollment);
-        } catch (error) { sendJson(response, 400, { error: error instanceof Error ? error.message : "Enrollment failed" }); }
-        return;
-      }
       if (request.method === "POST" && path === "/admin/permission") {
         try {
           const input = await readJson(request);
@@ -161,6 +140,49 @@ export async function startDemoService(options: Options) {
         return;
       }
       sendJson(response, 404, { error: "Unknown operator endpoint" });
+      return;
+    }
+
+    if (request.method === "POST" && path === "/user/enrollment-challenge") {
+      try {
+        const input = await readJson(request);
+        if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Enter a valid agent address");
+        const agentId = getAddress(input.agentId);
+        const nonce = `0x${randomBytes(32).toString("hex")}`;
+        const expiresAt = Math.floor(Date.now() / 1000) + 300;
+        const message = `Agentic World · Service A enrollment\nService: ${baseUrl}\nChain ID: ${options.chainId}\nAgent ID: ${agentId}\nNonce: ${nonce}\nExpires at: ${expiresAt}\n\nSign to add this agent to your Service A account. This does not grant resource permissions.`;
+        enrollmentChallenges.set(nonce, { agentId, message, expiresAt });
+        sendJson(response, 200, { agentId, nonce, message, expiresAt });
+      } catch { sendJson(response, 400, { error: "Invalid agent ID" }); }
+      return;
+    }
+    if (request.method === "POST" && path === "/user/enroll") {
+      try {
+        const input = await readJson(request);
+        if (typeof input.agentId !== "string" || !isAddress(input.agentId) || typeof input.nonce !== "string" ||
+            typeof input.signature !== "string" || !/^0x[0-9a-fA-F]+$/.test(input.signature)) throw new Error("Invalid enrollment proof");
+        const agentId = getAddress(input.agentId);
+        const pending = enrollmentChallenges.get(input.nonce);
+        if (!pending || pending.agentId.toLowerCase() !== agentId.toLowerCase() || pending.expiresAt <= Math.floor(Date.now() / 1000))
+          throw new Error("Enrollment challenge is missing or expired");
+        enrollmentChallenges.delete(input.nonce);
+        const signer = await recoverMessageAddress({ message: pending.message, signature: input.signature as Hex });
+        const blockNumber = await options.client.getBlockNumber({ cacheTime: 0 });
+        const code = await options.client.getCode({ address: agentId, blockNumber });
+        if (!isExpectedAgentClone(code, options.implementation)) throw new Error("This is not an account from the pinned implementation");
+        const [owner, scheme] = await Promise.all([
+          options.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
+          options.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
+        ]);
+        if (owner === zeroAddress || signer.toLowerCase() !== owner.toLowerCase() || (scheme !== 1 && scheme !== 2))
+          throw new Error("Wallet signature does not match this agent's owner");
+        const previous = enrollments.get(agentId.toLowerCase());
+        const enrollment: Enrollment = { agentId, owner, scheme: scheme === 2 ? "P-256" : "secp256k1",
+          permissions: previous?.permissions ?? { report: false, compute: false } };
+        enrollments.set(agentId.toLowerCase(), enrollment);
+        record("ENROLLED", agentId, `Owner wallet ${owner} enrolled this agent`);
+        sendJson(response, 200, enrollment);
+      } catch { sendJson(response, 401, { error: "Owner-signed enrollment failed; request a new challenge and retry" }); }
       return;
     }
 
