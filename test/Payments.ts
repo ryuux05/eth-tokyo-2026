@@ -9,7 +9,7 @@ import { encodePolicy, encodeTransferPolicy, Decision } from "../sdk/policy.js";
 import { encodeAgentExecution } from "../sdk/execution.js";
 
 test("USDC execution: real EntryPoint transfers, owner approval, denial and retry safety", async () => {
-  const { viem } = await hre.network.create();
+  const { viem, provider } = await hre.network.create();
   const [owner, recipient, stranger] = await viem.getWalletClients();
   const client = await viem.getPublicClient();
   const chainId = await client.getChainId();
@@ -102,11 +102,20 @@ test("USDC execution: real EntryPoint transfers, owner approval, denial and retr
   await assert.rejects(ep.write.handleOps([[toPackedUserOperation(stale)], owner.account.address]));
   changePolicy = false;
   const shop = await viem.deployContract("PolicyDemoService");
+  // A compatible deployment with different runtime bytes must not need an SDK release.
+  const shopCode = await client.getBytecode({ address: shop.address });
+  assert.ok(shopCode);
+  await provider.request({ method: "hardhat_setCode", params: [shop.address, `${shopCode}00`] });
   const purchaseRules = [1n, 2n].map((amount, i) => ({ target: shop.address, selector: "0x95f43b71" as Hex,
     token: token.address, maxValue: 0n, maxAmount: amount * 1_000_000n, decision: i === 0 ? Decision.ALLOW : Decision.REQUIRE_OWNER_SIGNATURE }));
   await account.write.setPolicy([encodePolicy([...purchaseRules, { target: token.address, selector: "0x095ea7b3", token: zeroAddress,
     maxValue: 0n, maxAmount: 0n, decision: Decision.REQUIRE_OWNER_SIGNATURE }])]);
   const purchase = { agentId: agent, recipient: shop.address, amount: "1", kind: "purchase" as const };
+  const otherShop = await viem.deployContract("PolicyDemoService");
+  for (const kind of ["purchase", "allowance"] as const) {
+    assert.match((await executor.pay(`no-code-${kind}`, { ...purchase, kind, recipient: stranger.account.address })).error!, /INVALID_PURCHASE_TARGET/);
+    assert.match((await executor.pay(`no-policy-${kind}`, { ...purchase, kind, recipient: otherShop.address })).error!, /POLICY_DENIED/);
+  }
   assert.match((await executor.pay("no-allowance-001", purchase)).error!, /ALLOWANCE_REQUIRED/);
   assert.match((await executor.pay("denied-purchase", { ...purchase, amount: "3" })).error!, /POLICY_DENIED/);
   const beforeApprovals = approvals;

@@ -31,7 +31,12 @@ retrying SIGNED, SUBMITTED, UNKNOWN or a transaction that may have reached chain
 Retain IDs for both operations. No tokens move in response to a quote alone.
 Direct `agentic_pay_usdc` is still a transfer, not a compute purchase.
 
-The SDK pins the purchase contract's runtime code. macOS and Windows signers
+Purchase targets must be deployed contracts permitted by the owner's onchain
+policy; the SDK does not pin Service C addresses or runtime bytecode. The purchase
+tool still requires the `purchaseCompute(address,uint256)` ABI and verifies the
+exact USDC transfer and matching `Purchased` event before reporting success.
+An allowed target is not a code audit: only authorize contracts the owner trusts.
+macOS and Windows signers
 accept only canonical zero-ETH USDC transfer/purchase calls and bounded approvals
 wrapped in owner-approved execution. Authentication alone never authorizes a
 purchase. Execution requires a configured bundler and agent-held ETH and USDC.

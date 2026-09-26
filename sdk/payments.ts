@@ -10,7 +10,6 @@ import { isExpectedAgentClone } from "./core.js";
 class PaymentError extends Error {}
 
 export const SEPOLIA_USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address;
-export const SERVICE_C_RUNTIME_HASH = "0xf96790e59a0e740d334a0147fecdf00087748cb9716d75e9094233f2da0838e1" as Hex;
 export const ENTRYPOINT_V08 = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" as Address;
 export const MAX_PAYMENT_GAS_WEI = 5_000_000_000_000_000n; // 0.005 ETH absolute local signer ceiling.
 export const executionAccountAbi = parseAbi([
@@ -88,7 +87,6 @@ export function paymentAmount(amount: string): bigint {
 export function createPaymentExecutor(config: {
   client: PublicClient; chainId: number; implementation: Address; token?: Address; entryPoint?: Address; bundler: BundlerRpc;
   journal: PaymentJournal; maxGasCostWei?: bigint; signal?: AbortSignal;
-  purchaseRuntimeHash?: Hex;
   sign: (request: ExecutionSigningRequest) => Promise<Hex>;
   approve: (typedData: ReturnType<typeof ownerActionTypedData>, intent: PaymentIntent) => Promise<Hex>;
   now?: () => number;
@@ -115,8 +113,10 @@ export function createPaymentExecutor(config: {
     const purchase = intent.kind === "purchase", allowance = intent.kind === "allowance";
     if (purchase || allowance) {
       const shopCode = await client.getBytecode({ address: intent.recipient, blockNumber });
-      if (!shopCode || keccak256(shopCode) !== (config.purchaseRuntimeHash ?? SERVICE_C_RUNTIME_HASH))
-        throw new PaymentError("UNTRUSTED_PURCHASE_TARGET: target must match the pinned Service C contract");
+      // The owner's onchain policy authorizes targets, not a demo bytecode allowlist.
+      // Require a deployed contract; policy and exact allowance approvals are checked below.
+      if (!shopCode || shopCode === "0x")
+        throw new PaymentError("INVALID_PURCHASE_TARGET: target must be a deployed contract");
     }
     const target = purchase ? intent.recipient : token;
     const data = purchase
