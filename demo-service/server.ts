@@ -213,7 +213,13 @@ export async function startDemoService(options: Options) {
       let authenticated;
       try { authenticated = typeof token === "string" ? await service.readSession(token) : undefined; }
       catch { sendJson(response, 503, { error: "Could not validate this service session" }); return; }
-      if (!authenticated) { sendJson(response, 401, { error: "A valid Agent-Session is required" }); return; }
+      if (!authenticated) {
+        sendJson(response, 401, { error: "A valid Agent-Session is required",
+          authentication: { scheme: "AgenticWorld", audience: options.audience,
+            challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" } },
+        { "WWW-Authenticate": `AgenticWorld realm="Service A", challenge="/agent/challenge", session="/agent/session", audience="${options.audience}"` });
+        return;
+      }
       const resource: Permission = path === "/private/report" ? "report" : "compute";
       const current = enrollments.get(authenticated.session.agentId.toLowerCase());
       if (!current?.permissions[resource]) {

@@ -100,7 +100,7 @@ byId<HTMLButtonElement>("before-button").addEventListener("click", async () => {
 });
 
 byId<HTMLButtonElement>("copy-agent-prompt").addEventListener("click", async () => {
-  const prompt = `Use my Agentic World identity to access Service B at ${location.origin}. Authenticate with its /agent/challenge and /agent/session endpoints, then GET /private/report with the Agent-Session header. Report the HTTP status and response. Do not use my human wallet credentials.`;
+  const prompt = `GET ${location.origin}/private/report first. If its 401 explicitly offers AgenticWorld, use the advertised challenge and session endpoints with my Agentic World identity, then retry the report with the Agent-Session header. Report the HTTP status and response. Do not use my human wallet credentials.`;
   try { await navigator.clipboard.writeText(prompt); setStatus("copy-state", "Instruction copied. Paste it into a Codex session with the Agentic World MCP."); }
   catch { setStatus("copy-state", `Clipboard unavailable. Give Codex this URL: ${location.origin}`, true); }
 });

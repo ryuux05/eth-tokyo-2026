@@ -36,12 +36,18 @@ describe("Service B owner registration", () => {
     try {
       assert.equal((await fetch(`${running.baseUrl}/health`)).status, 200);
       assert.match(await (await fetch(running.baseUrl)).text(), /Register yourself/);
-      assert.equal((await fetch(`${running.baseUrl}/private/report`)).status, 401, "no identity means no session");
+      const offered = await fetch(`${running.baseUrl}/private/report`);
+      assert.equal(offered.status, 401, "no identity means no session");
+      assert.match(offered.headers.get("www-authenticate") ?? "", /^AgenticWorld /);
+      assert.deepEqual((await offered.json()).authentication, { scheme: "AgenticWorld", audience: "https://service-b.example",
+        challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" });
 
       const before = await post("/agent/lookup", { agentId });
       assert.equal(before.status, 200);
       assert.equal((await before.json()).ownerRegistered, false);
-      assert.equal((await post("/agent/session", await prove())).status, 401, "agent alone cannot enter an unregistered owner's service account");
+      const unregistered = await post("/agent/session", await prove());
+      assert.equal(unregistered.status, 401, "agent alone cannot enter an unregistered owner's service account");
+      assert.equal(unregistered.headers.get("www-authenticate"), null, "failed proof is not a fresh Agentic World offer");
 
       const walletChallengeResponse = await post("/owner/challenge", { owner: owner.account.address });
       assert.equal(walletChallengeResponse.status, 200);
@@ -67,6 +73,7 @@ describe("Service B owner registration", () => {
       assert.ok(session);
       const report = await fetch(`${running.baseUrl}/private/report`, { headers: { "Agent-Session": session } });
       assert.equal(report.status, 200);
+      assert.equal(report.headers.get("www-authenticate"), null);
       assert.equal((await report.json()).owner.toLowerCase(), owner.account.address.toLowerCase());
       const activity = await (await fetch(`${running.baseUrl}/activity`)).json();
       assert.ok(activity.events.some((event: { kind: string }) => event.kind === "ALLOWED"));

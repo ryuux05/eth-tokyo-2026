@@ -193,7 +193,10 @@ export async function startDemoServiceB(options: Options) {
       catch { sendJson(response, 503, { error: "Could not validate this service session" }); return; }
       if (!authenticated) {
         record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
-        sendJson(response, 401, { error: "A valid Agent-Session is required" });
+        sendJson(response, 401, { error: "A valid Agent-Session is required",
+          authentication: { scheme: "AgenticWorld", audience: options.audience,
+            challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" } },
+        { "WWW-Authenticate": `AgenticWorld realm="Service B", challenge="/agent/challenge", session="/agent/session", audience="${options.audience}"` });
         return;
       }
       if (!authenticated.user?.report) {

@@ -32,7 +32,14 @@ describe("Service A operator page backend", () => {
       const page = await fetch(running.baseUrl);
       assert.equal(page.status, 200);
       assert.match(await page.text(), /Agent access desk/);
-      assert.equal((await fetch(`${running.baseUrl}/admin/state`)).status, 401);
+      const offered = await fetch(`${running.baseUrl}/private/report`);
+      assert.equal(offered.status, 401);
+      assert.match(offered.headers.get("www-authenticate") ?? "", /^AgenticWorld /);
+      assert.deepEqual((await offered.json()).authentication, { scheme: "AgenticWorld", audience: "https://service-a.example",
+        challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" });
+      const ordinary = await fetch(`${running.baseUrl}/admin/state`);
+      assert.equal(ordinary.status, 401);
+      assert.equal(ordinary.headers.get("www-authenticate"), null, "operator auth is not an Agentic World offer");
       assert.equal((await post("/admin/enroll", { agentId }, true)).status, 404, "operator cannot silently enroll a user's agent");
       const firstEnrollment = await (await post("/user/enrollment-challenge", { agentId })).json();
       const wrongSignature = await stranger.signMessage({ account: stranger.account, message: firstEnrollment.message });
@@ -50,10 +57,14 @@ describe("Service A operator page backend", () => {
       const token = sessionResponse.headers.get("Agent-Session");
       assert.ok(token);
       const resource = (name: "report" | "compute") => fetch(`${running.baseUrl}/private/${name}`, { headers: { "Agent-Session": token } });
-      assert.equal((await resource("report")).status, 403);
+      const denied = await resource("report");
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("www-authenticate"), null, "authorization denial must not re-trigger agent authentication");
       assert.equal((await resource("compute")).status, 403);
       assert.equal((await post("/admin/permission", { agentId, resource: "report", allowed: true }, true)).status, 200);
-      assert.equal((await resource("report")).status, 200, "same session becomes authorized after grant");
+      const allowed = await resource("report");
+      assert.equal(allowed.status, 200, "same session becomes authorized after grant");
+      assert.equal(allowed.headers.get("www-authenticate"), null, "available resource has no authentication offer");
       assert.equal((await resource("compute")).status, 403, "grant stays resource scoped");
       assert.equal((await post("/admin/permission", { agentId, resource: "report", allowed: false }, true)).status, 200);
       assert.equal((await resource("report")).status, 403, "same session immediately loses access after revoke");
