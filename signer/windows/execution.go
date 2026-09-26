@@ -67,11 +67,23 @@ func executionDigest(input executionRequest) ([]byte, error) {
 		return nil, invalid
 	}
 	p := start + 32
-	if new(big.Int).SetBytes(data[p+20:p+52]).Sign() != 0 || hex.EncodeToString(data[p+52:p+56]) != "a9059cbb" || new(big.Int).SetBytes(data[p+56:p+68]).Sign() != 0 ||
+	selector := hex.EncodeToString(data[p+52 : p+56])
+	purchase, allowance := selector == "95f43b71", selector == "095ea7b3"
+	if (selector != "a9059cbb" && !purchase && !(allowance && approved)) || new(big.Int).SetBytes(data[p:p+20]).Sign() == 0 || bytes.Equal(sender, data[p:p+20]) {
+		return nil, invalid
+	}
+	if new(big.Int).SetBytes(data[p+20:p+52]).Sign() != 0 || new(big.Int).SetBytes(data[p+56:p+68]).Sign() != 0 ||
 		new(big.Int).SetBytes(data[p+68:p+88]).Sign() == 0 || bytes.Equal(sender, data[p+68:p+88]) || new(big.Int).SetBytes(data[p+88:p+120]).Sign() == 0 {
 		return nil, invalid
 	}
-	if input.ChainID == 11155111 && hex.EncodeToString(data[p:p+20]) != "1c7d4b196cb0c7b01d743fbc6116a902379c7238" {
+	tokenStart := p
+	if purchase {
+		tokenStart = p + 68
+	}
+	if input.ChainID == 11155111 && hex.EncodeToString(data[tokenStart:tokenStart+20]) != "1c7d4b196cb0c7b01d743fbc6116a902379c7238" {
+		return nil, invalid
+	}
+	if allowance && bytes.Equal(data[p+88:p+120], bytes.Repeat([]byte{255}, 32)) {
 		return nil, invalid
 	}
 	if approved {

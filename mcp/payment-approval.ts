@@ -39,8 +39,12 @@ export async function approvePayment(options: {
     }
     if (request.url === `${path}/context` && request.method === "GET") {
       send(200, { action: "payment", agentId: options.intent.agentId, typedData: options.typedData,
-        amount: options.intent.amount, recipient: options.intent.recipient, deadline: Number(options.typedData.message.deadline),
-        summary: `Authorize this agent to send exactly ${options.intent.amount} USDC. Your wallet signs an approval; the agent then submits the payment.`,
+        amount: options.intent.amount, recipient: options.intent.recipient, kind: options.intent.kind ?? "transfer", deadline: Number(options.typedData.message.deadline),
+        summary: options.intent.kind === "allowance"
+          ? `Authorize a bounded allowance of exactly ${options.intent.amount} USDC for this Service C contract. This sets its spending allowance; it does not purchase credits. Unspent allowance remains until used or revoked.`
+          : options.intent.kind === "purchase"
+          ? `Authorize this agent to purchase compute for exactly ${options.intent.amount} USDC from the displayed Service C contract.`
+          : `Authorize this agent to send exactly ${options.intent.amount} USDC. Your wallet signs an approval; the agent then submits the payment.`,
         chainName: options.typedData.domain.chainId === 11155111 ? "Ethereum Sepolia" : "Local test chain",
         details: [`Policy revision: ${options.typedData.message.policyRevision}`, `Approval nonce: ${options.typedData.message.nonce}`,
           `Policy hash: ${options.typedData.message.policyHash}`, "This is a single-use approval, not an unlimited token allowance."],

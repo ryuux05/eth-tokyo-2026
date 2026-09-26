@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { encodeFunctionData, erc20Abi, toHex, type Address, type Hex } from "viem";
 import { encodeAgentExecution } from "../sdk/execution.js";
-import { ENTRYPOINT_V08, SEPOLIA_USDC, executionDigest, executionSigningRequest, type PaymentOperation } from "../sdk/payments.js";
+import { ENTRYPOINT_V08, SEPOLIA_USDC, computePurchaseAbi, executionDigest, executionSigningRequest, type PaymentOperation } from "../sdk/payments.js";
 
 test("native execution digests agree with viem; malformed, excessive and expired requests fail", {
   skip: process.platform !== "darwin" || !existsSync("dist/signer/agentic-signer") ? "Build macOS signer first; no hardware key is required for hashing" : false,
@@ -29,7 +29,13 @@ test("native execution digests agree with viem; malformed, excessive and expired
       nonce: 1n, deadline: BigInt(validUntil + 60), signature: `0x${"55".repeat(65)}`,
     }) };
     for (const binary of binaries) {
-      for (const op of [operation, approved]) {
+      const ownerApproval = { nonce: 1n, deadline: BigInt(validUntil + 60), signature: `0x${"55".repeat(65)}` as Hex };
+      const purchaseData = encodeFunctionData({ abi: computePurchaseAbi, functionName: "purchaseCompute", args: [SEPOLIA_USDC, 1_000_000n] });
+      const purchase = { ...operation, callData: encodeAgentExecution(recipient, 0n, purchaseData) };
+      const approvedPurchase = { ...operation, callData: encodeAgentExecution(recipient, 0n, purchaseData, ownerApproval) };
+      const allowance = { ...operation, callData: encodeAgentExecution(SEPOLIA_USDC, 0n,
+        encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [recipient, 1_000_000n] }), ownerApproval) };
+      for (const op of [operation, approved, purchase, approvedPurchase, allowance]) {
         const result = invoke(binary, request(op));
         assert.equal(result.status, 0, result.stderr);
         assert.equal(JSON.parse(result.stdout).digest, executionDigest(11155111, ENTRYPOINT_V08, op, validUntil));
@@ -43,6 +49,8 @@ test("native execution digests agree with viem; malformed, excessive and expired
         request({ ...operation, callData: encodeAgentExecution(recipient, 0n, data) }),
         request({ ...operation, callData: encodeAgentExecution(SEPOLIA_USDC, 1n, data) }),
         request({ ...operation, callData: encodeAgentExecution(SEPOLIA_USDC, 0n, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [recipient, 5n] })) }),
+        request({ ...operation, callData: encodeAgentExecution(SEPOLIA_USDC, 0n, encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [recipient, (1n << 256n) - 1n] }), ownerApproval) }),
+        request({ ...operation, callData: encodeAgentExecution(recipient, 0n, encodeFunctionData({ abi: computePurchaseAbi, functionName: "purchaseCompute", args: [recipient, 1n] })) }),
         request({ ...operation, callData: `${approved.callData.slice(0, 458)}` as Hex }),
         { ...good, userOperation: { ...good.userOperation, nonce: toHex(1n) } },
       ];

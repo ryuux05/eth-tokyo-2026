@@ -109,6 +109,32 @@ test("MCP payment tools: owner policy transaction, hardware-protocol signing, bu
     await call("agentic_pay_usdc", { agentId, recipient: recipient.account.address, amount: "5", requestId: "mcp-pay-0001" });
     assert.equal(sends, 2);
     assert.match(await readFile(`${configPath}.payments.json`, "utf8"), /CONFIRMED/);
+    const shop = await viem.deployContract("PolicyDemoService");
+    await call("agentic_set_policy", { agentId, rules: [
+      { target: shop.address, selector: "0x95f43b71", token: SEPOLIA_USDC, maxValueWei: "0", maxAmount: "1000000", decision: "ALLOW" },
+      { target: shop.address, selector: "0x95f43b71", token: SEPOLIA_USDC, maxValueWei: "0", maxAmount: "2000000", decision: "REQUIRE_OWNER_SIGNATURE" },
+    ] });
+    await browserWork;
+    const setup = await call("agentic_enable_compute_allowance", { agentId });
+    await browserWork;
+    assert.equal(setup.status, "CONFIRMED_ONCHAIN");
+    for (const amount of ["1", "2"]) {
+      const allowanceId = `mcp-allowance-${amount}`;
+      const purchaseId = `mcp-purchase-${amount}`;
+      const allowance = await call("agentic_approve_compute_allowance", { agentId, target: shop.address, amount, requestId: allowanceId });
+      await browserWork;
+      assert.equal(allowance.status, "SUBMITTED", JSON.stringify(allowance));
+      const confirmedAllowance = await call("agentic_payment_status", { requestId: allowanceId });
+      assert.equal(confirmedAllowance.allowanceConfirmed, true);
+      assert.equal(confirmedAllowance.paid, false);
+      const purchase = await call("agentic_purchase_compute", { agentId, target: shop.address, amount, requestId: purchaseId });
+      await browserWork;
+      assert.equal(purchase.status, "SUBMITTED", JSON.stringify(purchase));
+      const receipt = await call("agentic_payment_status", { requestId: purchaseId });
+      assert.equal(receipt.purchaseConfirmed, true);
+      assert.equal(receipt.paid, true);
+    }
+    assert.equal(await token.read.balanceOf([shop.address]), 3_000_000n);
   } finally {
     await mcp.close(); await server.close(); rpc.closeAllConnections(); await new Promise<void>(done => rpc.close(() => done()));
     await rm(temporary, { recursive: true, force: true });

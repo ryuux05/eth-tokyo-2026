@@ -14,7 +14,7 @@ import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPol
 import { assertAudience, sessionProofHeaders, type AuthenticationChallenge } from "../sdk/core.js";
 import { ensureSignerPublicKey, signLocalChallenge, signLocalExecution, signerPublicKey } from "./local-signer.js";
 import { createPaymentExecutor, pimlicoBundler, SEPOLIA_USDC, executionAccountAbi, paymentAmount, type PaymentRecord } from "../sdk/payments.js";
-import { encodeTransferPolicy } from "../sdk/policy.js";
+import { decodePolicy, encodeTransferPolicy } from "../sdk/policy.js";
 import { withPaymentJournal } from "./payment-journal.js";
 import { approvePayment } from "./payment-approval.js";
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
@@ -247,8 +247,12 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
 
   function paymentResult(record: PaymentRecord) {
     const { operation: _operation, ...publicRecord } = record;
-    return { ...publicRecord, paid: record.status === "CONFIRMED", token: SEPOLIA_USDC,
-      note: record.status === "CONFIRMED" ? "Exact USDC transfer verified from the chain receipt." : "Not confirmed paid. Check this requestId; never create a second payment to retry an unknown submission." };
+    return { ...publicRecord, paid: record.status === "CONFIRMED" && record.kind !== "allowance", token: SEPOLIA_USDC,
+      purchaseConfirmed: record.kind === "purchase" && record.status === "CONFIRMED",
+      allowanceConfirmed: record.kind === "allowance" && record.status === "CONFIRMED",
+      note: record.status === "CONFIRMED" ? record.kind === "allowance" ? "Exact allowance verified. No purchase or payment completed."
+        : record.kind === "purchase" ? "Exact USDC transfer and Service C Purchased event verified onchain."
+        : "Exact USDC transfer verified from the chain receipt." : "Not confirmed paid. Check this requestId; never create a second payment to retry an unknown submission." };
   }
   async function paymentExecutor(journal: Parameters<Parameters<typeof withPaymentJournal>[1]>[0], signal?: AbortSignal) {
     const url = config.execution?.bundlerRpcUrl ?? process.env.AGENTIC_WORLD_BUNDLER_RPC_URL;
@@ -290,6 +294,45 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   }, async ({ requestId }) => guarded(async () => {
     if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "No payment journal is configured");
     return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal)).status(requestId)));
+  }));
+  for (const [name, kind] of [["agentic_purchase_compute", "purchase"], ["agentic_approve_compute_allowance", "allowance"]] as const) {
+    server.registerTool(name, {
+      description: kind === "purchase"
+        ? "Actually purchase Service C compute using Sepolia USDC and the account's purchase policy. Requires an explicit purchase request, funded account, bundler and sufficient allowance. Verify purchaseConfirmed through agentic_payment_status."
+        : "Set a bounded USDC allowance for the exact Service C purchase amount. Requires owner approval and an onchain approve rule requiring owner signature. Does not purchase or pay. Never grant an unlimited allowance.",
+      inputSchema: z.strictObject({ agentId: z.string().optional(), target: z.string(), amount: z.string(), requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/) }),
+    }, async ({ agentId, target, amount, requestId }, ctx) => guarded(async () => {
+      if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "Purchases require a persistent config and payment journal");
+      if (!isAddress(target)) throw new ToolError("INVALID_TARGET", "Provide the Service C purchase contract address");
+      const selected = selectManagedAgentId(agentId);
+      if (!(await identity(selected)).executionSupported) throw new ToolError("EXECUTION_UPGRADE_REQUIRED", "This agent does not support execution");
+      return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal, ctx.mcpReq.signal))
+        .pay(requestId, { agentId: selected, recipient: target, amount, kind })));
+    }));
+  }
+  server.registerTool("agentic_enable_compute_allowance", {
+    description: "Owner-requested one-time purchase setup. Preserve existing purchase rules and append a USDC approve rule requiring an exact owner signature. Opens a wallet transaction. Does not grant an allowance or change purchase limits.",
+    inputSchema: z.strictObject({ agentId: z.string().optional() }),
+  }, async ({ agentId }, ctx) => guarded(async () => {
+    const current = await identity(selectManagedAgentId(agentId));
+    const encoded = await client.readContract({ address: current.agentId, abi: agentPolicyAbi, functionName: "policy" });
+    let rules: PolicyRule[];
+    try { rules = decodePolicy(encoded); } catch { throw new ToolError("PURCHASE_POLICY_REQUIRED", "Configure purchase rules first. Transfer-only policies are not changed by this setup."); }
+    if (!rules.some(rule => rule.selector.toLowerCase() === "0x95f43b71" && rule.decision !== Decision.DENY))
+      throw new ToolError("PURCHASE_POLICY_REQUIRED", "Configure an allowed purchase rule first");
+    const existing = rules.find(rule => rule.target.toLowerCase() === SEPOLIA_USDC.toLowerCase() && rule.selector.toLowerCase() === "0x095ea7b3");
+    if (existing) {
+      if (existing.decision !== Decision.REQUIRE_OWNER_SIGNATURE) throw new ToolError("ALLOWANCE_POLICY_CONFLICT", "Existing approval policy must be reviewed by the owner; it was not changed");
+      return { status: "ALREADY_CONFIGURED", agentId: current.agentId };
+    }
+    const policy = encodePolicy([...rules, { target: SEPOLIA_USDC, selector: "0x095ea7b3", token: zeroAddress, maxValue: 0n, maxAmount: 0n, decision: Decision.REQUIRE_OWNER_SIGNATURE }]);
+    const policyHash = keccak256(policy);
+    return approveOwnerAction({ action: "policy", agentId: current.agentId,
+      summary: "Enable owner-approved USDC allowances for purchases. Existing purchase rules remain unchanged. Each allowance requires your separate signature for its exact contract and amount.",
+      details: [`Preserve ${rules.length} existing rules`, "Append USDC approve(address,uint256): REQUIRE_OWNER_SIGNATURE", "No allowance or payment is created by this transaction"],
+      transaction: { chainId: config.chainId, from: current.owner, to: current.agentId, value: "0", data: encodeFunctionData({ abi: agentPolicyAbi, functionName: "setPolicy", args: [policy] }) } },
+      async () => { const updated = await identity(current.agentId); if (updated.policyHash !== policyHash) throw new Error("Policy confirmation mismatch"); return { policyHash, policyRevision: updated.policyRevision }; },
+      { module: "policyHook", abi: parseAbiItem("event PolicyUpdated(address indexed account, bytes32 indexed policyHash, uint256 revision)"), matches: args => args.policyHash === policyHash }, ctx.mcpReq.signal);
   }));
   server.registerTool("agentic_set_transfer_policy", {
     description: "Replace this agent's execution policy with ordered, recipient-bound USDC transfer rules. Requires explicit owner request and a wallet transaction. No match means DENY; limits are per transfer, not cumulative.",

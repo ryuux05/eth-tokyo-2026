@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import hre from "hardhat";
 import { p256 } from "@noble/curves/nist.js";
-import { encodeFunctionData, erc20Abi, parseEther, toHex, toBytes, type Address, type Hex } from "viem";
+import { encodeFunctionData, erc20Abi, parseEther, toHex, toBytes, zeroAddress, type Address, type Hex } from "viem";
 import { toPackedUserOperation, getUserOperationHash } from "viem/account-abstraction";
 import { createPaymentExecutor, executionDigest, wrapExecutionSignature, type PaymentRecord, type PaymentOperation, type BundlerRpc } from "../sdk/payments.js";
-import { encodeTransferPolicy, Decision } from "../sdk/policy.js";
+import { encodePolicy, encodeTransferPolicy, Decision } from "../sdk/policy.js";
 import { encodeAgentExecution } from "../sdk/execution.js";
 
 test("USDC execution: real EntryPoint transfers, owner approval, denial and retry safety", async () => {
@@ -100,4 +100,29 @@ test("USDC execution: real EntryPoint transfers, owner approval, denial and retr
   const expired = Number((await client.getBlock()).timestamp) - 1;
   stale.signature = wrapExecutionSignature(expired, toHex(p256.sign(toBytes(executionDigest(chainId, ep.address, stale, expired)), secret, { prehash: false }).toCompactRawBytes()));
   await assert.rejects(ep.write.handleOps([[toPackedUserOperation(stale)], owner.account.address]));
+  changePolicy = false;
+  const shop = await viem.deployContract("PolicyDemoService");
+  const purchaseRules = [1n, 2n].map((amount, i) => ({ target: shop.address, selector: "0x95f43b71" as Hex,
+    token: token.address, maxValue: 0n, maxAmount: amount * 1_000_000n, decision: i === 0 ? Decision.ALLOW : Decision.REQUIRE_OWNER_SIGNATURE }));
+  await account.write.setPolicy([encodePolicy([...purchaseRules, { target: token.address, selector: "0x095ea7b3", token: zeroAddress,
+    maxValue: 0n, maxAmount: 0n, decision: Decision.REQUIRE_OWNER_SIGNATURE }])]);
+  const purchase = { agentId: agent, recipient: shop.address, amount: "1", kind: "purchase" as const };
+  assert.match((await executor.pay("no-allowance-001", purchase)).error!, /ALLOWANCE_REQUIRED/);
+  assert.match((await executor.pay("denied-purchase", { ...purchase, amount: "3" })).error!, /POLICY_DENIED/);
+  const beforeApprovals = approvals;
+  for (const amount of ["1", "2"]) {
+    const approved = await executor.pay(`allowance-${amount}-001`, { ...purchase, amount, kind: "allowance" });
+    assert.equal(approved.status, "SUBMITTED", approved.error);
+    assert.equal((await executor.status(approved.requestId)).status, "CONFIRMED");
+    assert.equal(await token.read.allowance([agent, shop.address]), BigInt(amount) * 1_000_000n);
+    const paid = await executor.pay(`purchase-${amount}-001`, { ...purchase, amount });
+    assert.equal(paid.status, "SUBMITTED", paid.error);
+    assert.equal((await executor.status(paid.requestId)).status, "CONFIRMED");
+    const sent = sends;
+    assert.equal((await executor.pay(paid.requestId, { ...purchase, amount })).status, "CONFIRMED");
+    assert.equal(sends, sent);
+    assert.equal(await token.read.allowance([agent, shop.address]), 0n);
+  }
+  assert.equal(await token.read.balanceOf([shop.address]), 3_000_000n);
+  assert.equal(approvals - beforeApprovals, 3, "two bounded allowance approvals plus above-limit purchase approval");
 });

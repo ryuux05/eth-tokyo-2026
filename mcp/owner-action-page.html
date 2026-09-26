@@ -98,12 +98,12 @@
       el("network").textContent=`${context.chainName} · ${context.transaction.chainId}`;
       el("agent").textContent=context.agentId;el("owner").textContent=context.transaction.from;el("target").textContent=context.transaction.to;
       if(context.typedData){
-        el("title").textContent="Approve USDC payment";
+        el("title").textContent=context.kind==="allowance"?"Approve bounded USDC allowance":context.kind==="purchase"?"Approve compute purchase":"Approve USDC payment";
         for(const name of ["amount","recipient","expiry"])el(`payment-${name}-row`).hidden=false;
         el("payment-amount").textContent=`${context.amount} USDC`;
         el("payment-recipient").textContent=context.recipient;
         el("payment-expiry").textContent=new Date(context.deadline*1000).toLocaleString();
-        document.querySelector(".caution").textContent="Signing authorizes this exact transfer. Approval is not a payment receipt. Check the final payment status with your agent.";
+        document.querySelector(".caution").textContent=context.kind==="allowance"?"Signing authorizes this exact spending allowance. An allowance is not a purchase. Unused allowance remains until spent or revoked.":"Signing authorizes this exact operation. Approval is not a payment receipt. Check the final payment status with your agent.";
       }
       el("details-label").textContent=`Exact change (${context.details.length} ${context.details.length===1?"item":"items"})`;
       for(const detail of context.details){const item=document.createElement("li");item.textContent=detail;el("details").append(item);}

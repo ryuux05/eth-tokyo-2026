@@ -10,6 +10,7 @@ import { isExpectedAgentClone } from "./core.js";
 class PaymentError extends Error {}
 
 export const SEPOLIA_USDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238" as Address;
+export const SERVICE_C_RUNTIME_HASH = "0xf96790e59a0e740d334a0147fecdf00087748cb9716d75e9094233f2da0838e1" as Hex;
 export const ENTRYPOINT_V08 = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" as Address;
 export const MAX_PAYMENT_GAS_WEI = 5_000_000_000_000_000n; // 0.005 ETH absolute local signer ceiling.
 export const executionAccountAbi = parseAbi([
@@ -26,7 +27,11 @@ export type ExecutionSigningRequest = {
   kind: "AgentExecution"; chainId: number; entryPoint: Address; validUntil: number;
   userOperation: { sender: Address; nonce: Hex; callData: Hex; accountGasLimits: Hex; preVerificationGas: Hex; gasFees: Hex };
 };
-export type PaymentIntent = { agentId: Address; recipient: Address; amount: string };
+export type PaymentIntent = { agentId: Address; recipient: Address; amount: string; kind?: "transfer" | "purchase" | "allowance" };
+export const computePurchaseAbi = parseAbi([
+  "function purchaseCompute(address token,uint256 amount)",
+  "event Purchased(address indexed agent,address indexed token,uint256 amount)",
+]);
 export type PaymentRecord = PaymentIntent & { requestId: string; intentHash: Hex; status: "PREPARING" | "SIGNED" | "SUBMITTED" | "UNKNOWN" | "CONFIRMED" | "REVERTED" | "FAILED";
   userOpHash?: Hex; operation?: PaymentOperation; validUntil?: number; transactionHash?: Hex; error?: string };
 export type PaymentJournal = { get(id: string): Promise<PaymentRecord | undefined>; put(record: PaymentRecord): Promise<void> };
@@ -83,6 +88,7 @@ export function paymentAmount(amount: string): bigint {
 export function createPaymentExecutor(config: {
   client: PublicClient; chainId: number; implementation: Address; token?: Address; entryPoint?: Address; bundler: BundlerRpc;
   journal: PaymentJournal; maxGasCostWei?: bigint; signal?: AbortSignal;
+  purchaseRuntimeHash?: Hex;
   sign: (request: ExecutionSigningRequest) => Promise<Hex>;
   approve: (typedData: ReturnType<typeof ownerActionTypedData>, intent: PaymentIntent) => Promise<Hex>;
   now?: () => number;
@@ -106,12 +112,21 @@ export function createPaymentExecutor(config: {
     try { version = await client.readContract({ address: intent.agentId, abi: executionAccountAbi, functionName: "executionVersion", blockNumber }); }
     catch { throw new PaymentError("EXECUTION_UPGRADE_REQUIRED: legacy accounts are authentication/preview only. Create an account from the newly verified execution deployment."); }
     if (version !== 1n) throw new PaymentError("Unsupported execution version");
-    const data = encodeFunctionData({ abi: erc20Abi, functionName: "transfer", args: [getAddress(intent.recipient), amount] });
+    const purchase = intent.kind === "purchase", allowance = intent.kind === "allowance";
+    if (purchase || allowance) {
+      const shopCode = await client.getBytecode({ address: intent.recipient, blockNumber });
+      if (!shopCode || keccak256(shopCode) !== (config.purchaseRuntimeHash ?? SERVICE_C_RUNTIME_HASH))
+        throw new PaymentError("UNTRUSTED_PURCHASE_TARGET: target must match the pinned Service C contract");
+    }
+    const target = purchase ? intent.recipient : token;
+    const data = purchase
+      ? encodeFunctionData({ abi: computePurchaseAbi, functionName: "purchaseCompute", args: [token, amount] })
+      : encodeFunctionData({ abi: erc20Abi, functionName: allowance ? "approve" : "transfer", args: [getAddress(intent.recipient), amount] });
     const [owner, ep, revoked, decision, policyHash, policyRevision, approvalNonce, balance, decimals] = await Promise.all([
       client.readContract({ address: intent.agentId, abi: executionAccountAbi, functionName: "owner", blockNumber }),
       client.readContract({ address: intent.agentId, abi: executionAccountAbi, functionName: "entryPoint", blockNumber }),
       client.readContract({ address: intent.agentId, abi: executionAccountAbi, functionName: "authenticationRevoked", blockNumber }),
-      client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "evaluateAction", args: [token, 0n, data], blockNumber }),
+      client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "evaluateAction", args: [target, 0n, data], blockNumber }),
       client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "policyHash", blockNumber }),
       client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "policyRevision", blockNumber }),
       client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "ownerApprovalNonce", blockNumber }),
@@ -120,8 +135,16 @@ export function createPaymentExecutor(config: {
     ]);
     if (ep.toLowerCase() !== entryPoint.toLowerCase() || revoked || decimals !== 6) throw new PaymentError("Invalid EntryPoint, revoked authenticator, or unsupported token decimals");
     if (decision === Decision.DENY) throw new PaymentError("POLICY_DENIED: this transfer is not permitted");
+    if (allowance) {
+      if (decision !== Decision.REQUIRE_OWNER_SIGNATURE) throw new PaymentError("ALLOWANCE_POLICY_REQUIRED: token approvals must require an exact owner signature");
+      const purchaseDecision = await client.readContract({ address: intent.agentId, abi: agentPolicyAbi, functionName: "evaluateAction",
+        args: [intent.recipient, 0n, encodeFunctionData({ abi: computePurchaseAbi, functionName: "purchaseCompute", args: [token, amount] })], blockNumber });
+      if (purchaseDecision === Decision.DENY) throw new PaymentError("POLICY_DENIED: the proposed purchase is denied; no allowance will be granted");
+    }
+    if (purchase && await client.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [intent.agentId, intent.recipient], blockNumber }) < amount)
+      throw new PaymentError("ALLOWANCE_REQUIRED: approve the exact purchase amount with agentic_approve_compute_allowance first");
     if (balance < amount) throw new PaymentError("INSUFFICIENT_USDC: fund the agent account before paying");
-    return { owner, decision, policyHash, policyRevision, approvalNonce, data, amount };
+    return { owner, decision, policyHash, policyRevision, approvalNonce, data, amount, target };
   }
   async function status(requestId: string): Promise<PaymentRecord> {
     const record = await journal.get(requestId);
@@ -148,12 +171,21 @@ export function createPaymentExecutor(config: {
         if (item.address.toLowerCase() !== token.toLowerCase()) return false;
         try {
           const transfer = decodeEventLog({ abi: erc20Abi, data: item.data, topics: item.topics });
+          if (record.kind === "allowance") return transfer.eventName === "Approval" && transfer.args.owner.toLowerCase() === record.agentId.toLowerCase() &&
+            transfer.args.spender.toLowerCase() === record.recipient.toLowerCase() && transfer.args.value === paymentAmount(record.amount);
           return transfer.eventName === "Transfer" && transfer.args.from.toLowerCase() === record.agentId.toLowerCase() &&
             transfer.args.to.toLowerCase() === record.recipient.toLowerCase() && transfer.args.value === paymentAmount(record.amount);
         } catch { return false; }
       });
       const success = receipt.status === "success" && event.args.success;
       if (success && !transferred) throw new PaymentError("Operation succeeded without the expected USDC transfer; not reporting payment success");
+      if (success && record.kind === "purchase" && !receipt.logs.slice(previousEvent + 1, i).some(item => {
+        if (item.address.toLowerCase() !== record.recipient.toLowerCase()) return false;
+        try { const event = decodeEventLog({ abi: computePurchaseAbi, data: item.data, topics: item.topics });
+          return event.eventName === "Purchased" && event.args.agent.toLowerCase() === record.agentId.toLowerCase() &&
+            event.args.token.toLowerCase() === token.toLowerCase() && event.args.amount === paymentAmount(record.amount);
+        } catch { return false; }
+      })) throw new PaymentError("Purchase event missing; not reporting purchase success");
       const updated: PaymentRecord = { ...record, status: success ? "CONFIRMED" : "REVERTED", transactionHash: receipt.transactionHash,
         error: success ? undefined : "UserOperation reverted; no transfer completed." };
       await journal.put(updated);
@@ -163,7 +195,8 @@ export function createPaymentExecutor(config: {
   }
   async function pay(requestId: string, intent: PaymentIntent): Promise<PaymentRecord> {
     if (!/^[a-zA-Z0-9_-]{8,80}$/.test(requestId)) throw new PaymentError("Use a stable requestId (8–80 letters, digits, hyphens or underscores) for retry safety");
-    const intentHash = keccak256(new TextEncoder().encode(JSON.stringify([config.chainId, token.toLowerCase(), intent.agentId.toLowerCase(), intent.recipient.toLowerCase(), paymentAmount(intent.amount).toString()])));
+    const intentHash = keccak256(new TextEncoder().encode(JSON.stringify([config.chainId, token.toLowerCase(), intent.agentId.toLowerCase(), intent.recipient.toLowerCase(), paymentAmount(intent.amount).toString(),
+      ...(intent.kind && intent.kind !== "transfer" ? [intent.kind] : [])])));
     const existing = await journal.get(requestId);
     if (existing) {
       if (existing.intentHash !== intentHash) throw new PaymentError("Request ID was already used for a different payment");
@@ -179,7 +212,7 @@ export function createPaymentExecutor(config: {
       let approval: OwnerApproval | undefined;
       if (initial.decision === Decision.REQUIRE_OWNER_SIGNATURE) {
         const deadline = BigInt(now() + 300);
-        const typedData = ownerActionTypedData({ agent: intent.agentId, chainId: config.chainId, target: token, value: 0n,
+        const typedData = ownerActionTypedData({ agent: intent.agentId, chainId: config.chainId, target: initial.target, value: 0n,
           data: initial.data, policyHash: initial.policyHash, policyRevision: initial.policyRevision, nonce: initial.approvalNonce, deadline });
         approval = { nonce: initial.approvalNonce, deadline, signature: await config.approve(typedData, intent) };
         if (!await client.verifyTypedData({ address: initial.owner, ...typedData, signature: approval.signature })) throw new PaymentError("Owner approval is invalid");
@@ -191,7 +224,7 @@ export function createPaymentExecutor(config: {
       if (validUntil <= now() + 15) throw new PaymentError("Owner approval is too close to expiry; request fresh approval");
       const operation: PaymentOperation = { sender: intent.agentId,
         nonce: await client.readContract({ address: entryPoint, abi: paymentEntryPointAbi, functionName: "getNonce", args: [intent.agentId, 0n] }),
-        callData: encodeAgentExecution(token, 0n, initial.data, approval),
+        callData: encodeAgentExecution(initial.target, 0n, initial.data, approval),
         callGasLimit: 0n, verificationGasLimit: 0n, preVerificationGas: 0n,
         maxFeePerGas: quantity(price.maxFeePerGas), maxPriorityFeePerGas: quantity(price.maxPriorityFeePerGas),
         signature: wrapExecutionSignature(validUntil, `0x${"11".repeat(64)}`) };

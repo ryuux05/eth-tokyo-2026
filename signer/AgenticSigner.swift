@@ -221,15 +221,22 @@ private func executionDigest(_ request: ExecutionRequest) throws -> [UInt8] {
     guard offset == (approved ? 160 : 64) else { throw SignerError.invalid("Noncanonical execution offset") }
     let start = 4 + Int(offset)
     guard data.count >= start + 160 else { throw SignerError.invalid("Truncated execution") }
-    guard try smallUInt(Array(data[start..<start+32])) == 120 else { throw SignerError.invalid("Only direct ERC-20 transfers may be signed") }
+    guard try smallUInt(Array(data[start..<start+32])) == 120 else { throw SignerError.invalid("Only canonical token actions may be signed") }
     let payload = start + 32
+    let selector = hex(Array(data[payload+52..<payload+56]))
+    let purchase = selector == "0x95f43b71"
+    let allowance = selector == "0x095ea7b3"
+    guard selector == "0xa9059cbb" || purchase || (allowance && approved),
+          data[payload..<payload+20].contains(where: { $0 != 0 }),
+          Array(data[payload..<payload+20]) != sender else { throw SignerError.invalid("Unsupported token action; allowance needs owner approval") }
     guard data[payload+20..<payload+52].allSatisfy({ $0 == 0 }),
-          hex(Array(data[payload+52..<payload+56])) == "0xa9059cbb",
           data[payload+56..<payload+68].allSatisfy({ $0 == 0 }),
           data[payload+68..<payload+88].contains(where: { $0 != 0 }),
           Array(data[payload+68..<payload+88]) != sender,
           data[payload+88..<payload+120].contains(where: { $0 != 0 }) else { throw SignerError.invalid("Invalid transfer") }
-    if request.chainId == 11155111 && hex(Array(data[payload..<payload+20])).lowercased() != "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238" { throw SignerError.invalid("Only Sepolia USDC is supported") }
+    let tokenStart = purchase ? payload + 68 : payload
+    if request.chainId == 11155111 && hex(Array(data[tokenStart..<tokenStart+20])).lowercased() != "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238" { throw SignerError.invalid("Only Sepolia USDC is supported") }
+    if allowance && data[payload+88..<payload+120].allSatisfy({ $0 == 255 }) { throw SignerError.invalid("Unlimited allowance is not supported") }
     if approved {
         guard data.count >= 356, try smallUInt(Array(data[132..<164])) == 320 else { throw SignerError.invalid("Invalid approval offset") }
         let size = try smallUInt(Array(data[324..<356]))
