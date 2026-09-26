@@ -35,7 +35,7 @@ describe("Service B owner registration", () => {
     };
     try {
       assert.equal((await fetch(`${running.baseUrl}/health`)).status, 200);
-      assert.match(await (await fetch(running.baseUrl)).text(), /Register yourself/);
+      assert.match(await (await fetch(running.baseUrl)).text(), /Your agent’s permissions/);
       const offered = await fetch(`${running.baseUrl}/private/report`);
       assert.equal(offered.status, 401, "no identity means no session");
       assert.match(offered.headers.get("www-authenticate") ?? "", /^AgenticWorld /);
@@ -62,6 +62,12 @@ describe("Service B owner registration", () => {
       const signature = await owner.signMessage({ account: owner.account, message: retry.message });
       const registration = await post("/owner/register", { owner: owner.account.address, nonce: retry.nonce, signature });
       assert.equal(registration.status, 200);
+      const cookie = registration.headers.get("set-cookie")!.split(";")[0];
+      assert.match(registration.headers.get("set-cookie")!, /HttpOnly/);
+      const ownerRequest = (path: string, body?: unknown) => fetch(`${running.baseUrl}${path}`, {
+        method: body ? "POST" : "GET", headers: { Cookie: cookie, ...(body ? { "Content-Type": "application/json" } : {}) },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
       assert.equal((await registration.json()).report, true);
       assert.equal((await post("/owner/register", { owner: owner.account.address, nonce: retry.nonce, signature })).status, 401);
 
@@ -75,7 +81,25 @@ describe("Service B owner registration", () => {
       assert.equal(report.status, 200);
       assert.equal(report.headers.get("www-authenticate"), null);
       assert.equal((await report.json()).owner.toLowerCase(), owner.account.address.toLowerCase());
-      const activity = await (await fetch(`${running.baseUrl}/activity`)).json();
+      assert.equal((await fetch(`${running.baseUrl}/owner/workspace`)).status, 401);
+      assert.equal((await post("/owner/permissions", { agentId, read: false, write: true })).status, 401);
+      const write = () => fetch(`${running.baseUrl}/private/report`, { method: "PUT", headers: { "Agent-Session": session, "Content-Type": "application/json" }, body: JSON.stringify({ text: "Updated by my authenticated agent" }) });
+      assert.equal((await write()).status, 403, "write defaults to denied");
+      assert.equal((await ownerRequest("/owner/permissions", { agentId, read: false, write: true })).status, 200);
+      assert.equal((await fetch(`${running.baseUrl}/private/report`, { headers: { "Agent-Session": session } })).status, 403, "read revocation affects an existing session");
+      const updated = await write();
+      assert.equal(updated.status, 200);
+      assert.equal((await updated.json()).text, undefined, "write permission does not disclose the text");
+      const workspace = await (await ownerRequest("/owner/workspace")).json();
+      assert.equal(workspace.report.text, "Updated by my authenticated agent");
+      assert.equal(workspace.agents[0].write, true);
+      assert.equal((await ownerRequest("/owner/permissions", { agentId, read: true, write: false })).status, 200);
+      assert.equal((await write()).status, 403, "write revocation affects an existing session");
+      assert.equal((await (await fetch(`${running.baseUrl}/private/report`, { headers: { "Agent-Session": session } })).json()).text, "Updated by my authenticated agent");
+      const foreign = await fetch(`${running.baseUrl}/owner/permissions`, { method: "POST", headers: { Cookie: cookie, Origin: "https://evil.example", "Content-Type": "application/json" }, body: JSON.stringify({ agentId, read: false, write: true }) });
+      assert.equal(foreign.status, 403);
+      assert.deepEqual((await (await fetch(`${running.baseUrl}/activity`)).json()).events, []);
+      const activity = await (await ownerRequest("/activity")).json();
       assert.ok(activity.events.some((event: { kind: string }) => event.kind === "ALLOWED"));
       assert.ok(activity.events.some((event: { kind: string }) => event.kind === "WALLET_REGISTERED"));
     } finally { await running.close(); }

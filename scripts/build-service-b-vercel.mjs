@@ -18,7 +18,7 @@ await writeFile(join(functionDir, ".vc-config.json"), JSON.stringify({
   runtime: "nodejs24.x", handler: "index.mjs", launcherType: "Nodejs", maxDuration: 60,
 }));
 await writeFile(join(output, "config.json"), JSON.stringify({ version: 3, routes: [
-  ...["health", "activity", "owner/status", "owner/challenge", "owner/register", "agent/lookup", "private/report"].map(path =>
+  ...["health", "activity", "owner/status", "owner/challenge", "owner/register", "owner/workspace", "owner/permissions", "agent/lookup", "private/report"].map(path =>
     ({ src: `/${path}`, dest: `/api/service?__service_b_path=${encodeURIComponent(`/${path}`)}` })),
   { src: "/", dest: "/index.html" },
   { handle: "filesystem" },

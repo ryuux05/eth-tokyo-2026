@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
@@ -45,6 +45,19 @@ export function createServiceBHandler(options: Options & { origin: string; store
   const { owners, wallets: walletChallenges, challenges, sessions } = options.stores;
   const record = (kind: string, detail: string, owner?: Address, agentId?: Address) =>
     options.stores.record({ at: new Date().toISOString(), kind, detail, ...(owner ? { owner } : {}), ...(agentId ? { agentId } : {}) });
+  const hashToken = (token: string) => `0x${createHash("sha256").update(token).digest("hex")}` as Hex;
+  const ownerSession = async (request: IncomingMessage) => {
+    const token = request.headers.cookie?.split(";").map(item => item.trim()).find(item => item.startsWith("ServiceBOwner="))?.slice("ServiceBOwner=".length);
+    if (!token || !/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
+    const value = await options.stores.ownerSessions.get(hashToken(token));
+    return value && value.expiresAt > Math.floor(Date.now() / 1000) ? value : undefined;
+  };
+  const reportFor = async (owner: Address) => {
+    await options.stores.reports.initialize(owner, { text: `Your private Service B report code is ${randomBytes(6).toString("hex")}.`, updatedAt: new Date().toISOString() });
+    const report = await options.stores.reports.get(owner);
+    if (!report) throw new Error("Report unavailable");
+    return report;
+  };
   const service = new AgenticWorld<Entitlement>({
     client: options.client,
     chainId: options.chainId,
@@ -57,10 +70,14 @@ export function createServiceBHandler(options: Options & { origin: string; store
     sessions,
   });
 
-  const requireReport = service.middleware({ realm: "Service B", authorize: async ({ session, user }) => {
-    if (!user.report) await record("DENIED", "Report permission is not active", session.owner, session.agentId);
-    return user.report;
+  const reportAccess = (action: "read" | "write") => service.middleware({ realm: "Service B", authorize: async ({ session, user }) => {
+    await options.stores.agents.discover(user.owner, { agentId: session.agentId, read: user.report, write: false });
+    const permissions = await options.stores.agents.get(user.owner, session.agentId);
+    const allowed = Boolean(user.report && permissions?.[action]);
+    if (!allowed) await record("DENIED", `${action === "read" ? "Read" : "Write"} permission is off`, user.owner, session.agentId);
+    return allowed;
   } });
+  const requireRead = reportAccess("read"), requireWrite = reportAccess("write");
 
   return async (request: IncomingMessage, response: ServerResponse) => {
     if (request.headers.host !== new URL(baseUrl).host) {
@@ -69,6 +86,9 @@ export function createServiceBHandler(options: Options & { origin: string; store
     }
     const url = new URL(request.url ?? "/", baseUrl);
     const path = url.pathname;
+    if (!["GET", "HEAD"].includes(request.method ?? "") && request.headers.origin && request.headers.origin !== baseUrl) {
+      sendJson(response, 403, { error: "Cross-origin request denied" }); return;
+    }
     if (request.method === "GET" && ["/", "/app.js", "/styles.css"].includes(path)) {
       const name = path === "/" ? "index.html" : path.slice(1);
       const contentType = name.endsWith(".html") ? "text/html" : name.endsWith(".css") ? "text/css" : "text/javascript";
@@ -84,18 +104,38 @@ export function createServiceBHandler(options: Options & { origin: string; store
       return;
     }
     if (request.method === "GET" && path === "/activity") {
-      sendJson(response, 200, { events: await options.stores.events() });
+      const signedIn = await ownerSession(request);
+      // Anonymous callers never receive owner identifiers, agent activity, or report text.
+      sendJson(response, 200, { events: signedIn ? (await options.stores.events()).filter(event => event.owner?.toLowerCase() === signedIn.owner.toLowerCase()) : [] });
       return;
+    }
+    if (path === "/owner/workspace" || path === "/owner/permissions") {
+      const signedIn = await ownerSession(request);
+      if (!signedIn) { sendJson(response, 401, { error: "Sign in with your owner wallet to manage permissions" }); return; }
+      if (path === "/owner/workspace" && request.method === "GET") {
+        sendJson(response, 200, { owner: signedIn.owner, agents: await options.stores.agents.list(signedIn.owner), report: await reportFor(signedIn.owner) });
+        return;
+      }
+      if (path === "/owner/permissions" && request.method === "POST") {
+        try {
+          const input = await readJson(request);
+          if (typeof input.agentId !== "string" || !isAddress(input.agentId) || typeof input.read !== "boolean" || typeof input.write !== "boolean") throw new Error("Invalid permissions");
+          const agentId = getAddress(input.agentId);
+          // Only accounts previously associated by a verified SDK proof appear in this owner's map.
+          if (!await options.stores.agents.get(signedIn.owner, agentId)) { sendJson(response, 403, { error: "This agent has not authenticated under your owner account" }); return; }
+          await options.stores.agents.put(signedIn.owner, { agentId, read: input.read, write: input.write });
+          await record("PERMISSIONS", `Read ${input.read ? "on" : "off"} · Write ${input.write ? "on" : "off"}`, signedIn.owner, agentId);
+          sendJson(response, 200, { agentId, read: input.read, write: input.write });
+        } catch { sendJson(response, 400, { error: "Could not save permissions. Check the values and retry." }); }
+        return;
+      }
+      sendJson(response, 405, { error: "Unsupported method" }); return;
     }
     if (request.method === "GET" && path === "/owner/status") {
       const address = url.searchParams.get("address");
       if (!address || !isAddress(address)) { sendJson(response, 400, { error: "Valid wallet address required" }); return; }
       const entitlement = await owners.get(getAddress(address));
       sendJson(response, 200, { owner: getAddress(address), registered: Boolean(entitlement), report: entitlement?.report ?? false });
-      return;
-    }
-    if (request.method === "POST" && request.headers.origin && request.headers.origin !== baseUrl) {
-      sendJson(response, 403, { error: "Cross-origin request denied" });
       return;
     }
     if (request.method === "POST" && path === "/owner/challenge") {
@@ -105,7 +145,7 @@ export function createServiceBHandler(options: Options & { origin: string; store
         const owner = getAddress(input.owner);
         const nonce = `0x${randomBytes(32).toString("hex")}` as Hex;
         const expiresAt = Math.floor(Date.now() / 1000) + 300;
-        const message = `Register ${owner} with Agentic World Service B\nOrigin: ${baseUrl}\nChain ID: ${options.chainId}\nNonce: ${nonce}\nExpires: ${new Date(expiresAt * 1000).toISOString()}\n\nThis proves wallet control. It is not a blockchain transaction.`;
+        const message = `Sign in as ${owner} to Agentic World Service B\nOrigin: ${baseUrl}\nChain ID: ${options.chainId}\nNonce: ${nonce}\nExpires: ${new Date(expiresAt * 1000).toISOString()}\n\nRegister this owner and authorize a one-hour browser session to view its report and manage agent read/write permissions. No blockchain transaction or spending approval.`;
         await walletChallenges.put({ owner, nonce, message, expiresAt });
         sendJson(response, 200, { owner, nonce, message, expiresAt });
       } catch (error) { sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create challenge" }); }
@@ -127,6 +167,9 @@ export function createServiceBHandler(options: Options & { origin: string; store
         const entitlement = await owners.get(challenge.owner) ?? { owner: challenge.owner, report: true };
         await owners.put(entitlement);
         await record("WALLET_REGISTERED", "Report entitlement is active", challenge.owner);
+        const token = randomBytes(32).toString("base64url");
+        await options.stores.ownerSessions.put(hashToken(token), { owner: entitlement.owner, expiresAt: Math.floor(Date.now() / 1000) + 3600 });
+        response.setHeader("Set-Cookie", `ServiceBOwner=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600${baseUrl.startsWith("https:") ? "; Secure" : ""}`);
         sendJson(response, 200, { owner: entitlement.owner, registered: true, report: entitlement.report });
       } catch (error) { sendJson(response, 401, { error: error instanceof Error ? error.message : "Wallet registration failed" }); }
       return;
@@ -147,12 +190,27 @@ export function createServiceBHandler(options: Options & { origin: string; store
       } catch { sendJson(response, 400, { error: "Could not inspect agent. Check its address and Sepolia RPC availability." }); }
       return;
     }
-    if (request.method === "GET" && path === "/private/report") {
-      await requireReport(request, response, async () => {
+    if (path === "/private/report" && ["GET", "PUT"].includes(request.method ?? "")) {
+      await (request.method === "PUT" ? requireWrite : requireRead)(request, response, async () => {
         const { session } = (request as AgenticRequest<Entitlement>).agentic!;
+        if (request.method === "PUT") {
+          let text: string;
+          try {
+            const input = await readJson(request);
+            if (typeof input.text !== "string" || !input.text.trim() || input.text.length > 2000) throw new Error("Invalid text");
+            text = input.text;
+          } catch { sendJson(response, 400, { error: "Send JSON with text containing 1–2000 characters" }); return; }
+          const updatedAt = new Date().toISOString();
+          await options.stores.reports.put(session.owner!, { text, updatedAt, updatedBy: session.agentId });
+          await record("UPDATED", "Agent updated the private text", session.owner, session.agentId)
+            .catch(() => { console.error("Service B activity unavailable after report update"); });
+          sendJson(response, 200, { updated: true, updatedAt }); // Write does not grant read access.
+          return;
+        }
+        const report = await reportFor(session.owner!);
         await record("ALLOWED", "Report returned · 200", session.owner, session.agentId);
         sendJson(response, 200, { service: "Service B", resource: "report", agentId: session.agentId,
-          owner: session.owner, result: "Owner-associated private report available" });
+          owner: session.owner, result: report.text, text: report.text, updatedAt: report.updatedAt });
       });
       if (response.statusCode === 401) await record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
       return;
