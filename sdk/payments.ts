@@ -127,6 +127,7 @@ export function createPaymentExecutor(config: {
     const record = await journal.get(requestId);
     if (!record) throw new PaymentError("Unknown payment request ID");
     if (!record.userOpHash || !record.operation || ["CONFIRMED", "REVERTED"].includes(record.status)) return record;
+    if (await client.getChainId() !== config.chainId) throw new PaymentError("Chain mismatch while checking payment");
     const result = await bundler.request("eth_getUserOperationReceipt", [record.userOpHash]);
     if (!result) return record;
     const tx = result.receipt?.transactionHash;
@@ -153,7 +154,8 @@ export function createPaymentExecutor(config: {
       });
       const success = receipt.status === "success" && event.args.success;
       if (success && !transferred) throw new PaymentError("Operation succeeded without the expected USDC transfer; not reporting payment success");
-      const updated: PaymentRecord = { ...record, status: success ? "CONFIRMED" : "REVERTED", transactionHash: receipt.transactionHash };
+      const updated: PaymentRecord = { ...record, status: success ? "CONFIRMED" : "REVERTED", transactionHash: receipt.transactionHash,
+        error: success ? undefined : "UserOperation reverted; no transfer completed." };
       await journal.put(updated);
       return updated;
     }

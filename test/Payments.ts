@@ -84,6 +84,7 @@ test("USDC execution: real EntryPoint transfers, owner approval, denial and retr
   ambiguous = true;
   assert.equal((await executor.pay("unknown-01", { ...intent, amount: "1" })).status, "UNKNOWN");
   assert.equal((await executor.pay("unknown-01", { ...intent, amount: "1" })).status, "CONFIRMED");
+  assert.equal((await executor.status("unknown-01")).error, undefined, "a reconciled payment must not retain its old unknown-submission warning");
   assert.equal(sends, 3, "ambiguous response must be reconciled, never resent");
   ambiguous = false; changePolicy = true;
   await executor.pay("changed-policy", { ...intent, amount: "1" });
