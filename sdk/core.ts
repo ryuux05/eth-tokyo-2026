@@ -26,12 +26,16 @@ export type { AuthenticationChallenge, AuthenticationProof, HttpRequest, Request
 export {
   Decision,
   TOKEN_PURCHASE_SELECTOR,
+  TOKEN_TRANSFER_SELECTOR,
+  encodeTransferPolicy,
+  decodeTransferPolicy,
+  policyEncodingVersion,
   agentPolicyAbi,
   encodePolicy,
   decodePolicy,
   ownerActionTypedData,
 } from "./policy.js";
-export type { PolicyRule } from "./policy.js";
+export type { PolicyRule, TransferPolicyRule } from "./policy.js";
 export { AGENT_SINGLE_EXECUTION_MODE, agent4337ExecutionAbi, encodeAgentExecution } from "./execution.js";
 export type { OwnerApproval } from "./execution.js";
 export { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation } from "./deployments.js";

@@ -18,6 +18,38 @@ export type PolicyRule = {
 };
 
 export const TOKEN_PURCHASE_SELECTOR = toFunctionSelector("purchaseCompute(address,uint256)");
+export const TOKEN_TRANSFER_SELECTOR = toFunctionSelector("transfer(address,uint256)");
+export type TransferPolicyRule = { token: Address; recipient: Address; maxAmount: bigint; decision: Decision };
+
+/** Version 2 is recipient-bound ERC-20 transfer policy; v0 deployed accounts do not support it. */
+export function encodeTransferPolicy(rules: readonly TransferPolicyRule[]): Hex {
+  if (rules.length > 32) throw new Error("Policy exceeds 32 rules");
+  const expanded = rules.map(rule => {
+    if (![rule.token, rule.recipient].every(address => isAddress(address) && address.toLowerCase() !== zeroAddress) ||
+        rule.maxAmount <= 0n || rule.maxAmount >= 1n << 256n || ![0, 1, 2].includes(rule.decision)) throw new Error("Invalid transfer rule");
+    return { target: rule.token, selector: TOKEN_TRANSFER_SELECTOR, token: rule.token, maxValue: 0n,
+      maxAmount: rule.maxAmount, decision: rule.decision, recipient: rule.recipient };
+  });
+  const encoded = encodeAbiParameters([{ type: "uint8" }, { type: "tuple[]", components: [
+    ...policyAbi[1].components, { name: "recipient", type: "address" },
+  ] }], [2, expanded]);
+  if ((encoded.length - 2) / 2 > 8192) throw new Error("Policy exceeds 8192 bytes");
+  return encoded;
+}
+
+export function policyEncodingVersion(encoded: Hex): number {
+  return encoded === "0x" ? 0 : decodeAbiParameters([{ type: "uint8" }], encoded)[0];
+}
+
+export function decodeTransferPolicy(encoded: Hex): TransferPolicyRule[] {
+  const [version, rules] = decodeAbiParameters([{ type: "uint8" }, { type: "tuple[]", components: [
+    ...policyAbi[1].components, { name: "recipient", type: "address" },
+  ] }], encoded);
+  if (version !== 2) throw new Error("Not a transfer policy");
+  const parsed = rules.map(rule => ({ token: rule.token, recipient: rule.recipient, maxAmount: rule.maxAmount, decision: rule.decision as Decision }));
+  if (encodeTransferPolicy(parsed).toLowerCase() !== encoded.toLowerCase()) throw new Error("Noncanonical transfer policy");
+  return parsed;
+}
 
 /** Minimal ABI for owner dashboard and agent execution integrations. Call at 0xAGENT. */
 export const agentPolicyAbi = [
@@ -58,7 +90,7 @@ export function encodePolicy(rules: readonly PolicyRule[]): Hex {
     if (!isAddress(rule.token)) throw new Error("Invalid policy token");
     if (rule.maxValue < 0n || rule.maxValue > (1n << 256n) - 1n || rule.maxAmount < 0n || rule.maxAmount > (1n << 256n) - 1n) throw new Error("Invalid maximum value or amount");
     if (rule.token.toLowerCase() === zeroAddress) {
-      if (rule.maxAmount !== 0n || rule.selector.toLowerCase() === TOKEN_PURCHASE_SELECTOR) throw new Error("Purchase selector requires a token condition");
+      if (rule.maxAmount !== 0n || rule.selector.toLowerCase() === TOKEN_PURCHASE_SELECTOR || rule.selector.toLowerCase() === TOKEN_TRANSFER_SELECTOR) throw new Error("Token actions require a token-aware policy; transfers use encodeTransferPolicy");
     } else if (rule.selector.toLowerCase() !== TOKEN_PURCHASE_SELECTOR || rule.maxValue !== 0n) {
       throw new Error("Token rule must use purchaseCompute(address,uint256) with zero native value");
     }

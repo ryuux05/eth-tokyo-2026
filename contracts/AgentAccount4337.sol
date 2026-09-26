@@ -97,6 +97,8 @@ contract AgentAccount4337 is AccountERC7579Hooked, IERC165 {
         return agentValidator.authenticatorScheme(address(this)) == 2 ? 3 : 2;
     }
     function accountId() public pure override returns (string memory) { return "agentic.world.AgentAccount4337.v0"; }
+    /// @notice Absent from legacy deployed clones. Execution SDKs must require this capability.
+    function executionVersion() external pure returns (uint256) { return 1; }
     function entryPoint() public view override returns (IEntryPoint) { return _entryPoint; }
 
     function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
