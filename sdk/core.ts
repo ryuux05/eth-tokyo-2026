@@ -14,6 +14,7 @@ export {
   assertAudience,
   authenticationTypedData,
   authenticationDigest,
+  sessionProofHeaders,
   encodeAuthenticationProof,
   REQUEST_PROOF_PREFIX,
   assertHttpRequest,

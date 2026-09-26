@@ -28,6 +28,20 @@ export type AuthenticationProof = AuthenticationChallenge & {
   signature: Hex;
 };
 
+/** Send on the same resource request after signing its service-issued challenge.
+ * This authenticates a session, not the HTTP method/body as an onchain action. */
+export function sessionProofHeaders(proof: AuthenticationProof): Record<string, string> {
+  return {
+    "Agent-ID": proof.agentId,
+    "Agent-Audience": proof.audience,
+    "Agent-Chain-ID": String(proof.chainId),
+    "Agent-Nonce": proof.nonce,
+    "Agent-Issued-At": String(proof.issuedAt),
+    "Agent-Expires-At": String(proof.expiresAt),
+    "Agent-Signature": proof.signature,
+  };
+}
+
 /** The HTTP origin-form target includes the path and raw query, but no fragment. */
 export type HttpRequest = { method: string; target: string; body: Uint8Array };
 

@@ -12,6 +12,7 @@ import {
 } from "./core.js";
 
 export type DigestSigner = (digest: Hex) => Promise<Hex>;
+export { sessionProofHeaders } from "./core.js";
 
 function assertOperatingSignature(signature: Hex): void {
   // secp256k1 uses r||s||v; Secure Enclave P-256 uses normalized r||s.

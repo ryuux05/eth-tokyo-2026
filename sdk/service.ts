@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { AgentAuthenticationError, AgentAuthorizationError } from "./errors.js";
 import { createAgenticWorldMiddleware, type AgenticMiddlewareOptions } from "./http.js";
 export { createAgenticWorldMiddleware } from "./http.js";
 export type { AgenticAuthentication, AgenticRequest, AgenticMiddlewareOptions, AgenticMiddleware } from "./http.js";
@@ -141,11 +142,11 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     const expectedCode = config.chainId === SEPOLIA_CHAIN_ID
       ? isExpectedAgentClone(code, implementation)
       : isExpectedAgentAccountCode(code, implementation);
-    if (!expectedCode) throw new Error("Unexpected agent account implementation");
+    if (!expectedCode) throw new AgentAuthenticationError("Unexpected agent account implementation");
     const owner = config.readOwner || config.registry
       ? await config.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber })
       : undefined;
-    if (config.readOwner && (!owner || sameAddress(owner, zeroAddress))) throw new Error("Uninitialized agent owner");
+    if (config.readOwner && (!owner || sameAddress(owner, zeroAddress))) throw new AgentAuthenticationError("Uninitialized agent owner");
     if (!config.registry) return { blockNumber, owner, principal: undefined };
     const principal = await config.client.readContract({ address: config.registry, abi: mandateRegistryAbi, functionName: "principalOf", args: [agentId], blockNumber });
     return { blockNumber, owner, principal: owner && !sameAddress(principal, zeroAddress) && sameAddress(principal, owner) ? principal : undefined };
@@ -201,12 +202,12 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     },
     async authenticate(proof: AuthenticationProof, authorizeSession?: (identity: Session) => Promise<boolean>): Promise<{ token: string; session: Session }> {
       if (!config.challenges) throw new Error("Challenge store is not configured");
-      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new Error("Malformed proof");
+      if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new AgentAuthenticationError("Malformed proof");
       const challenge = await config.challenges.get(proof.nonce);
-      if (!challenge || !sameChallenge(proof, challenge)) throw new Error("Unknown or mismatched challenge");
+      if (!challenge || !sameChallenge(proof, challenge)) throw new AgentAuthenticationError("Unknown or mismatched challenge");
       const timestamp = now();
       if (challenge.audience !== config.audience || challenge.chainId !== config.chainId || !Number.isSafeInteger(proof.issuedAt) || !Number.isSafeInteger(proof.expiresAt) || proof.issuedAt > timestamp + 30 || proof.expiresAt <= timestamp) {
-        throw new Error("Challenge expired or not valid for this service");
+        throw new AgentAuthenticationError("Challenge expired or not valid for this service");
       }
       const { blockNumber, owner, principal } = await checkAgent(challenge.agentId);
       const result = await config.client.readContract({
@@ -216,10 +217,10 @@ export function createServiceSdk(config: ServiceSdkConfig) {
         args: [authenticationDigest(challenge), encodeAuthenticationProof(proof)],
         blockNumber,
       });
-      if (result.toLowerCase() !== ERC1271_MAGIC) throw new Error("Invalid agent signature");
-      if (!(await config.challenges.consume(challenge.nonce))) throw new Error("Challenge already consumed");
+      if (result.toLowerCase() !== ERC1271_MAGIC) throw new AgentAuthenticationError("Invalid agent signature");
+      if (!(await config.challenges.consume(challenge.nonce))) throw new AgentAuthenticationError("Challenge already consumed");
       const session: Session = { agentId: challenge.agentId, ...(config.readOwner && owner ? { owner } : {}), ...(principal ? { principal } : {}), expiresAt: now() + sessionTtl };
-      if (authorizeSession && !(await authorizeSession(session))) throw new Error("Service did not authorize this agent session");
+      if (authorizeSession && !(await authorizeSession(session))) throw new AgentAuthorizationError("Service did not authorize this agent session");
       const token = randomBytes(32).toString("base64url");
       await config.sessions.put(tokenHash(token), session);
       return { token, session };
@@ -302,11 +303,12 @@ export class AgenticWorld<User> {
     return this.createChallenge(agentId);
   }
 
-  async authenticate(proof: AuthenticationProof) {
+  async authenticate(proof: AuthenticationProof, authorizeResource?: (authentication: { session: Session; user: User }) => boolean | Promise<boolean>) {
     let user: User | null = null;
     const result = await this.service.authenticate(proof, async identity => {
       user = await this.userFor(identity);
-      return user !== null && (!this.authorizeSession || await this.authorizeSession(identity, user));
+      return user !== null && (!this.authorizeSession || await this.authorizeSession(identity, user)) &&
+        (!authorizeResource || await authorizeResource({ session: identity, user }));
     });
     return { ...result, user: user as User | null };
   }
@@ -316,8 +318,8 @@ export class AgenticWorld<User> {
     return session ? { session, user: await this.userFor(session) } : undefined;
   }
 
-  /** Opt-in protected-route middleware; creates an auth offer, not a nonce.
-   * Keep createChallenge/authenticate mounted at the advertised endpoints. */
+  /** Resource-first authentication, challenge issuance and session admission.
+   * No separate challenge/session HTTP routes are required. */
   middleware(options: AgenticMiddlewareOptions<User>) {
     return createAgenticWorldMiddleware(this, this.audience, options);
   }
