@@ -49,6 +49,7 @@ contract AgentPolicyHook is IERC7579Hook {
     error InvalidApprovalNonce();
     error ReentrantExecution();
     error TokenSpendExceeded();
+    error TokenTransferMismatch();
 
     event PolicyUpdated(address indexed account, bytes32 indexed policyHash, uint256 revision);
 
@@ -121,18 +122,31 @@ contract AgentPolicyHook is IERC7579Hook {
             _checkOwnerApproval(state, target, value, callData, nonce, deadline, signature);
         }
         state.executing = true;
+        return _snapshot(target, callData);
+    }
+
+    function _snapshot(address target, bytes memory callData) private view returns (bytes memory) {
+        (bool transfer, address recipient, uint256 transferAmount) = PolicyEngine.transferDetails(callData);
+        if (transfer) {
+            if (recipient == msg.sender) revert PolicyDenied();
+            return abi.encode(target, IERC20(target).balanceOf(msg.sender), transferAmount,
+                recipient, IERC20(target).balanceOf(recipient));
+        }
         (bool purchase, address token, uint256 amount) = PolicyEngine.tokenPurchaseDetails(callData);
-        if (purchase) return abi.encode(token, IERC20(token).balanceOf(msg.sender), amount);
-        return abi.encode(address(0), uint256(0), uint256(0));
+        if (purchase) return abi.encode(token, IERC20(token).balanceOf(msg.sender), amount, address(0), uint256(0));
+        return abi.encode(address(0), uint256(0), uint256(0), address(0), uint256(0));
     }
 
     function postCheck(bytes calldata hookData) external {
         PolicyState storage state = _installedState(msg.sender);
         if (!state.executing) revert UnsupportedExecution();
-        (address token, uint256 balanceBefore, uint256 maxSpent) = abi.decode(hookData, (address, uint256, uint256));
+        (address token, uint256 balanceBefore, uint256 maxSpent, address recipient, uint256 receivedBefore) =
+            abi.decode(hookData, (address, uint256, uint256, address, uint256));
         if (token != address(0)) {
             uint256 balanceAfter = IERC20(token).balanceOf(msg.sender);
             if (balanceAfter < balanceBefore && balanceBefore - balanceAfter > maxSpent) revert TokenSpendExceeded();
+            if (recipient != address(0) && (balanceBefore < maxSpent || balanceAfter != balanceBefore - maxSpent ||
+                IERC20(token).balanceOf(recipient) != receivedBefore + maxSpent)) revert TokenTransferMismatch();
         }
         state.executing = false;
     }

@@ -50,3 +50,6 @@ broadcast/
 .agentic-world.demo.json
 .agentic-world.demo-state.json
 .agentic-world.demo.json.*.tmp
+*.payments.json
+*.payments.json.lock
+*.payments.json.*.tmp

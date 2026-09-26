@@ -13,6 +13,8 @@ import {
 
 export type DigestSigner = (digest: Hex) => Promise<Hex>;
 export { sessionProofHeaders } from "./core.js";
+export * from "./payments.js";
+export { encodeTransferPolicy, decodeTransferPolicy, TOKEN_TRANSFER_SELECTOR, type TransferPolicyRule } from "./policy.js";
 
 function assertOperatingSignature(signature: Hex): void {
   // secp256k1 uses r||s||v; Secure Enclave P-256 uses normalized r||s.
@@ -45,7 +47,7 @@ export function createAgentSdk(config: {
   if (!Number.isSafeInteger(requestTtl) || requestTtl < 1 || requestTtl > 300) throw new Error("Invalid request TTL");
 
   return {
-    /** Sign the canonical hash returned by the configured ERC-4337 EntryPoint/bundler. */
+    /** Legacy secp256k1 adapter only. P-256 payments use createPaymentExecutor and a structured execution signer. */
     async signUserOperationHash(userOpHash: Hex): Promise<Hex> {
       if (!/^0x[0-9a-fA-F]{64}$/.test(userOpHash)) throw new Error("Invalid UserOperation hash");
       const signature = await config.signDigest(userOpHash);

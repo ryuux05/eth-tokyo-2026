@@ -1,11 +1,12 @@
 import { spawn } from "node:child_process";
 import { keccak256, type Address, type Hex } from "viem";
 import { authenticationDigest, requestAuthenticationDigest, type AuthenticationChallenge, type AuthenticationProof, type RequestAuthenticationProof } from "../sdk/core.js";
+import { executionDigest, type ExecutionSigningRequest } from "../sdk/payments.js";
 
 type SignerConfig = { binaryPath: string; label: string };
 type PublicKey = { scheme: "p256"; qx: Hex; qy: Hex };
 
-async function invoke(config: SignerConfig, command: "provision" | "public-key" | "sign-request" | "sign-challenge", input?: unknown): Promise<unknown> {
+async function invoke(config: SignerConfig, command: "provision" | "public-key" | "sign-request" | "sign-challenge" | "sign-execution", input?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const env = process.platform === "win32"
       ? { SystemRoot: process.env.SystemRoot, WINDIR: process.env.WINDIR, PATH: process.env.PATH }
@@ -30,6 +31,18 @@ async function invoke(config: SignerConfig, command: "provision" | "public-key" 
     });
     child.stdin.end(input === undefined ? undefined : JSON.stringify(input));
   });
+}
+
+export async function signLocalExecution(config: SignerConfig, request: ExecutionSigningRequest): Promise<Hex> {
+  const op = request.userOperation;
+  const digest = executionDigest(request.chainId, request.entryPoint, { sender: op.sender, nonce: BigInt(op.nonce),
+    callData: op.callData, verificationGasLimit: BigInt(op.accountGasLimits.slice(0, 34)),
+    callGasLimit: BigInt(`0x${op.accountGasLimits.slice(34)}`), preVerificationGas: BigInt(op.preVerificationGas),
+    maxPriorityFeePerGas: BigInt(op.gasFees.slice(0, 34)), maxFeePerGas: BigInt(`0x${op.gasFees.slice(34)}`), signature: "0x" }, request.validUntil);
+  const result = await invoke(config, "sign-execution", { ...request, label: config.label }) as Record<string, unknown>;
+  if (result.digest !== digest || typeof result.signature !== "string" || !/^0x[0-9a-fA-F]{128}$/.test(result.signature))
+    throw new Error("Local signer returned a mismatched execution proof");
+  return result.signature as Hex;
 }
 
 export async function signerPublicKey(config: SignerConfig): Promise<PublicKey> {

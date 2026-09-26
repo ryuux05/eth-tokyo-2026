@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import hre from "hardhat";
-import { concatHex, encodeFunctionData, keccak256, parseUnits, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, encodeFunctionData, hashTypedData, keccak256, parseUnits, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { executionTypedData, wrapExecutionSignature } from "../sdk/payments.js";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { p256 } from "@noble/curves/nist.js";
 import { Decision, encodePolicy, isExpectedAgentClone, ownerActionTypedData, requestAuthenticationDigest, encodeRequestAuthenticationProof } from "../sdk/core.js";
@@ -108,9 +109,11 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     assert.equal((await service.readSession(established.token))?.session.agentId, agentId);
     await assert.rejects(service.authenticate(challengeProof));
     const userOpHash = keccak256(toBytes("p256-userop"));
-    const op = packedOp(agentId, "0x", await signDigest(userOpHash));
+    const validUntil = Number((await publicClient.getBlock()).timestamp) + 180;
+    const op = packedOp(agentId, "0x", wrapExecutionSignature(validUntil,
+      await signDigest(hashTypedData(executionTypedData(await publicClient.getChainId(), agentId, userOpHash, validUntil)))));
     assert.equal(await publicClient.simulateContract({ address: entryPoint.address, abi: entryPoint.abi,
-      functionName: "validate", args: [agentId, op, userOpHash] }).then(r => r.result), 0n);
+      functionName: "validate", args: [agentId, op, userOpHash] }).then(r => r.result), BigInt(validUntil) << 160n);
     const revoked = await owner.writeContract({ address: agentId, abi: account.abi, functionName: "revokeAuthenticator" });
     await publicClient.waitForTransactionReceipt({ hash: revoked });
     assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0xffffffff");

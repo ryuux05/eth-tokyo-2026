@@ -1,0 +1,21 @@
+{
+  "chainId": 11155111,
+  "transactionHash": "0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8",
+  "blockNumber": "11788771",
+  "blockHash": "0x21bda4f470ffbcc43476c17a220edc65be551d1386e9d837dd2f9858631bad9b",
+  "sourceCommit": "aca44f0",
+  "executionVersion": 1,
+  "factory": "0xf78336a75b7b517fdb784b1a34eae9527628b065",
+  "implementation": "0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd",
+  "validator": "0x6A9c4FA6B8a42B1c82B6d701cC76232633D243a0",
+  "policyHook": "0x72db3464519404302a95D65130b0a2fbE53E23d6",
+  "entryPoint": "0x4337084d9e255ff0702461cf8895ce9e3b5ff108",
+  "initCodeHash": "0x29744141f8ff527c246bb8cc93f5ff14f400f9533e111a2b5e051c49bf69cfc2",
+  "codeHashes": {
+    "factory": "0x4b662dc526b72c02c457c51d745e8d124de504ceb916692c5654ea3f344579d2",
+    "implementation": "0xb93643ca23a88505dd4a2eaa05966bf33427b8804177a00969b0348b2345a3f1",
+    "validator": "0xcc85cdaba870865428ab1bb6001fc1fd5b842553c5b6449b1835178a7cc5bb63",
+    "policyHook": "0x614308152bc1081147877513eb9b782689471fc2b542cffd62924ac454736d54",
+    "entryPoint": "0xe07af503ad1c64355b712a3fba2341cb6cf83a62fa80b23469c2a283c12dd7d5"
+  }
+}

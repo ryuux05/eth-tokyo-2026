@@ -1,47 +1,248 @@
 # Agentic World
 
-Agent-native, portable identity and authentication for independent services.
+Agentic World gives AI agents their own onchain identity to authenticate across services without impersonating humans, with owner-defined policies for onchain actions.
 
-Built for ETHGlobal Tokyo 2026.
+## Team
 
-**Architecture freeze:** Agentic World v0 uses an ERC-4337 / ERC-7579 smart
-account, an `AgentValidator` for operating-key authentication and ERC-1271, and an
-`AgentPolicyHook` plus `PolicyEngine` for owner-controlled onchain execution.
-The protocol lets services verify signed authentication challenges independently and keep their own
-authorization rules, with manual or `owner()`-derived agent association. See the
-[v0 architecture](docs/ARCHITECTURE-v0.md). The local MCP signs service-issued
-challenges and returns the proof to the agent; it never proxies resource requests. P-256 verification uses EIP-7951's native `0x100` precompile;
-EIP-8141 + ERC-8286 remain future work.
+Built for ETHGlobal Tokyo 2026 by two developers:
 
-Start with the [current implementation](docs/V0-IMPLEMENTATION.md),
-[architecture](docs/ARCHITECTURE-v0.md), [owner portal guide](docs/PORTAL.md),
-and [design system](DESIGN.md). The [protocol](docs/PROTOCOL.md),
-[policy](docs/POLICY.md), [Core SDK](docs/CORE-SDK.md), [service SDK](docs/SDK.md),
-and [implementation plan](docs/IMPLEMENTATION.md) describe the current v0 path.
-For Codex/Claude Code integration, see the [local MCP server and skills](docs/MCP.md).
-To try live service-owned permissions in a browser, see the [Service A permission workbench](docs/SERVICE-DEMO.md).
-Legacy EIP-7702 code and compatibility helpers are identified separately.
+- **[ryuux05 · GitHub](https://github.com/ryuux05)** — Blockchain engineer with over four years of experience across two startups.
+- **[marcofernandioo · X](https://x.com/marcofernandioo)** — Frontend and robotics engineer.
 
-## Live demos · Sepolia
+## Try it: install → init → create → use a service
 
-| Service | Open the demo | What to try |
-| --- | --- | --- |
-| Service A | [Service A permission workbench](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/) | Agent enrollment and service-owned resource permissions. |
-| Service B | [Service B read/write permissions](https://eth-tokyo-2026-demo-service-b.vercel.app/) | Sign in with your owner wallet, then toggle each agent's Read and Write permissions for your private text. |
+Use **Codex or Claude Code on your own computer**, with a wallet-enabled browser.
+The skill teaches the agent the workflow; the local MCP holds the connection to
+your hardware signer. You approve identity creation and policy changes yourself.
 
-With the Agentic World skill and MCP installed, ask naturally:
+### Before you start
+
+- Git, Node.js **22+**, npm, and a local Codex or Claude Code client.
+- **macOS:** Secure Enclave-capable hardware and Apple's Swift command-line tools.
+  **Windows:** native x64/ARM64 with a working TPM; the bundled signer needs no Go.
+  Linux and cloud-only agent sessions are not supported by this hardware-signing flow.
+- A MetaMask-compatible browser wallet on **Ethereum Sepolia (11155111)**, with
+  Sepolia ETH for identity creation and policy transactions. Use testnet funds only.
+
+You do **not** need Hardhat, `npm run demo`, an Upstash account, a bundler,
+or USDC to try the hosted authentication and policy-preview demos below.
+
+### Hosted demo versions
+
+Checked on **27 September 2026**: both hosted services trust the original
+implementation, `0xd08B955ca8727d86e708ae5684D5fa7f32635e66`.
+The hosted-demo walkthrough uses **`release/v.0.0.1`**, which creates matching accounts through factory
+`0x63f158897834bbc1579e82dfc29a7aacc8b91f93`.
+
+The current release on **`main`** creates accounts through the newer
+factory listed under [Deployed contracts](#deployed-contracts--sepolia).
+Those new accounts need the services redeployed with the matching implementation
+before hosted authentication will succeed. Existing identities are not upgraded.
+Do not change trust checks or create repeated identities to work around a mismatch.
+
+### 1. Install the skill
+
+**Codex — from another project:** send this message in a Codex session:
+
+```text
+$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/release/v.0.0.1/.agents/skills/agentic-world
+```
+
+Start a new session if the skill is not visible, then continue to step 2.
+
+**Claude Code — or Codex using a checkout:** run these terminal commands:
+
+```sh
+git clone --branch release/v.0.0.1 https://github.com/ryuux05/eth-tokyo-2026.git
+cd eth-tokyo-2026
+```
+
+Open that folder in your local client (`claude` or `codex`).
+The checkout already includes the project skill:
+[Codex reads `.agents/skills`](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills);
+[Claude Code reads `.claude/skills`](https://code.claude.com/docs/en/skills#choose-where-skills-load).
+**Choose one installation route**, rather than adding a personal copy alongside
+the project's copy. Reuse an existing installation; don't overwrite a conflicting
+skill or MCP registration.
+
+Installing the skill alone does not install the MCP. Init handles that next.
+The one-command npm installer is prepared but **not yet published**; do not run
+a similarly named third-party package. See [installer options](#installer-options).
+
+### 2. Initialize the local MCP
+
+Send this as a **chat message**, not a terminal command:
+
+```text
+agentic-world:init — use release/v.0.0.1 for this hosted demo
+```
+
+For a source checkout, tell the agent to reuse that checkout. If the agent needs
+to clone the runtime, explicitly select `release/v.0.0.1` for this walkthrough.
+Init installs
+dependencies, builds the MCP/portal/native signer, checks the host, creates a
+private Sepolia configuration, and registers the MCP for your client.
+It creates **no signing key, agent identity, or transaction**.
+
+Choose the default public Sepolia RPC, or provide your own with
+`agentic-world:init --rpc <https-url>`. Keep credential-bearing URLs in a local
+environment variable (`AGENTIC_WORLD_RPC_URL`), not a shared prompt or commit.
+Existing configuration is preserved unless you explicitly request a change.
+
+**Restart Codex or Claude Code after registration.** Ask it to check
+`agentic_identity`; it should report Sepolia and the expected deployment.
+A new installation may correctly have no agent ID yet.
+
+If Secure Enclave/TPM appears unavailable only inside the agent sandbox, have the
+agent request approval for a host-level availability check. Do not export a key,
+disable security controls, or substitute a software key. See
+[signer troubleshooting](docs/LOCAL-SIGNER.md).
+
+### 3. Create your agent identity
+
+Send:
+
+```text
+agentic-world:create -a "Research"
+```
+
+1. The MCP provisions or reuses a hardware-backed P-256 authenticator and opens
+   a temporary page in your default browser.
+2. Connect the **owner wallet** you will also use on Services B and C.
+3. Check Sepolia and the factory address, then approve the creation transaction.
+4. Wait for confirmation and for the MCP to return the new **`0xAGENT`** address.
+
+The agent address is separate from your owner wallet. The private authenticator
+key stays in Secure Enclave/TPM; salt and public-key coordinates are filled in
+automatically. You should not copy/paste keys or deployment salt.
+
+Confirm it with `agentic-world:list`. Use `agentic-world:portal` to view identities,
+edit aliases, and manage onchain policy. If a creation transaction was already
+submitted but the page closed, check its hash before retrying—do not deploy twice.
+
+### 4. Test Service B: read and write permissions
+
+Open **[Service B](https://eth-tokyo-2026-demo-service-b.vercel.app/)** in your
+wallet-enabled browser. Connect and sign in with the **same owner wallet** used
+to create the agent; registration is a wallet message signature.
+
+Ask Codex or Claude:
 
 > Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and get my report.
 
-To try Write, enable the agent's Write checkbox and ask:
+The agent finds the report endpoint, responds to its Agentic World authentication
+offer, and reads your private text. Its identity appears on the page after
+authentication; Read starts enabled and Write starts disabled.
+Your report belongs to **your wallet**, not everyone visiting the demo.
+The page masks its text with stars by default.
 
-> Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and update my report to “Hello from my agent”.
+Try these changes without creating another identity:
 
-Service B discovers your agent after it authenticates. Read starts on and Write
-starts off; changing either applies on its next request, including an existing
-session. Text is masked on the page by default. These are service permissions,
-not onchain spending policy. See the [Service B guide](demo-service-b/README.md)
-and [Service A guide](docs/SERVICE-DEMO.md).
+| Action in Service B | Ask your agent | Expected result |
+| --- | --- | --- |
+| Leave Read on | “Get my report again.” | Returns your text. |
+| Turn Read off | “Get my report again.” | Access denied; no private text returned. |
+| Leave Write off | “Update my report to Hello from my agent.” | Write denied. |
+| Turn Write on | Repeat the update request. | Your report text changes. |
+| Turn Read back on | “Get my report again.” | Returns the updated text. |
+
+Check that denied requests are actually retried against the service, not answered
+from the conversation's earlier copy of the report. Permissions take effect on
+the **next request**, even with an existing session. Service B sessions expire
+after **300 seconds**; the agent obtains a fresh proof when required.
+
+Authentication stays on the resource endpoint: an ordinary 401 is not enough;
+only a 401 explicitly offering `AgenticWorld` triggers this flow. The SDK handles
+challenge/proof/session exchange on that endpoint—there is no separate
+`/agent/challenge` endpoint to visit. The agent sends HTTP requests; the local MCP
+only signs the service's challenge.
+
+### 5. Test Service C: your agent's onchain policy
+
+Open **[Service C](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/)**.
+This is the compute-credit storefront, **not Service A**.
+
+1. Connect and register the same owner wallet.
+2. Under **Service contract setup**, reuse an existing Service C purchase target
+   or deploy one through your wallet. This one-time target deployment costs
+   Sepolia gas; it does not redeploy your agent.
+3. Enter your agent ID to inspect its policy. This is read-only inspection,
+   not manual enrollment.
+4. Use **Copy portal setup instructions**, paste them into your agent chat, and
+   open `agentic-world:portal`. Review existing rules before changing anything:
+   saving replaces the account's entire execution policy.
+5. Add these **Token purchase** rules in order, then save onchain and approve
+   the transaction with the owner wallet:
+
+| Order | Target contract | Token / decimals | Maximum token amount | Decision |
+| --- | --- | --- | --- | --- |
+| 1 | The Service C purchase target | Sepolia USDC / 6 | `1` | `ALLOW` |
+| 2 | The same purchase target | Sepolia USDC / 6 | `2` | `REQUIRE_OWNER_SIGNATURE` |
+
+Token address: `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`.
+The native ETH value is zero. These rules match
+`purchaseCompute(address token,uint256 amount)`, not a direct token transfer.
+First match wins; unmatched actions default to **DENY**.
+Amounts are human-readable USDC units in the portal; limits are per call,
+not a cumulative budget or a USD price oracle.
+
+After the policy transaction confirms, return to Service C and read the policy
+again. Select the **1 USDC** pack and use **Copy prompt for agent**. Paste it into
+Codex/Claude; it contains your target and the correct service URL. The agent
+authenticates, gets the quote, and independently reads the account's policy.
+
+Repeat with **2 USDC**:
+
+| Proposed purchase | Expected onchain policy result |
+| --- | --- |
+| 1 USDC | `ALLOW` |
+| 2 USDC | `REQUIRE_OWNER_SIGNATURE` |
+| More than 2 USDC, with no other matching rule | `DENY` |
+
+To demonstrate updates, change a limit in the portal, confirm the transaction,
+then repeat the same check. Compare the policy revision and block returned by
+the service and the independent check.
+
+**Success means “purchase checked, not paid.”** No tokens move, no credits are
+delivered, and this preview does not request a spending signature—even when the
+decision is `REQUIRE_OWNER_SIGNATURE`. Service B demonstrates **service-owned
+permissions**; Service C demonstrates **account-owned onchain policy**.
+
+### Real payments are a separate test
+
+The current release also implements direct USDC transfers through
+`agentic_pay_usdc`; the Service C quote is not that execution path.
+Payments require a new execution-capable account, a private Pimlico bundler
+configuration, agent ETH/USDC funding, and transfer-specific policy.
+To add or replace the bundler after init, say `agentic-world:configure-bundler`.
+The skill guides you to stop the MCP, run `npm run configure:bundler` from this
+checkout, paste the URL into a hidden terminal prompt, and restart the MCP.
+After npm publication, the terminal command is `npx agenticworld configure-bundler`.
+You can also supply `AGENTIC_WORLD_BUNDLER_RPC_URL` locally. Setup validates the
+endpoint and preserves your identities; it does not send a payment. With no
+bundler configured, authentication and policy previews still work.
+Above-limit actions can request an exact-action owner signature.
+A successful live hardware/Pimlico payment has **not yet been verified**.
+Follow the [execution guide](docs/EXECUTION.md) rather than treating an
+`ALLOW` preview as a receipt.
+
+## Overview
+
+Agentic World v0 uses an ERC-4337 / ERC-7579 smart account, an `AgentValidator`
+for operating-key authentication and ERC-1271, and an `AgentPolicyHook` plus
+`PolicyEngine` for owner-controlled onchain execution. Services independently
+verify authentication and keep their own authorization rules, using manual or
+`owner()`-derived association. The local MCP signs challenges; it never proxies
+resource requests. P-256 verification uses EIP-7951's native `0x100` precompile.
+EIP-8141 + ERC-8286 remain future work.
+
+See the [architecture](docs/ARCHITECTURE-v0.md),
+[implementation status](docs/V0-IMPLEMENTATION.md), [protocol](docs/PROTOCOL.md),
+[service SDK](docs/SDK.md), [Core SDK](docs/CORE-SDK.md), [policy](docs/POLICY.md),
+[owner portal](docs/PORTAL.md), and [MCP and skills](docs/MCP.md).
+For developers running the manual-enrollment demo locally, see the
+[Service A guide](docs/SERVICE-DEMO.md). Hosted demo details:
+[Service B](demo-service-b/README.md) and [Service C](demo-service-c/README.md).
 
 ## Idea
 
@@ -91,18 +292,21 @@ against that deployment. The local MCP supports macOS Secure Enclave and Windows
 TPM signers, multiple identities, aliases, an owner portal, and browser-approved
 creation, policy updates, rotation, and revocation.
 
-**Deployment update required:** the final review found that a policy could allow
-agent execution to call its own management modules directly. Source now blocks
-those targets and includes ERC-165 discovery, but the pinned Sepolia deployment
-predates these changes. Deploy a new factory and update the pins before treating
-onchain execution as ready. Existing immutable accounts cannot be upgraded.
+**Execution deployment verified:** the current Sepolia factory includes the
+management-target guard, ERC-165 discovery, transfer policies and expiring
+P-256 execution signatures. Existing immutable accounts cannot be upgraded;
+legacy identities remain authentication-only in the MCP. Real payments require
+a new funded agent and a hands-on Pimlico/hardware test.
 
 Local tests exercise P-256 authentication, both services, owner approval flows,
 rotation across MCP restarts, and policy changes through the official EntryPoint
 v0.8. Hardware signing and real wallet-extension interactions still need a
-hands-on run. Services intentionally use in-memory stores; there is no bundler
-integration or MCP UserOperation execution tool. Only single-call, revert-on-error
-ERC-7579 execution is supported, and execution defaults to deny. See the
+hands-on run. This release adds direct USDC payments through a Pimlico
+adapter, structured native signing, and exact-action owner approval. Local
+end-to-end tests use a bundler fixture; live Pimlico submission is not yet verified.
+The MCP retains the legacy identity pins; payments fail closed for those accounts.
+Only single-call, revert-on-error ERC-7579 execution is supported, and execution
+defaults to deny. See the [execution rollout and tools](docs/EXECUTION.md) and the
 [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
 
 ### Deployed contracts — Sepolia
@@ -112,21 +316,22 @@ trusted addresses in [`sdk/deployments.ts`](sdk/deployments.ts).
 
 | Component | Address |
 | --- | --- |
-| AgentAccountFactory | [0x63f158897834bbc1579e82dfc29a7aacc8b91f93](https://sepolia.etherscan.io/address/0x63f158897834bbc1579e82dfc29a7aacc8b91f93) |
-| AgentAccount4337 implementation | [0xd08B955ca8727d86e708ae5684D5fa7f32635e66](https://sepolia.etherscan.io/address/0xd08B955ca8727d86e708ae5684D5fa7f32635e66) |
-| AgentValidator | [0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55](https://sepolia.etherscan.io/address/0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55) |
-| AgentPolicyHook | [0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968](https://sepolia.etherscan.io/address/0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968) |
+| AgentAccountFactory | [0xf78336a75b7b517fdb784b1a34eae9527628b065](https://sepolia.etherscan.io/address/0xf78336a75b7b517fdb784b1a34eae9527628b065) |
+| AgentAccount4337 implementation | [0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd](https://sepolia.etherscan.io/address/0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd) |
+| AgentValidator | [0x6A9c4FA6B8a42B1c82B6d701cC76232633D243a0](https://sepolia.etherscan.io/address/0x6A9c4FA6B8a42B1c82B6d701cC76232633D243a0) |
+| AgentPolicyHook | [0x72db3464519404302a95D65130b0a2fbE53E23d6](https://sepolia.etherscan.io/address/0x72db3464519404302a95D65130b0a2fbE53E23d6) |
 | EntryPoint v0.8 (existing infrastructure) | [0x4337084d9e255ff0702461cf8895ce9e3b5ff108](https://sepolia.etherscan.io/address/0x4337084d9e255ff0702461cf8895ce9e3b5ff108) |
 
 Factory deployment transaction:
-[0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c](https://sepolia.etherscan.io/tx/0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c).
+[0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8](https://sepolia.etherscan.io/tx/0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8), block **11788771**.
 The factory deployed the implementation, validator, and policy hook; each agent
 gets its own account address when its owner creates it.
 
-**These addresses predate the management-target guard and ERC-165 fixes described
-above.** Listing them does not mean the corrected source has been redeployed.
+The [deployment record](deployments/sepolia-execution-v1.json) records the compiled
+initcode and runtime code hashes. Legacy addresses remain in
+`LEGACY_SEPOLIA_DEPLOYMENT`; their immutable accounts were not upgraded.
 
-### Run locally
+## Developer setup
 
 To run the checks:
 
@@ -183,145 +388,39 @@ See [Service C deployment instructions](demo-service-c/README.md) for Vercel, br
 support, and required shared Redis storage. The hosted audience uses the deployed origin.
 `npm run test:service-c` separately proves real ERC-4337 execution locally: P-256
 UserOperations, exact threshold, missing/wrong/replayed owner approvals, policy updates,
-and token balance changes. These tests use the corrected source contracts and test keys,
-not the older pinned Sepolia bytecode or your Secure Enclave/TPM key.
+and token balance changes. These tests use local source deployments and test keys,
+not the hosted services or your Secure Enclave/TPM key.
 
-### Use the skill in Codex or Claude Code
+### Installer options
 
-#### One-command installer (npm release pending)
-
-The `agenticworld` CLI installs both the skill and local MCP. Once the package is
-published, the user-facing command is:
+The [installer package](packages/agenticworld/README.md) is prepared but not
+published to npm. **After official publication**, the command will be:
 
 ```sh
-npx agenticworld install
+npx agenticworld install --client codex
 ```
 
-Use `--client codex`, `--client claude`, or `--client both` to choose a host;
-otherwise it uses the Codex/Claude Code CLIs found on PATH. An optional
-`--rpc https://your-sepolia-rpc` selects a Sepolia RPC; the public endpoint is the
-default. Put credential-bearing URLs in `AGENTIC_WORLD_RPC_URL` instead of shell
-history. Existing configs keep their RPC unless `--update-rpc` is explicitly
-requested with a new URL and the MCP has been stopped.
+Use `--client claude` or `--client both` for other clients.
+`npx install agenticworld` is not the command; it runs a different package.
 
-The installer keeps its runtime outside the temporary npx cache, registers MCP
-using absolute paths, and installs one skill per client. It reuses existing
-skills; duplicate skills or conflicting/disabled MCP entries are reported,
-never overwritten. Existing agent IDs, aliases, revoked records, and signing
-keys are preserved. Restart Codex/Claude Code, then say
-`agentic-world:create -a "My agent"` to open the wallet-approved creation flow.
-Installation itself creates **no key, identity, or transaction**.
-
-Requirements: Node 22+, a Codex or Claude Code CLI, and macOS with Apple's Swift
-tools or native Windows x64/ARM64 with TPM. Windows needs no Go. No checkout,
-Hardhat, running demo, or external KMS is needed for the published package.
-
-**The package is prepared, not yet published to npm.** To test the installer from
-this checkout before publication:
+Developers can exercise the packaged installer from their chosen checkout:
 
 ```sh
+npm ci
 npm run build:installer
 node packages/agenticworld/bin/agenticworld.js install --client codex
 ```
 
-See [installer packaging and release steps](packages/agenticworld/README.md).
-`npx install agenticworld` is not the command: that runs a different package
-named `install`.
+This installs the skill and MCP together; don't also do manual registration.
+It preserves identity records and reports conflicts rather than overwriting
+existing installations. Keep the selected runtime version compatible with the
+service's pinned implementation. Restart the client after installation.
 
-#### Source-checkout installation
+For manual build commands, MCP registration, Claude's local/user scope handling,
+and RPC configuration, see the [MCP guide](docs/MCP.md).
+For hardware requirements, see the [local signer guide](docs/LOCAL-SIGNER.md).
 
-A skill installed alone still needs the local MCP and hardware signer. The
-manual development path remains available:
-
-```sh
-git clone https://github.com/ryuux05/eth-tokyo-2026.git
-cd eth-tokyo-2026
-npm ci
-npm run build:mcp
-npm run build:portal
-npm run build:signer
-npm run init:mcp
-```
-
-Keep this checkout: the MCP registration points to its built files. `init:mcp`
-prints `MCP_CONFIG_PATH`, creates a private Sepolia config, and creates no key or
-identity. Do not block init on a sandboxed hardware `availability` result.
-Windows installs the bundled verified executable and needs no Go compiler.
-To run the optional Service A/B workbench, use another terminal:
-
-```sh
-npm run demo
-```
-
-For a session **inside this checkout**, the skills are already installed at the
-repository level: [Codex loads `.agents/skills`](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
-and [Claude Code loads `.claude/skills`](https://code.claude.com/docs/en/skills#choose-where-skills-load).
-Do not install a second personal copy for that same session.
-
-For a session **in another project**, install the skill personally first:
-
-- Codex: in a Codex session, ask
-  `$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/main/.agents/skills/agentic-world`.
-  This public GitHub URL was tested with the bundled installer. It installs under
-  `$CODEX_HOME/skills` (normally `~/.codex/skills`); Codex also recognizes
-  manually placed personal skills under `~/.agents/skills`. Start a new Codex
-  session if the skill does not appear.
-- Claude Code: with the clone as your current directory, run:
-
-  ```sh
-  mkdir -p "$HOME/.claude/skills"
-  ln -s "$(pwd -P)/.claude/skills/agentic-world" "$HOME/.claude/skills/agentic-world"
-  ```
-
-  The symlink makes `/agentic-world` available in other projects and updates
-  with your clone. If that destination already exists, inspect it before
-  replacing anything. [Claude Code supports personal and symlinked skills](https://code.claude.com/docs/en/skills#choose-where-skills-load).
-
-Next, say `agentic-world:init` to the installed skill to register the MCP, or
-register it manually below. Replace the placeholders with the absolute
-`MCP_CONFIG_PATH` from init and this checkout's absolute server path. Inspect
-existing registrations first and reuse a matching one.
-
-For **Codex**:
-
-```sh
-codex mcp add agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
-codex mcp list
-```
-
-For **Claude Code inside this checkout**, use a local-scope entry with absolute
-paths. It takes priority over the generic project `.mcp.json` entry:
-
-```sh
-claude mcp add --scope local --transport stdio agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
-claude mcp list
-```
-
-For **Claude Code in another project**, register a user-scoped server instead
-of relying on this repo's `.mcp.json`:
-
-```sh
-claude mcp add --scope user --transport stdio agentic-world --env "AGENTIC_WORLD_CONFIG=<absolute-config-path>" -- node "<absolute-checkout>/dist/mcp/server.js"
-claude mcp list
-```
-
-Start a new Codex or Claude session, check that `agentic_identity` is available,
-then say `agentic-world:create -a "Research"`. The MCP creates or reuses a local
-hardware P-256 key and opens a temporary localhost page in your default browser.
-Connect a MetaMask-compatible wallet on **Sepolia (11155111)** with Sepolia ETH
-to pay for the factory transaction. **You** choose the
-human owner account and approve in the wallet; the MCP never sees your wallet
-key or submits the transaction. The page verifies the account and reports
-`0xAGENT` back to the agent. For a personal skill used outside this checkout,
-give the agent the printed Service A or B URL and its expected audience
-(`https://service-a.example` or `https://service-b.example` for this loopback
-workbench). The default local signer label is `agentic-world-sepolia`.
-Use `agentic-world:list`, `agentic-world:portal`, `agentic-world:rotate`, or
-`agentic-world:revoke` to manage your identities. See the [MCP guide](docs/MCP.md)
-and [local signer guide](docs/LOCAL-SIGNER.md).
-
-The service operator key is **not** in the skill or MCP config; keep it in the
-Service A operator page only. The full portal is optional.
+### Local-chain smoke test (developers only)
 
 To deploy and exercise the complete local RPC + HTTP path, start a Hardhat node
 in one terminal and run the smoke script in another:

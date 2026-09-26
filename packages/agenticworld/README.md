@@ -1,10 +1,6 @@
 # Agentic World installer
 
-Publication status: prepared for npm; **not published yet**. Do not advertise the
-unqualified npm command as available until the package has been published under
-the project's controlled npm account.
-
-After publication:
+Install the Agentic World skill and local MCP for Codex or Claude Code:
 
 ```sh
 npx agenticworld install
@@ -43,6 +39,27 @@ Stop the MCP first. Use `AGENTIC_WORLD_RPC_URL` for private endpoint credentials
 Chain ID must be 11155111; validation failure never changes the config. No
 hardware availability probe is used as an init gate: sandbox restrictions can
 produce false negatives. Creation still requires actual hardware signing.
+
+## Add a bundler after init
+
+Bundler setup is optional; authentication and policy previews work without it.
+Stop/disconnect the MCP and run in your own terminal:
+
+```sh
+npx agenticworld configure-bundler
+```
+
+Paste the Pimlico Sepolia RPC URL into the hidden prompt. Alternatively, provide
+`AGENTIC_WORLD_BUNDLER_RPC_URL` through your local environment. `--bundler-rpc`
+is supported, but a credential-bearing URL on the command line enters shell history.
+Use `--config <absolute-path>` for a non-default MCP config; otherwise the command
+uses `AGENTIC_WORLD_CONFIG` or the normal platform config location.
+
+It checks the chain, EntryPoint v0.8 support and Pimlico fee API, then saves only
+the bundler endpoint. Run it again to replace the endpoint. Restart the MCP after
+saving. This does not sign or submit a transaction. Existing identities and gas
+limits are preserved. From a source checkout, use `npm run configure:bundler`.
+The skill prompt is `agentic-world:configure-bundler`.
 
 ## Build and check before publication
 
