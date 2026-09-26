@@ -10,7 +10,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod/v4";
 import { createAgentSdk } from "../sdk/agent.js";
 import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, encodePolicy, Decision,
-  SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, type PolicyRule } from "../sdk/core.js";
+  SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, resolveSepoliaAgentDeployment, type PolicyRule } from "../sdk/core.js";
 import { assertAudience, sessionProofHeaders, type AuthenticationChallenge } from "../sdk/core.js";
 import { ensureSignerPublicKey, signLocalChallenge, signLocalExecution, signerPublicKey } from "./local-signer.js";
 import { createPaymentExecutor, pimlicoBundler, SEPOLIA_USDC, executionAccountAbi, paymentAmount, type PaymentRecord } from "../sdk/payments.js";
@@ -55,11 +55,15 @@ export function parseConfig(value: unknown): Config {
   if (!!parsed.deploymentBlockNumber !== !!parsed.deploymentBlockHash) throw new Error("Deployment fingerprint requires both block number and hash");
   const rpc = new URL(parsed.rpcUrl);
   if (rpc.protocol !== "https:" && !(rpc.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(rpc.hostname))) throw new Error("RPC must use HTTPS or loopback HTTP");
+  // Validate historical explicit pins before migrating creation to the current
+  // release. IDs and labels remain untouched; unknown overrides still fail.
+  const factory = trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined);
+  const implementation = trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined);
   return { ...parsed, agentId: parsed.agentId ? getAddress(parsed.agentId) : undefined,
     agentIds: parsed.agentIds?.map(id => getAddress(id)), aliases: Object.fromEntries(Object.entries(parsed.aliases ?? {}).map(([id, alias]) => [id.toLowerCase(), alias])),
     authenticatorLabels: Object.fromEntries(Object.entries(parsed.authenticatorLabels ?? {}).map(([id, labels]) => [id.toLowerCase(), [...new Set(labels)]])),
-    factory: trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined),
-    implementation: trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined),
+    factory: parsed.chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_DEPLOYMENT.factory : factory,
+    implementation: parsed.chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_DEPLOYMENT.implementation : implementation,
     deploymentBlockHash: parsed.deploymentBlockHash as Hex | undefined };
 }
 
@@ -140,13 +144,15 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
     const identities = await Promise.all(ids.map(async agentId => {
       const code = await client.getBytecode({ address: agentId, blockNumber });
-      if (!isExpectedAgentClone(code, config.implementation))
+      const deployment = accountDeployment(code);
+      if (!deployment)
         return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, status: "UNAVAILABLE" as const };
       const [owner, revoked] = await Promise.all([
         client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
         client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
       ]);
       return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, owner,
+        executionSupported: deployment.implementation.toLowerCase() === config.implementation.toLowerCase(),
         status: revoked ? "REVOKED" as const : "ACTIVE" as const, authenticationRevoked: revoked };
     }));
     return { count: identities.length, blockNumber: blockNumber.toString(), identities };
@@ -165,17 +171,23 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     return known[0];
   }
 
-  async function pinnedAccountBlock(agentId: Address): Promise<bigint> {
+  function accountDeployment(code: Hex | undefined) {
+    return config.chainId === SEPOLIA_CHAIN_ID ? resolveSepoliaAgentDeployment(code)
+      : isExpectedAgentClone(code, config.implementation) ? { factory: config.factory, implementation: config.implementation } : undefined;
+  }
+
+  async function pinnedAccountBlock(agentId: Address) {
     const [actualChain, blockNumber] = await Promise.all([client.getChainId(), client.getBlockNumber({ cacheTime: 0 })]);
     if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
     const code = await client.getBytecode({ address: agentId, blockNumber });
-    if (!isExpectedAgentClone(code, config.implementation)) throw new ToolError("IDENTITY_UNAVAILABLE", "Agent is not the pinned ERC-4337 account clone");
-    return blockNumber;
+    const deployment = accountDeployment(code);
+    if (!deployment) throw new ToolError("IDENTITY_UNAVAILABLE", "Agent is not a recognized pinned ERC-4337 account clone");
+    return { blockNumber, deployment };
   }
 
   async function identity(agentId = config.agentId) {
     if (!agentId) throw new ToolError("IDENTITY_NOT_CONFIGURED", "Create an agent identity and configure its address first");
-    const blockNumber = await pinnedAccountBlock(agentId);
+    const { blockNumber, deployment } = await pinnedAccountBlock(agentId);
     const [owner, authenticator, scheme, p256PublicKey, revoked, createdAt, policyHash, policyRevision] = await Promise.all([
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
@@ -186,7 +198,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyHash", blockNumber }),
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyRevision", blockNumber }),
     ]);
-    return { agentId, chainId: config.chainId, factory: config.factory, implementation: config.implementation,
+    return { agentId, chainId: config.chainId, factory: deployment.factory, implementation: deployment.implementation,
+      executionSupported: deployment.implementation.toLowerCase() === config.implementation.toLowerCase(),
       owner, authenticatorScheme: scheme,
       authenticator: scheme === 1 ? authenticator : undefined,
       p256PublicKey: scheme === 2 ? { qx: p256PublicKey[0], qy: p256PublicKey[1] } : undefined,
@@ -195,7 +208,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   }
 
   async function authenticationState(agentId: Address) {
-    const blockNumber = await pinnedAccountBlock(agentId);
+    const { blockNumber } = await pinnedAccountBlock(agentId);
     const [scheme, revoked, authenticator, p256PublicKey] = await Promise.all([
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
@@ -267,6 +280,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "Payments require a persistent MCP config and payment journal");
     if (!isAddress(recipient)) throw new ToolError("INVALID_RECIPIENT", "Provide the recipient address explicitly");
     const selected = selectManagedAgentId(agentId);
+    if (!(await identity(selected)).executionSupported)
+      throw new ToolError("EXECUTION_UPGRADE_REQUIRED", "This legacy agent remains usable for authentication. Payments require a new agent from the current factory; the existing identity was not changed.");
     return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal, ctx.mcpReq.signal)).pay(requestId, { agentId: selected, recipient, amount })));
   }));
   server.registerTool("agentic_payment_status", {

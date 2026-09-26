@@ -5,7 +5,7 @@ import {
 } from "viem";
 import {
   Decision, TOKEN_PURCHASE_SELECTOR, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi,
-  decodePolicy, encodePolicy, isExpectedAgentClone, type PolicyRule,
+  decodePolicy, encodePolicy, isExpectedAgentClone, resolveSepoliaAgentDeployment, SEPOLIA_CHAIN_ID, type PolicyRule,
 } from "../sdk/core.js";
 import { DEPLOYMENTS, type Deployment } from "./config.js";
 import { decodeTransferPolicy, policyEncodingVersion, type TransferPolicyRule } from "../sdk/policy.js";
@@ -385,15 +385,16 @@ async function verifyAgent(input?: Address): Promise<void> {
   await assertFactory();
   const blockNumber = await client().getBlockNumber();
   const code = await client().getCode({ address: agent, blockNumber });
-  if (!isExpectedAgentClone(code, deployment.implementation)) throw new Error("This is not a clone of the pinned v0 implementation on this chain.");
+  const agentDeployment = chainId === SEPOLIA_CHAIN_ID ? resolveSepoliaAgentDeployment(code) : deployment;
+  if (!agentDeployment || !isExpectedAgentClone(code, agentDeployment.implementation)) throw new Error("This is not a clone of a trusted implementation on this chain.");
   const [accountOwner, version, scheme, validator, hook, factoryValidator, factoryHook, entryPoint, signer, coordinates, isRevoked, loadedPolicy] = await Promise.all([
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "owner", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "protocolVersion", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "agentValidator", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "policyHook", blockNumber }),
-    client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi, functionName: "validator", blockNumber }),
-    client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi, functionName: "policyHook", blockNumber }),
+    client().readContract({ address: agentDeployment.factory, abi: agentAccountFactoryAbi, functionName: "validator", blockNumber }),
+    client().readContract({ address: agentDeployment.factory, abi: agentAccountFactoryAbi, functionName: "policyHook", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "entryPoint", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
     client().readContract({ address: agent, abi: agentAccountAbi, functionName: "authenticatorP256", blockNumber }),

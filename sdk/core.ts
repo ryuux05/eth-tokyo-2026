@@ -1,5 +1,6 @@
 import { type Address, type Hex } from "viem";
 import { CLONE_PREFIX, CLONE_SUFFIX, DELEGATION_PREFIX } from "./shared.js";
+import { SEPOLIA_DEPLOYMENT, LEGACY_SEPOLIA_DEPLOYMENT } from "./deployments.js";
 
 /** Shared, backend-free protocol definitions. Agent and service SDKs depend on this. */
 export {
@@ -38,7 +39,13 @@ export {
 export type { PolicyRule, TransferPolicyRule } from "./policy.js";
 export { AGENT_SINGLE_EXECUTION_MODE, agent4337ExecutionAbi, encodeAgentExecution } from "./execution.js";
 export type { OwnerApproval } from "./execution.js";
-export { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation } from "./deployments.js";
+export { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, LEGACY_SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation } from "./deployments.js";
+
+/** Local identity management can retain both known generations. Service SDKs
+ *  still enforce their one configured pin, and payments require the current pin. */
+export function resolveSepoliaAgentDeployment(code: Hex | undefined) {
+  return [SEPOLIA_DEPLOYMENT, LEGACY_SEPOLIA_DEPLOYMENT].find(deployment => isExpectedAgentClone(code, deployment.implementation));
+}
 
 export function isExpectedDelegation(code: Hex | undefined, implementation: Address): boolean {
   return code?.toLowerCase() === `${DELEGATION_PREFIX}${implementation.slice(2)}`.toLowerCase();
