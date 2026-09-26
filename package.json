@@ -17,13 +17,15 @@
     }
   },
   "scripts": {
-    "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal",
+    "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service",
     "build:sdk": "tsc --project tsconfig.sdk.json",
     "build:mcp": "tsc --project tsconfig.mcp.json",
     "build:signer": "mkdir -p dist/signer && swiftc -module-cache-path dist/signer/module-cache -o dist/signer/agentic-signer signer/AgenticSigner.swift && dist/signer/agentic-signer self-test",
     "serve:mcp": "node dist/mcp/server.js",
     "build:portal": "esbuild portal/main.ts portal/styles.css portal/index.html --bundle --platform=browser --format=esm --outdir=portal/dist --loader:.html=copy",
     "serve:portal": "python3 -m http.server 4173 --directory portal/dist",
+    "build:demo-service": "esbuild demo-service/app.ts demo-service/styles.css demo-service/index.html --bundle --platform=browser --format=esm --outdir=demo-service/dist --loader:.html=copy",
+    "serve:demo-service": "node --import tsx demo-service/server.ts",
     "demo:local": "hardhat run scripts/local-e2e.ts --network localhost",
     "test": "hardhat test",
     "typecheck": "tsc --noEmit"

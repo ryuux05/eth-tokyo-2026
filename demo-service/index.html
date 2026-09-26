@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#102a2c">
+  <title>Service A · Agent access desk</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" type="module"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">A<span>·</span>W</span><span>Agentic World <span class="slash">/</span> Service A</span></div>
+    <span class="top-note">LOCAL SERVICE <span class="live-dot" aria-hidden="true"></span> <span id="chain-label">CONNECTING</span></span>
+  </header>
+  <main class="shell">
+    <div class="intro">
+      <p class="eyebrow">SERVICE-OWNED AUTHORIZATION <span>01 / 02</span></p>
+      <h1>Agent access desk<span class="period">.</span></h1>
+      <p class="lede">Identity gets an agent through the door. This service decides which rooms it can enter. Change a permission, then retry the same session to see the decision change immediately.</p>
+    </div>
+    <div class="workbench">
+      <section class="main-column" aria-label="Configure service access">
+        <div class="section-head"><span class="step">01</span><div><h2>Open the desk</h2><p>Use the one-time operator key printed by the local service. It stays only in this browser tab.</p></div></div>
+        <form id="operator-form" class="inline-form">
+          <label class="field grow" for="operator-token"><span>OPERATOR KEY</span><input id="operator-token" type="password" autocomplete="off" spellcheck="false" placeholder="Paste key from service terminal" required></label>
+          <button class="button primary" type="submit">Unlock desk</button>
+        </form>
+        <p id="operator-state" class="inline-state" role="status">Desk locked. The public agent endpoints remain available.</p>
+
+        <div class="section-head separated"><span class="step">02</span><div><h2>Enroll an agent</h2><p>Manual association registers an identity with Service A. It does not grant report or compute access.</p></div></div>
+        <form id="enroll-form" class="inline-form">
+          <label class="field grow" for="agent-id"><span>AGENT ACCOUNT · 0xAGENT</span><input id="agent-id" type="text" inputmode="text" autocomplete="off" spellcheck="false" placeholder="0x…" required></label>
+          <button class="button primary" type="submit">Enroll agent</button>
+        </form>
+        <div id="identity-row" class="identity-row" hidden><div><span class="mini-label">ONCHAIN OWNER</span><code id="owner-value"></code></div><div><span class="mini-label">AUTHENTICATOR</span><strong id="scheme-value"></strong></div></div>
+
+        <div class="section-head separated"><span class="step">03</span><div><h2>Service permissions</h2><p>These gates live in this service. Every resource request checks the current setting, even with an existing session.</p></div></div>
+        <div class="gate-list" id="gate-list">
+          <div class="gate" data-resource="report"><div class="gate-track" aria-hidden="true"><span>01</span><span class="gate-line"></span><span class="gate-node"></span></div><div class="gate-copy"><div class="gate-title"><h3>Private report</h3><code>GET /private/report</code></div><p>Read a local report. No onchain execution policy is involved.</p></div><button type="button" class="gate-button" data-resource="report" disabled>Enroll agent first</button></div>
+          <div class="gate" data-resource="compute"><div class="gate-track" aria-hidden="true"><span>02</span><span class="gate-line"></span><span class="gate-node"></span></div><div class="gate-copy"><div class="gate-title"><h3>Compute credit</h3><code>GET /private/compute</code></div><p>Use a separate service resource with its own access decision.</p></div><button type="button" class="gate-button" data-resource="compute" disabled>Enroll agent first</button></div>
+        </div>
+      </section>
+      <aside class="test-column" aria-label="Test agent access">
+        <div class="test-heading"><span class="eyebrow">LIVE TEST · SERVICE A</span><h2>Try the boundary</h2><p>This uses the real service SDK: challenge → MCP proof → ERC-1271 verification → local session → permission check.</p></div>
+        <div class="test-step"><div class="test-index">A</div><div class="test-body"><h3>Get a challenge</h3><p>Service A issues a single-use nonce for this agent.</p><button id="challenge-button" class="button light" type="button" disabled>Issue challenge</button><pre id="challenge-output" class="data-output" hidden></pre><button id="copy-challenge" class="text-button" type="button" hidden>Copy challenge JSON</button></div></div>
+        <div class="test-step"><div class="test-index">B</div><div class="test-body"><h3>Sign with Agentic MCP</h3><p>Call <code>agentic_session_proof({ challenge })</code>, then paste its proof below. The page never sees the signing key.</p><label class="field dark-field" for="proof-input"><span>SIGNED PROOF JSON</span><textarea id="proof-input" rows="5" spellcheck="false" placeholder="{ &quot;agentId&quot;: &quot;0x…&quot;, … }"></textarea></label><button id="session-button" class="button light" type="button">Create AgentSession</button><p id="session-state" class="session-state" role="status">No session yet</p></div></div>
+        <div class="test-step last"><div class="test-index">C</div><div class="test-body"><h3>Request a resource</h3><p>Use the same session before and after changing a gate.</p><div class="test-actions"><button type="button" class="button light" data-try="report">Try report</button><button type="button" class="button light" data-try="compute">Try compute</button></div><div id="result" class="result empty" role="status"><span class="result-code">—</span><div><strong>Waiting for a request</strong><p>A response will appear here with its HTTP status.</p></div></div></div></div>
+      </aside>
+    </div>
+    <section class="activity" aria-label="Service activity"><div class="activity-heading"><div><span class="eyebrow">SERVICE LOG</span><h2>Recent decisions</h2></div><button id="refresh-button" type="button" class="text-button">Refresh log</button></div><div id="events" class="events"><p>Unlock the desk to inspect recent decisions.</p></div></section>
+    <footer><span>AGENTIC WORLD / SERVICE A</span><span>Identity is shared. Access is local.</span></footer>
+  </main>
+</body>
+</html>
