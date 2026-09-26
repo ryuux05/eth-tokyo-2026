@@ -8,43 +8,50 @@ export default function PolicyWorkbench() {
     void import("../app.js").then(({ mountServiceC }) => { if (!cancelled) dispose = mountServiceC(); });
     return () => { cancelled = true; dispose?.(); };
   }, []);
-  return <><Head><title>Service C · Policy workbench</title><meta name="viewport" content="width=device-width,initial-scale=1" /></Head>
+  return <><Head><title>Service C · Compute credits</title><meta name="viewport" content="width=device-width,initial-scale=1" /></Head>
 <header className="topbar"><strong>Agentic World <span>/ Service C</span></strong><span id="network">Connecting…</span></header>
 <main>
-  <header className="intro"><h1>Where autonomy stops.</h1><p>Try a purchase amount. Read the agent’s onchain policy. Change the boundary with your owner wallet and check again.</p></header>
-  <p className="notice">Decision demo only. This page never transfers or approves USDC. Do not fund an agent for this preview. Testnet USDC has no real-dollar value; “$5” here means 5 USDC per operation, not a daily cap.</p>
-  <div className="workbench">
-    <section className="setup" aria-labelledby="setup-title">
-      <h2 id="setup-title">Connect the policy</h2>
-      <button id="connect-wallet" className="secondary" disabled>Connect wallet</button><p id="connected-wallet" className="hint">Not connected · signing stays in your browser wallet.</p>
-      <label htmlFor="agent">Agent ID</label><input id="agent" placeholder="0x…" spellCheck="false" autoComplete="off" />
-      <label htmlFor="target">Service C demo target</label><input id="target" placeholder="Deploy below, or paste an existing Service C target" spellCheck="false" autoComplete="off" />
-      <div className="actions"><button id="deploy" className="secondary" disabled>Deploy demo target</button><button id="inspect" className="secondary" disabled>Read current policy</button></div>
-      <p className="hint">One-time target deployment uses your wallet and Sepolia gas. It does not redeploy your agent. Reuse the address on future visits.</p>
-      <dl><div><dt>Owner</dt><dd id="owner">Read an agent first</dd></div><div><dt>Policy revision</dt><dd id="revision">—</dd></div><div><dt>Authenticator</dt><dd id="auth-state">—</dd></div></dl>
-      <details><summary>Current encoded policy</summary><pre id="policy">Read an agent to inspect its existing rules.</pre></details>
-      <hr />
-      <h2>Set the boundary</h2>
-      <label htmlFor="threshold">Automatic purchase limit · USDC</label><input id="threshold" defaultValue="5" inputMode="decimal" autoComplete="off" />
-      <p className="hint">At or below this amount: allow. Above it: require an exact owner signature. Every other action: deny.</p>
-      <label className="check"><input type="checkbox" id="replace" />I understand this replaces this agent’s entire execution policy, including any existing rules.</label>
-      <button id="save" disabled>Save policy in wallet</button>
-      <p className="hint">Only the agent’s onchain owner can save. No key or token allowance is requested.</p>
-    </section>
-    <section className="decision-panel" aria-labelledby="decision-title">
-      <h2 id="decision-title">Test a purchase</h2>
-      <p>Calls <code>evaluateAction()</code> for <code>purchaseCompute(USDC, amount)</code> on your agent.</p>
-      <form id="preview-form"><label htmlFor="amount">Purchase amount · USDC</label><div className="amount-row"><input id="amount" defaultValue="5" inputMode="decimal" autoComplete="off" /><button id="preview" disabled>Check policy</button></div></form>
-      <div className="presets" aria-label="Boundary test amounts"><button className="secondary" data-amount="2">2</button><button className="secondary" data-amount="5">5 exactly</button><button className="secondary" data-amount="5.000001">5 + 1 unit</button><button className="secondary" data-amount="20">20</button></div>
-      <div className="decision" id="decision" data-state="idle" aria-live="polite"><strong id="decision-label">No decision yet</strong><p id="decision-detail">Read an agent and its demo target, then check an amount.</p><small id="decision-block"></small></div>
-      <p className="hint">A policy result is not a payment receipt. Balance, allowance, gas, revocation, and owner approval can still prevent execution.</p>
-      <hr /><h2>Let your agent check</h2><p>The same resource endpoint offers Agentic World authentication through the SDK. Authentication grants access to a quote, not permission to spend.</p>
-      <pre id="agent-prompt">Read an agent and target to generate the instruction.</pre><button id="copy" className="secondary" disabled>Copy agent instruction</button>
-    </section>
-  </div>
-  <section className="status-region" aria-label="Operation status"><p id="status" role="status">Loading Sepolia configuration…</p><a id="tx-link" hidden target="_blank" rel="noopener noreferrer">View submitted transaction</a><button id="check-tx" className="secondary" hidden>Check submitted transaction</button></section>
-  <section className="history"><h2>Observed decisions</h2><p>Fresh reads, with their policy revision and block. Changing the limit only takes effect after the wallet transaction confirms.</p><div id="history" aria-live="polite">Your checks will appear here.</div></section>
-  <footer><p>For execution proof, run <code>npm run test:service-c</code>. The local test uses a real EntryPoint and a software P-256 fixture, not your hardware key.</p><p>Existing Sepolia pins remain unchanged. This preview does not certify the old account deployment as safe for funded execution.</p><code id="token"></code></footer>
+  <header className="intro"><h1>Compute for your agent.</h1><p>Choose a pack. Ask your agent whether its account policy allows the purchase.</p><p className="demo-label">Sepolia demo · Purchase checked—not paid.</p></header>
+  <section className="owner-access" aria-label="Owner-based service access">
+    <div><h2>Register your wallet, not each agent.</h2><p id="connected-wallet">Your agents get quote access through their onchain owner(). Registration does not grant spending permission.</p></div>
+    <button id="connect-wallet" className="secondary" disabled>Register owner wallet</button>
+  </section>
+  <section className="try-payment" aria-labelledby="try-title">
+    <h2 id="try-title">Choose a compute pack</h2>
+    <div className="packs" role="group" aria-label="Compute packs">
+      <button className="pack" data-amount="5" aria-pressed="true"><span>Small compute pack</span><strong>5 <small>USDC</small></strong><span>Check a smaller purchase</span></button>
+      <button className="pack" data-amount="20" aria-pressed="false"><span>Large compute pack</span><strong>20 <small>USDC</small></strong><span>Check a larger purchase</span></button>
+    </div>
+    <form id="preview-form">
+      <input id="amount" type="hidden" defaultValue="5" />
+      <div className="actions"><button type="button" id="copy" disabled>Copy 5-USDC purchase prompt</button><button type="submit" id="preview" className="secondary" disabled>Check account policy</button></div>
+      <p id="prompt-help" className="hint">Use the contract setup below once, then copy the prompt into your agent session. No tokens or compute credits are delivered.</p>
+      <details className="prompt-details"><summary>See the prompt</summary><pre id="agent-prompt">Choose a service target to prepare the prompt. Your agent can select its own identity.</pre></details>
+    </form>
+  </section>
+  <section className="account-policy" aria-labelledby="account-title">
+    <div className="section-heading"><h2 id="account-title">Check the purchase</h2><span className="hint">Read from the agent account</span></div>
+    <label htmlFor="agent">Agent address to inspect</label>
+    <div className="amount-row"><input id="agent" placeholder="0x… (your agent can give you this)" spellCheck="false" autoComplete="off" /><button id="inspect" className="secondary" disabled>Read contract</button></div>
+    <p id="policy-summary" className="policy-summary">Read an agent to see its stored rules. Nothing here assumes a 5-USDC limit.</p>
+    <div className="decision" id="decision" data-state="idle" aria-live="polite"><strong id="decision-label">Not checked yet</strong><p id="decision-detail">Enter an agent address and service target, then read the contract.</p><small id="decision-block"></small></div>
+    <p className="hint">Change spending rules in your Agentic World portal, then read this contract again. Registering with Service C does not change those rules.</p>
+    <button id="copy-policy" className="secondary" disabled>Copy portal setup instructions</button>
+    <details className="technical-details"><summary>Contract details</summary>
+      <dl><div><dt>Owner</dt><dd id="owner">—</dd></div><div><dt>Policy revision</dt><dd id="revision">—</dd></div><div><dt>Authenticator</dt><dd id="auth-state">—</dd></div></dl>
+      <pre id="policy">No contract read yet.</pre><code id="token"></code>
+    </details>
+  </section>
+  <details className="setup-details" id="service-setup">
+    <summary>Service contract setup <span id="target-state">Not configured</span></summary>
+    <p className="hint">One-time demo setup: reuse a Service C purchase contract or deploy one with your wallet. This is not a new agent account. Deployment costs Sepolia gas but moves no USDC.</p>
+    <label htmlFor="target">Service C purchase contract</label><input id="target" placeholder="0x…" spellCheck="false" autoComplete="off" />
+    <button id="deploy" className="secondary" disabled>Deploy purchase contract</button>
+    <p className="hint">The portal’s “Token purchase” rule targets this contract’s purchaseCompute(USDC, amount) function.</p>
+  </details>
+  <section className="status-region" aria-label="Operation status"><p id="status" role="status">Connecting to Sepolia…</p><a id="tx-link" hidden target="_blank" rel="noopener noreferrer">View submitted transaction</a><button id="check-tx" className="secondary" hidden>Check submitted transaction</button></section>
+  <details className="history"><summary>Recent policy checks</summary><div id="history" aria-live="polite">No checks yet.</div></details>
+  <footer>Onchain policy preview—not a transfer or an execution guarantee. No token funding or allowance is needed. Testnet USDC amounts are not a live USD price.</footer>
 </main>
 </>;
 }

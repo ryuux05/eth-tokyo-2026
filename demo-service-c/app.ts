@@ -1,6 +1,6 @@
-import { encodeFunctionData, isAddress, keccak256, toHex, type Address, type Hex } from "viem";
-import { agentPolicyAbi } from "../sdk/policy.js";
-import { parseUsdc, serviceCPolicy } from "./policy.js";
+import { formatUnits, isAddress, maxUint256, toHex, type Address, type Hex } from "viem";
+import { decodePolicy, Decision, TOKEN_PURCHASE_SELECTOR } from "../sdk/policy.js";
+import { parseUsdc } from "./policy.js";
 
 type Config = { audience: string; chainId: number; token: Address; deploymentBytecode: Hex };
 type Snapshot = { agentId: Address; owner: Address; revoked: boolean; target: Address; amount: string; decision: string;
@@ -33,8 +33,9 @@ function controls() {
   for (const node of document.querySelectorAll<HTMLInputElement | HTMLButtonElement>("input,button"))
     node.disabled = busy || !config;
   el<HTMLButtonElement>("deploy").disabled ||= Boolean(pending);
-  el<HTMLButtonElement>("save").disabled ||= Boolean(pending) || !el<HTMLInputElement>("replace").checked;
   el<HTMLButtonElement>("check-tx").hidden = !pending;
+  el<HTMLButtonElement>("copy").disabled ||= !isAddress(input("target"));
+  el<HTMLButtonElement>("copy-policy").disabled ||= !isAddress(input("target"));
   const link = el<HTMLAnchorElement>("tx-link");
   link.hidden = !pending || pending.chainId !== 11155111;
   if (pending) link.href = `https://sepolia.etherscan.io/tx/${pending.hash}`;
@@ -46,8 +47,8 @@ async function work(action: () => Promise<void>) {
   catch (error) { status(error instanceof Error ? error.message : "Operation failed. Check your wallet before retrying.", true); }
   finally { busy = false; controls(); }
 }
-async function api<T>(path: string): Promise<T> {
-  const response = await fetch(path, { cache: "no-store", signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(30_000)]) });
+async function api<T>(path: string, data?: unknown): Promise<T> {
+  const response = await fetch(path, { cache: "no-store", ...(data ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) } : {}), signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(30_000)]) });
   const body = await response.json();
   if (!response.ok) throw new Error(body.error ?? `Service returned ${response.status}`);
   return body as T;
@@ -59,10 +60,12 @@ function addresses() {
   return { agentId, target };
 }
 function updatePrompt() {
-  const { agentId, target } = addresses();
+  const target = input("target"), agentId = input("agent");
+  el("copy").textContent = `Copy ${input("amount")}-USDC purchase prompt`;
+  if (!isAddress(target)) { el("agent-prompt").textContent = "Choose a service target in one-time setup first."; return; }
   const amount = input("amount"); parseUsdc(amount);
   const url = `${location.origin}/private/quote?${new URLSearchParams({ target, amount })}`;
-  el("agent-prompt").textContent = `GET ${url}. This is my Service C policy workbench${location.protocol === "http:" ? " (intentional loopback HTTP)" : ""}; expected audience: ${config.audience}. If the 401 offers AgenticWorld, retry the same resource with Agent-ID ${agentId}, sign its challenge using agentic_session_proof, and retry using the returned proof headers. Report the policy decision and block. This is a read-only quote: do not submit a payment, approval, or policy transaction.`;
+  el("agent-prompt").textContent = `Check a ${amount}-USDC compute-credit purchase from Service C. This is a read-only demo: purchase checked, not paid. ${isAddress(agentId) ? `Use agent ${agentId}.` : "Use my Agentic World identity; if I have several, ask which one."} GET ${url}${location.protocol === "http:" ? " (intentional loopback HTTP)" : ""}. Expected audience: ${config.audience}. Only if the resource offers AgenticWorld in its 401, retry with Agent-ID, sign the service-issued challenge using agentic_session_proof, and retry the same resource with the returned proof headers. The service must recognize my registered owner wallet. Verify the quote uses chain ${config.chainId}, target ${target}, USDC ${config.token}, amount ${amount}, and zero native value. Use agentic_policy_check for the quoted purchaseCompute call to independently read my account's current decision; report that decision, agent ID, revision/block when available, and any difference from the service quote. ALLOW is not a payment receipt. Do not request a spending signature, send tokens, grant allowances or change policy. Policy changes belong in my Agentic World portal.`;
 }
 async function inspect(amount = input("amount")): Promise<Snapshot> {
   parseUsdc(amount);
@@ -75,10 +78,21 @@ function render(value: Snapshot) {
   el("revision").textContent = value.policyRevision;
   el("auth-state").textContent = value.revoked ? "Revoked — cannot execute" : "Active";
   el("policy").textContent = value.policy === "0x" ? "No rules configured. Every action is denied." : value.policy;
+  let summary = "Custom account policy. Check the requested amount to see the matching decision.";
+  try {
+    const rules = value.policy === "0x" ? [] : decodePolicy(value.policy);
+    const [allow, approval] = rules;
+    if (!rules.length) summary = "No policy configured in this agent. All actions are denied.";
+    else if (rules.length === 2 && allow.decision === Decision.ALLOW && approval.decision === Decision.REQUIRE_OWNER_SIGNATURE &&
+      approval.maxAmount >= allow.maxAmount && rules.every(rule => rule.target.toLowerCase() === value.target.toLowerCase() &&
+      rule.token.toLowerCase() === config.token.toLowerCase() && rule.selector === TOKEN_PURCHASE_SELECTOR && rule.maxValue === 0n))
+      summary = `Stored in the agent account: up to ${formatUnits(allow.maxAmount, 6)} USDC per purchase is allowed. Above that${approval.maxAmount === maxUint256 ? "" : `, up to ${formatUnits(approval.maxAmount, 6)} USDC,`} needs the owner’s signature. Other actions and amounts are denied.`;
+  } catch { summary = "Policy could not be summarized. The decision below is read directly from the account."; }
+  el("policy-summary").textContent = summary;
   el("decision").dataset.state = value.decision;
   el("decision-label").textContent = labels[value.decision] ?? "Unknown decision";
   el("decision-detail").textContent = `${value.amount} USDC · ${value.decision === "ALLOW" ? "Within an allowed rule." : value.decision === "DENY" ? "No matching allow rule. Owner approval cannot bypass DENY." : "Execution needs the owner’s signature bound to this exact action and current policy."}${value.revoked ? " Authenticator is revoked; policy ALLOW does not restore it." : ""}`;
-  el("decision-block").textContent = `Block ${value.blockNumber} · policy revision ${value.policyRevision} · no transfer submitted`;
+  el("decision-block").textContent = `Block ${value.blockNumber} · policy revision ${value.policyRevision} · Purchase checked—not paid`;
   void refreshHistory().catch(() => {});
   updatePrompt();
 }
@@ -126,13 +140,14 @@ async function checkTransaction() {
     el<HTMLInputElement>("target").value = receipt.contractAddress;
     storage.set(`${config.chainId}:target`, receipt.contractAddress);
     rememberPending(undefined);
-    status("Demo target deployed. Enter your agent ID, then read its current policy. No tokens were moved.");
+    el<HTMLDetailsElement>("service-setup").open = false;
+    updateTarget(); updatePrompt();
+    status("Service target ready. Copy the prompt, or enter an agent address to read its policy. No tokens were moved.");
   } else {
     el<HTMLInputElement>("agent").value = value.agentId;
     el<HTMLInputElement>("target").value = value.target;
     const snapshot = await inspect(); render(snapshot);
     rememberPending(undefined);
-    el<HTMLInputElement>("replace").checked = false;
     status(snapshot.policyHash.toLowerCase() === value.expectedPolicyHash?.toLowerCase()
       ? "Policy confirmed onchain. Try 5 and 5.000001 USDC, then change the boundary and check again."
       : "Transaction confirmed, but the current policy differs from the submitted one. Review its current revision before making another change.");
@@ -149,7 +164,16 @@ async function submitted(value: Pending) {
 }
 
 listen(el("connect-wallet"), "click", () => void work(async () => {
-  await wallet(); status("Wallet connected to Sepolia. Connecting does not sign or submit a transaction.");
+  const { ethereum, from } = await wallet();
+  const current = await api<{ registered: boolean }>(`/owner/status?owner=${from}`);
+  if (!current.registered) {
+    status("Sign the registration message in your wallet. This grants quote access only, not spending authority.");
+    const challenge = await api<{ nonce: Hex; message: string }>("/owner/challenge", { owner: from });
+    const signature = await ethereum.request({ method: "personal_sign", params: [toHex(challenge.message), from] });
+    await api("/owner/register", { owner: from, nonce: challenge.nonce, signature });
+  }
+  el("connected-wallet").textContent = `Registered · ${from}. Agents owned by this wallet can request quotes.`;
+  status("Owner registered. No agent allowlist, payment approval or account-policy change was made.");
 }));
 listen(el("deploy"), "click", () => void work(async () => {
   if (pending) throw new Error("Check the previously submitted transaction first.");
@@ -159,28 +183,42 @@ listen(el("deploy"), "click", () => void work(async () => {
   const hash = await ethereum.request({ method: "eth_sendTransaction", params: [{ from, data: config.deploymentBytecode, value: "0x0", chainId: toHex(config.chainId) }] }) as Hex;
   await submitted({ hash, chainId: config.chainId, kind: "deploy", agentId: from, target: from });
 }));
-listen(el("save"), "click", () => void work(async () => {
-  if (pending || !el<HTMLInputElement>("replace").checked) throw new Error("Acknowledge the full policy replacement and resolve any pending transaction first.");
-  const state = await inspect();
-  const { ethereum, from } = await wallet();
-  if (state.owner.toLowerCase() !== from.toLowerCase()) throw new Error(`Connect the agent's owner wallet: ${state.owner}`);
-  const policy = serviceCPolicy(state.target, config.token, parseUsdc(input("threshold")));
-  const data = encodeFunctionData({ abi: agentPolicyAbi, functionName: "setPolicy", args: [policy] });
-  status("Confirm the policy replacement in your wallet. The existing rules remain until the transaction confirms.");
-  const hash = await ethereum.request({ method: "eth_sendTransaction", params: [{ from, to: state.agentId, data, value: "0x0", chainId: toHex(config.chainId) }] }) as Hex;
-  await submitted({ hash, chainId: config.chainId, kind: "policy", agentId: state.agentId, target: state.target, expectedPolicyHash: keccak256(policy) });
-}));
 const preview = () => work(async () => { status("Reading the latest onchain policy…"); render(await inspect()); status("Policy read from chain. No transaction submitted."); });
 listen(el("inspect"), "click", () => void preview());
 listen(el("preview-form"), "submit", event => { event.preventDefault(); void preview(); });
 for (const button of document.querySelectorAll<HTMLButtonElement>("[data-amount]")) listen(button, "click", () => {
-  el<HTMLInputElement>("amount").value = button.dataset.amount!; void preview();
+  el<HTMLInputElement>("amount").value = button.dataset.amount!;
+  for (const pack of document.querySelectorAll<HTMLButtonElement>("[data-amount]")) pack.setAttribute("aria-pressed", String(pack === button));
+  invalidate(); updatePrompt();
+  status(`${input("amount")} USDC selected. Copy the purchase-check prompt or read the account policy.`);
 });
-listen(el("replace"), "change", controls);
 listen(el("check-tx"), "click", () => void work(checkTransaction));
 listen(el("copy"), "click", () => void work(async () => {
   updatePrompt(); await navigator.clipboard.writeText(el("agent-prompt").textContent!); status("Agent instruction copied. It requests a quote, not a payment.");
 }));
+listen(el("copy-policy"), "click", () => void work(async () => {
+  const target = input("target"); if (!isAddress(target)) throw new Error("Set a Service C target first.");
+  const agent = input("agent");
+  const prompt = `Open agentic_portal for ${isAddress(agent) ? `my agent ${agent}` : "my Agentic World agent (ask which identity if there are several)"} on chain ${config.chainId}. Help me configure ordered Token purchase rules for Service C's compute-credit purchase. Target: ${target}. Function: purchaseCompute(address,uint256), selector ${TOKEN_PURCHASE_SELECTOR}. Token: USDC ${config.token}, 6 decimals. Native value: 0. First rule: ALLOW up to 5 USDC (5000000 base units). Second: REQUIRE_OWNER_SIGNATURE up to 100 USDC (100000000 base units). Unmatched actions remain DENY. Explain existing rules before I replace anything; I must save and approve the policy in my wallet. Then I can compare Service C's 5 and 20 USDC packs. Do not send tokens, grant allowances, or edit policy outside the portal.`;
+  await navigator.clipboard.writeText(prompt); status("Portal instructions copied. Configure and save the policy there; Service C only reads it.");
+}));
+function updateTarget() {
+  const target = input("target");
+  el("target-state").textContent = isAddress(target) ? `${target.slice(0, 8)}…${target.slice(-4)}` : "Not configured";
+  if (config && isAddress(target)) storage.set(`${config.chainId}:target`, target);
+}
+function invalidate() {
+  el("decision").dataset.state = "idle"; el("decision-label").textContent = "Check again";
+  el("decision-detail").textContent = "Inputs changed. Read the contract for a fresh result."; el("decision-block").textContent = "";
+  el("policy-summary").textContent = "Read the contract to see the rules for this agent and target.";
+  for (const id of ["owner", "revision", "auth-state"]) el(id).textContent = "—";
+  el("policy").textContent = "Read the current account policy.";
+}
+for (const id of ["agent", "target", "amount"]) listen(el(id), "input", () => {
+  invalidate();
+  updateTarget(); controls();
+  try { updatePrompt(); } catch { el("agent-prompt").textContent = "Enter a positive amount with up to six decimal places."; }
+});
 void work(async () => {
   config = await api<Config>("/config");
   if (disposed) return;
@@ -188,6 +226,8 @@ void work(async () => {
   el("token").textContent = `USDC · ${config.token} · 6 decimals`;
   el<HTMLInputElement>("agent").value = storage.get(`${config.chainId}:agent`) ?? "";
   el<HTMLInputElement>("target").value = storage.get(`${config.chainId}:target`) ?? "";
+  updateTarget(); updatePrompt();
+  el<HTMLDetailsElement>("service-setup").open = !isAddress(input("target"));
   const saved = storage.get(`${config.chainId}:pending`);
   if (saved) {
     try {
@@ -195,7 +235,7 @@ void work(async () => {
       if (value.chainId === config.chainId && /^0x[0-9a-fA-F]{64}$/.test(value.hash) && ["deploy", "policy"].includes(value.kind)) pending = value;
     } catch { /* Ignore malformed browser state. */ }
   }
-  status(pending ? "A submitted transaction was restored. Check it before sending another." : "Enter your agent and deploy or reuse a demo target. Read policy before making changes.");
+  status(pending ? "A submitted transaction was restored. Check it before sending another." : "Register your owner wallet for agent access. Reading public account policy does not require registration.");
 });
 const timer = setInterval(() => { if (config && !document.hidden && isAddress(input("agent"))) void refreshHistory().catch(() => {}); }, 3000);
 
