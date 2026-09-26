@@ -84,6 +84,29 @@ integration or MCP UserOperation execution tool. Only single-call, revert-on-err
 ERC-7579 execution is supported, and execution defaults to deny. See the
 [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
 
+### Deployed contracts — Sepolia
+
+Network: **Ethereum Sepolia**, chain ID **11155111**. These are the current
+trusted addresses in [`sdk/deployments.ts`](sdk/deployments.ts).
+
+| Component | Address |
+| --- | --- |
+| AgentAccountFactory | [0x63f158897834bbc1579e82dfc29a7aacc8b91f93](https://sepolia.etherscan.io/address/0x63f158897834bbc1579e82dfc29a7aacc8b91f93) |
+| AgentAccount4337 implementation | [0xd08B955ca8727d86e708ae5684D5fa7f32635e66](https://sepolia.etherscan.io/address/0xd08B955ca8727d86e708ae5684D5fa7f32635e66) |
+| AgentValidator | [0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55](https://sepolia.etherscan.io/address/0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55) |
+| AgentPolicyHook | [0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968](https://sepolia.etherscan.io/address/0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968) |
+| EntryPoint v0.8 (existing infrastructure) | [0x4337084d9e255ff0702461cf8895ce9e3b5ff108](https://sepolia.etherscan.io/address/0x4337084d9e255ff0702461cf8895ce9e3b5ff108) |
+
+Factory deployment transaction:
+[0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c](https://sepolia.etherscan.io/tx/0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c).
+The factory deployed the implementation, validator, and policy hook; each agent
+gets its own account address when its owner creates it.
+
+**These addresses predate the management-target guard and ERC-165 fixes described
+above.** Listing them does not mean the corrected source has been redeployed.
+
+### Run locally
+
 To run the checks:
 
 ```sh
