@@ -2,6 +2,7 @@
   "name": "agentic-world",
   "private": true,
   "type": "module",
+  "files": ["dist/sdk"],
   "exports": {
     "./core": {
       "types": "./dist/sdk/core.d.ts",
