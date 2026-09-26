@@ -15,6 +15,7 @@
     .sheet { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:22px 24px; }
     dl { margin:0 0 18px; } .fact { display:grid; grid-template-columns:145px minmax(0,1fr); gap:14px; align-items:baseline; border-bottom:1px solid #e2ebe8; padding:9px 0; }
     dt { color:var(--muted); font-size:12px; } dd { margin:0; font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
+    .fact[hidden] { display:none; }
     .code { font:11px/1.5 ui-monospace,SFMono-Regular,monospace; }
     details { margin:0 0 18px; color:var(--muted); font-size:12px; }
     summary { cursor:pointer; width:max-content; max-width:100%; } ul { margin:8px 0 0; padding-left:20px; } li { margin:5px 0; overflow-wrap:anywhere; }
@@ -44,6 +45,9 @@
         <div class="fact"><dt>Agent</dt><dd class="code" id="agent">Loading…</dd></div>
         <div class="fact"><dt>Owner wallet</dt><dd class="code" id="owner">Loading…</dd></div>
         <div class="fact"><dt>Transaction target</dt><dd class="code" id="target">Loading…</dd></div>
+        <div class="fact" id="payment-amount-row" hidden><dt>Send</dt><dd id="payment-amount"></dd></div>
+        <div class="fact" id="payment-recipient-row" hidden><dt>Recipient</dt><dd class="code" id="payment-recipient"></dd></div>
+        <div class="fact" id="payment-expiry-row" hidden><dt>Approval expires</dt><dd id="payment-expiry"></dd></div>
       </dl>
       <details><summary id="details-label">Exact change</summary><ul id="details"></ul></details>
       <button id="action" type="button">Connect owner wallet</button>
@@ -93,6 +97,14 @@
       el("summary").textContent=context.summary;
       el("network").textContent=`${context.chainName} · ${context.transaction.chainId}`;
       el("agent").textContent=context.agentId;el("owner").textContent=context.transaction.from;el("target").textContent=context.transaction.to;
+      if(context.typedData){
+        el("title").textContent="Approve USDC payment";
+        for(const name of ["amount","recipient","expiry"])el(`payment-${name}-row`).hidden=false;
+        el("payment-amount").textContent=`${context.amount} USDC`;
+        el("payment-recipient").textContent=context.recipient;
+        el("payment-expiry").textContent=new Date(context.deadline*1000).toLocaleString();
+        document.querySelector(".caution").textContent="Signing authorizes this exact transfer. Approval is not a payment receipt. Check the final payment status with your agent.";
+      }
       el("details-label").textContent=`Exact change (${context.details.length} ${context.details.length===1?"item":"items"})`;
       for(const detail of context.details){const item=document.createElement("li");item.textContent=detail;el("details").append(item);}
       if(context.submittedHash){
@@ -123,11 +135,21 @@
             }
           }
           await verifyNetwork();stage="send";action.textContent="Review in wallet";
-          status("Review the exact change and transaction target, then approve in your wallet.");
+          status(context.typedData?"Review the amount and recipient, then sign the single-use approval in your wallet.":"Review the exact change and transaction target, then approve in your wallet.");
         }else if(stage==="send"){
           const accounts=await window.ethereum.request({method:"eth_accounts"});
           if(!accounts.some(address=>address.toLowerCase()===context.transaction.from.toLowerCase()))throw new Error("Owner wallet changed. Reconnect before approving.");
           await verifyNetwork();
+          if(context.typedData){
+            await walletState("pending");inWallet=true;cancel.disabled=true;
+            try{
+              const typedData={...context.typedData,types:{...context.typedData.types,EIP712Domain:[{name:"name",type:"string"},{name:"version",type:"string"},{name:"chainId",type:"uint256"},{name:"verifyingContract",type:"address"}]}};
+              const signature=await window.ethereum.request({method:"eth_signTypedData_v4",params:[context.transaction.from,JSON.stringify(typedData)]});
+              await api("complete",{signature});stage="done";pageConnection.close();action.textContent="Approval signed";
+              status("Approval returned to your agent. Ask it for the payment receipt; no payment is confirmed by this page.","success");
+            }finally{inWallet=false;if(stage!=="done"){cancel.disabled=false;await walletState("rejected").catch(()=>{});}}
+            return;
+          }
           await walletState("pending");walletUnresolved=true;inWallet=true;cancel.disabled=true;
           try{pendingHash=await window.ethereum.request({method:"eth_sendTransaction",params:[{from:context.transaction.from,to:context.transaction.to,data:context.transaction.data,value:"0x0"}]});}
           catch(error){

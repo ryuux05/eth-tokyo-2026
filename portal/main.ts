@@ -8,6 +8,7 @@ import {
   decodePolicy, encodePolicy, isExpectedAgentClone, type PolicyRule,
 } from "../sdk/core.js";
 import { DEPLOYMENTS, type Deployment } from "./config.js";
+import { decodeTransferPolicy, policyEncodingVersion, type TransferPolicyRule } from "../sdk/policy.js";
 
 type RuleKind = "native" | "token";
 type OperatingKey = { scheme: "p256"; qx: Hex; qy: Hex } | { scheme: "secp256k1"; address: Address };
@@ -65,6 +66,7 @@ let currentKey: OperatingKey | undefined;
 let revoked = false;
 let currentPolicy: Hex = "0x";
 let savedRules: PolicyRule[] = [];
+let transferRules: TransferPolicyRule[] | undefined;
 let localCreationAvailable = false;
 let busy = false;
 let nextRuleId = 1;
@@ -183,12 +185,13 @@ function refresh(): void {
   ui.keyHelp.textContent = localCreationAvailable
     ? "Rotate or restore with a new hardware-backed key. Your local MCP prepares it automatically; your owner wallet approves the change."
     : "Open agentic-world:portal with the local MCP to rotate or restore a hardware-backed key. Revocation and policy changes still use your connected wallet.";
-  ui.addNative.disabled = busy || !verifiedAgent;
-  ui.addToken.disabled = busy || !verifiedAgent;
+  ui.addNative.disabled = busy || !verifiedAgent || !!transferRules;
+  ui.addToken.disabled = busy || !verifiedAgent || !!transferRules;
   let encoded: Hex | undefined;
   try { encoded = encodeDraft(); ui.draftHash.textContent = keccak256(encoded); }
   catch (error) { ui.draftHash.textContent = readableError(error); }
-  ui.savePolicy.disabled = busy || !verifiedAgent || !encoded || same(encoded, currentPolicy);
+  if (transferRules) ui.draftHash.textContent = keccak256(currentPolicy);
+  ui.savePolicy.disabled = busy || !verifiedAgent || !encoded || same(encoded, currentPolicy) || !!transferRules;
   const hasSavedTokenRule = savedRules.some(rule => !same(rule.token, zeroAddress));
   ui.previewSmall.disabled = busy || !verifiedAgent || !hasSavedTokenRule;
   ui.previewLarge.disabled = busy || !verifiedAgent || !hasSavedTokenRule;
@@ -217,6 +220,19 @@ function field(labelText: string, value: string, change: (value: string) => void
 }
 function renderRules(): void {
   ui.rules.replaceChildren();
+  if (transferRules) {
+    const note = document.createElement("p");
+    note.textContent = "Recipient-bound transfer policy. Edit with agentic_set_transfer_policy in your connected MCP; your wallet approves every policy change. Limits are per transfer, not a daily budget.";
+    ui.rules.append(note);
+    for (const [index, rule] of transferRules.entries()) {
+      const row = document.createElement("p");
+      row.textContent = `${index + 1}. ${["Deny", "Allow", "Owner signature required"][rule.decision]} · recipient ${rule.recipient} · token ${rule.token} · maximum ${rule.maxAmount} base units`;
+      ui.rules.append(row);
+    }
+    if (!transferRules.length) { const empty = document.createElement("p"); empty.textContent = "No transfers permitted (default deny)."; ui.rules.append(empty); }
+    ui.summaryPolicy.textContent = `${transferRules.length} transfer rules`;
+    refresh(); return;
+  }
   if (!draftRules.length) {
     const empty = document.createElement("div");
     empty.className = "empty-rules";
@@ -303,7 +319,7 @@ async function connect(): Promise<void> {
     }
   } catch { /* Standalone portal uses its checked-in pins. */ }
   verifiedAgent = undefined; currentKey = undefined; revoked = false;
-  currentPolicy = "0x"; savedRules = []; draftRules.splice(0, draftRules.length);
+  currentPolicy = "0x"; savedRules = []; transferRules = undefined; draftRules.splice(0, draftRules.length);
   ui.summaryPolicy.textContent = "0 draft rules";
   renderRules();
   ui.identityDetails.hidden = true;
@@ -399,7 +415,9 @@ async function verifyAgent(input?: Address): Promise<void> {
     ? { scheme: "p256", qx: coordinates[0], qy: coordinates[1] }
     : { scheme: "secp256k1", address: signer };
   revoked = isRevoked;
-  currentPolicy = loadedPolicy; savedRules = loadedPolicy === "0x" ? [] : decodePolicy(loadedPolicy);
+  currentPolicy = loadedPolicy;
+  transferRules = policyEncodingVersion(loadedPolicy) === 2 ? decodeTransferPolicy(loadedPolicy) : undefined;
+  savedRules = loadedPolicy === "0x" || transferRules ? [] : decodePolicy(loadedPolicy);
   ui.agent.value = agent; ui.identityDetails.hidden = false;
   ui.activeAgent.textContent = agent; ui.ownerValue.textContent = accountOwner;
   ui.validatorValue.textContent = validator; ui.policyHookValue.textContent = hook; ui.entryPointValue.textContent = entryPoint;
@@ -478,6 +496,7 @@ async function changeSigner(operation: "rotateAuthenticator" | "restoreAuthentic
 }
 
 async function savePolicy(): Promise<void> {
+  if (transferRules) throw new Error("Use agentic_set_transfer_policy to edit this transfer policy; the purchase editor cannot overwrite it.");
   const { owner, agent } = context();
   await assertChain();
   const encoded = encodeDraft();
