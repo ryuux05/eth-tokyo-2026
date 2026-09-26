@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, recoverMessageAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
-import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
@@ -92,6 +92,13 @@ export async function startDemoService(options: Options) {
       },
     },
   });
+
+  const requireResource = (resource: Permission) => service.middleware({ realm: "Service A", authorize: ({ session, user }) => {
+    const allowed = user.permissions[resource];
+    if (!allowed) record("DENIED", session.agentId, `${resource} · 403`);
+    return allowed;
+  } });
+  const protectedResources = { report: requireResource("report"), compute: requireResource("compute") };
 
   let baseUrl = "";
   const server = createServer(async (request, response) => {
@@ -209,27 +216,13 @@ export async function startDemoService(options: Options) {
       return;
     }
     if (request.method === "GET" && (path === "/private/report" || path === "/private/compute")) {
-      const token = request.headers["agent-session"];
-      let authenticated;
-      try { authenticated = typeof token === "string" ? await service.readSession(token) : undefined; }
-      catch { sendJson(response, 503, { error: "Could not validate this service session" }); return; }
-      if (!authenticated) {
-        sendJson(response, 401, { error: "A valid Agent-Session is required",
-          authentication: { scheme: "AgenticWorld", audience: options.audience,
-            challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" } },
-        { "WWW-Authenticate": `AgenticWorld realm="Service A", challenge="/agent/challenge", session="/agent/session", audience="${options.audience}"` });
-        return;
-      }
       const resource: Permission = path === "/private/report" ? "report" : "compute";
-      const current = enrollments.get(authenticated.session.agentId.toLowerCase());
-      if (!current?.permissions[resource]) {
-        record("DENIED", authenticated.session.agentId, `${resource} · 403`);
-        sendJson(response, 403, { error: "This service has not granted the agent this resource", resource });
-        return;
-      }
-      record("ALLOWED", authenticated.session.agentId, `${resource} · 200`);
-      sendJson(response, 200, { service: "Service A", resource, agentId: current.agentId,
-        owner: current.owner, result: resource === "report" ? "Local report available" : "Local compute credit available" });
+      await protectedResources[resource](request, response, () => {
+        const { session, user } = (request as AgenticRequest<Enrollment>).agentic!;
+        record("ALLOWED", session.agentId, `${resource} · 200`);
+        sendJson(response, 200, { service: "Service A", resource, agentId: session.agentId,
+          owner: user.owner, result: resource === "report" ? "Local report available" : "Local compute credit available" });
+      });
       return;
     }
     sendJson(response, 404, { error: "Unknown route" });

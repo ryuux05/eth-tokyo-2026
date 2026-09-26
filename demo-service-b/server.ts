@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, verifyMessage, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
-import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
@@ -79,6 +79,11 @@ export async function startDemoServiceB(options: Options) {
       },
     },
   });
+
+  const requireReport = service.middleware({ realm: "Service B", authorize: ({ session, user }) => {
+    if (!user.report) record("DENIED", "Report permission is not active", session.owner, session.agentId);
+    return user.report;
+  } });
 
   let baseUrl = "";
   const server = createServer(async (request, response) => {
@@ -187,26 +192,13 @@ export async function startDemoServiceB(options: Options) {
       return;
     }
     if (request.method === "GET" && path === "/private/report") {
-      const token = request.headers["agent-session"];
-      let authenticated;
-      try { authenticated = typeof token === "string" ? await service.readSession(token) : undefined; }
-      catch { sendJson(response, 503, { error: "Could not validate this service session" }); return; }
-      if (!authenticated) {
-        record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
-        sendJson(response, 401, { error: "A valid Agent-Session is required",
-          authentication: { scheme: "AgenticWorld", audience: options.audience,
-            challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" } },
-        { "WWW-Authenticate": `AgenticWorld realm="Service B", challenge="/agent/challenge", session="/agent/session", audience="${options.audience}"` });
-        return;
-      }
-      if (!authenticated.user?.report) {
-        record("DENIED", "Report permission is not active", authenticated.session.owner, authenticated.session.agentId);
-        sendJson(response, 403, { error: "This wallet has no report entitlement" });
-        return;
-      }
-      record("ALLOWED", "Report returned · 200", authenticated.session.owner, authenticated.session.agentId);
-      sendJson(response, 200, { service: "Service B", resource: "report", agentId: authenticated.session.agentId,
-        owner: authenticated.session.owner, result: "Owner-associated private report available" });
+      await requireReport(request, response, () => {
+        const { session } = (request as AgenticRequest<Entitlement>).agentic!;
+        record("ALLOWED", "Report returned · 200", session.owner, session.agentId);
+        sendJson(response, 200, { service: "Service B", resource: "report", agentId: session.agentId,
+          owner: session.owner, result: "Owner-associated private report available" });
+      });
+      if (response.statusCode === 401) record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
       return;
     }
     sendJson(response, 404, { error: "Unknown route" });
