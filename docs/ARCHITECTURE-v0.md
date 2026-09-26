@@ -10,7 +10,7 @@ This is the v0 architecture now implemented in the contracts, SDKs, and owner po
 | Identity | `0xAGENT`, `owner() = 0xHUMAN` | Persistent agent identity and human association. `owner()` is not a grant of the human's service permissions. |
 | Agent authentication | `AgentValidator`, P-256 Secure Enclave or legacy secp256k1 operating key, ERC-1271 | Validate agent-signed UserOperations and service proofs without giving the runtime the human's key. P-256 requires EIP-7951 at `0x100`; unsupported chains fail closed. |
 | User execution policy | `AgentPolicyHook` + `PolicyEngine` | Gate onchain execution by the agent account according to owner-configured rules. This cannot enforce the agent's offchain instructions. |
-| Service authentication | Signed HTTP request → ERC-1271 → short-lived service session | Each service verifies the agent account independently; the local MCP now derives proof fields from a URL request. |
+| Service authentication | Service challenge → MCP proof → ERC-1271 → short-lived service session | Each service issues and verifies its own challenge; MCP signs but does not send the HTTP request. |
 | Service authorization | Service database | Each service chooses manual agent registration **or** `owner()`-derived association, then applies its own route, entitlement, payment, and resource rules. |
 
 These are distinct decisions: authenticating `0xAGENT`, associating it with a service user, allowing a service resource, and authorizing an onchain account action. Neither `owner()` nor an onchain execution policy is a universal service mandate. Agentic World cannot verify a black-box model's intent.
@@ -26,10 +26,10 @@ The hook is an execution boundary, **not** a replacement for signature validatio
 
 ## Service request path
 
-1. The agent asks local MCP to access a full HTTPS URL. MCP derives the audience and exact method/path/query/body; its signer generates the nonce and timestamps and signs the existing `AgentRequest` EIP-712 digest. The wire format is unchanged.
-2. The service reconstructs the digest from the received request, checks audience/chain/time, and calls `0xAGENT.isValidSignature(digest, encodedProof)` via `eth_call`. The smart account forwards the ERC-1271 check to the installed `AgentValidator`; the module's ERC-7579 interface is `isValidSignatureWithSender`.
-3. A valid ERC-1271 result (`0x1626ba7e`) proves that the **current account authentication rules** accept this agent proof. The service then atomically consumes the nonce before granting a session or resource. It does not grant access by itself; a short-lived session is service-local.
-4. The service maps the agent to a local user by explicit registration (`manual`) or by reading `owner()` and resolving that wallet (`owner`). It then checks its own authorization rules before serving the resource. Sessions, replay records, and entitlements stay in that service's database.
+1. The agent asks the service for a challenge for `0xAGENT`. The service SDK stores a random nonce, expected agent, audience, chain, and short expiry. The agent passes the challenge to `agentic_session_proof`; MCP checks the current onchain key and signs the structured `AgentAuthentication` object without contacting the service.
+2. The agent submits the proof to the service. The service checks its stored challenge and calls `0xAGENT.isValidSignature(digest, encodedProof)` via `eth_call`. The smart account forwards the ERC-1271 check to the installed `AgentValidator`.
+3. The service atomically consumes the challenge, maps the agent to a local user by explicit registration (`manual`) or verified `owner()` (`owner`), runs its own session-admission rule, and creates a short-lived, service-local `Agent-Session`.
+4. The agent sends later resource requests with `Agent-Session`. The service checks route/resource permissions on every request. Sessions, challenges, and entitlements stay in that service's database; a valid signature is not itself a resource grant.
 
 For owner association, services pin the trusted implementation, compare the agent's exact ERC-1167 clone runtime to that implementation, and read `owner()` at the same block as ERC-1271 verification. The account has no upgrade path and its owner cannot be changed after atomic factory initialization. An agent-supplied `owner` value is never sufficient. [ERC-7579 ERC-1271 forwarding](https://eips.ethereum.org/EIPS/eip-7579#erc-1271-forwarding)
 

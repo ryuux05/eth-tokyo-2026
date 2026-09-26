@@ -47,43 +47,49 @@ EIP712Domain {
 }
 ```
 
-Both service-proof types bind `agentId`, `audienceHash = keccak256(canonical HTTPS service origin)`, a 32-byte nonce, `issuedAt`, and `expiresAt`. `AgentRequest` also binds `methodHash`, `targetHash`, and `bodyHash` for the exact HTTP request. The target is the origin-form path plus raw query; the body hash covers the raw bytes. A P-256 account uses a 64-byte low-s `r || s` signature; the older secp256k1 account uses a 65-byte Ethereum ECDSA signature. Neither uses EIP-191 `personal_sign`. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+The active `AgentAuthentication` proof binds `agentId`, `audienceHash = keccak256(canonical HTTPS service origin)`, a service-generated 32-byte nonce, `issuedAt`, and `expiresAt`. The service stores the challenge before signing, so the proof cannot establish a session at another service or without issuance. The older `AgentRequest` format additionally binds HTTP method, target, and body, but is not the v0 MCP/session path. A P-256 account uses a 64-byte low-s `r || s` signature; the older secp256k1 account uses a 65-byte Ethereum ECDSA signature. Neither uses EIP-191 `personal_sign`. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
 
-The service reconstructs the digest from its expected chain and audience and the actual request. It calls `0xAGENT.isValidSignature(digest, encodedProof)` using `eth_call`. The account forwards validation to its fixed ERC-7579 `AgentValidator`. For P-256 accounts, the validator calls the native EIP-7951 `P256VERIFY` precompile at `0x100` and fails closed if the chain does not support it; there is no Solidity verification fallback. It checks the current, non-revoked operating key and only accepts the structured `AgentAuthentication` or `AgentRequest` envelope; an arbitrary raw operating-key signature does not become a general ERC-1271 wallet signature. The valid return value is `0x1626ba7e`. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), [EIP-7951](https://eips.ethereum.org/EIPS/eip-7951)
+The service reconstructs the digest from its stored challenge, expected chain, and audience. It calls `0xAGENT.isValidSignature(digest, encodedProof)` using `eth_call`. The account forwards validation to its fixed ERC-7579 `AgentValidator`. For P-256 accounts, the validator calls the native EIP-7951 `P256VERIFY` precompile at `0x100` and fails closed if the chain does not support it; there is no Solidity verification fallback. It checks the current, non-revoked operating key and only accepts structured `AgentAuthentication` or legacy `AgentRequest` envelopes; an arbitrary raw operating-key signature does not become a general ERC-1271 wallet signature. The valid return value is `0x1626ba7e`. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), [EIP-7951](https://eips.ethereum.org/EIPS/eip-7951)
 
 An ERC-1271 result only says this account currently accepts that proof. It does **not** prove nonce freshness, service permission, payment, or model intent. Those checks remain with the service.
 
-### Preferred: proof on the first resource request
+### Session establishment: service-issued challenge
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant A as Agent
-    participant K as Local Secure Enclave signer
+    participant K as Local Agentic MCP / Secure Enclave signer
     participant S as Service
     participant E as Ethereum / 0xAGENT
     participant D as Service DB
-    A->>K: Request AgentRequest proof for exact URL, method and body
-    K->>K: Generate nonce and 60-second validity; hash and sign
-    K-->>A: Request-bound proof
-    A->>S: Resource request + Agent-* proof headers
+    A->>S: Request challenge for 0xAGENT
+    S->>D: Store random nonce, agent, audience, chain, expiry
+    S-->>A: AgentAuthentication challenge
+    A->>K: agentic_session_proof(challenge)
+    K->>K: Check current onchain key and sign structured challenge
+    K-->>A: 0xAGENT + challenge + signature
+    A->>S: Submit proof to session endpoint
     S->>E: Check pinned account code and verify ERC-1271 at one block
     E-->>S: 0x1626ba7e
-    S->>D: Atomically consume (agentId, nonce)
+    S->>D: Atomically consume issued challenge
     S->>D: Resolve manual enrollment or verified owner()
-    S->>S: Apply local entitlement and route rules
+    S->>S: Apply service-defined session admission
+    S-->>A: Agent-Session
+    A->>S: Resource request + Agent-Session
+    S->>S: Check service-local route permission
     S-->>A: Allowed resource, or denial
 ```
 
-The wire headers are `Agent-ID`, `Agent-Chain-ID`, `Agent-Nonce`, `Agent-Issued-At`, `Agent-Expires-At`, and `Agent-Signature`. The service derives method, target, body hash, and audience from the actual HTTP request and trusted configuration. It rejects duplicate proof headers, wrong chain/audience/request, malformed proof, expiration, and replay. Its nonce store must perform an **atomic insert-if-absent** across workers and retain the key at least through the proof's expiry. An agent-generated nonce is not a service-issued challenge: the service verifies uniqueness and freshness window, not prior issuance. The request proof's ERC-1271 signature argument is `0x41575231` (`AWR1`) followed by `abi.encode(RequestProof)`.
+The service SDK exposes `createChallenge(agentId)` and `authenticate(proof)`. The application exposes challenge/session endpoints (the local demo uses `POST /agent/challenge` and `POST /agent/session`). The challenge store must atomically consume each issued nonce across workers and retain it through expiry. The signed proof includes the whole challenge and signature; the service compares it with stored data before ERC-1271 validation. The service session token is random, short-lived, and stored only as a hash. The exact HTTP endpoint names are service choices, not protocol fields.
 
-The service needs a documented rule for proxies that rewrite paths or queries before verification. If authorization depends on unsigned headers or content negotiation, the service must normalize or bind those inputs too. The SDK requires a canonical HTTPS audience; a deployment must also enforce HTTPS transport. The local MCP accepts `{url, method, body?}`, derives audience/path/query, and uses this same HTTP wire format. See [MCP.md](MCP.md) and [LOCAL-SIGNER.md](LOCAL-SIGNER.md).
+The SDK requires a canonical HTTPS audience; a deployment must enforce HTTPS transport. MCP validates the challenge and returns a proof but never sends the application request. See [MCP.md](MCP.md) and [LOCAL-SIGNER.md](LOCAL-SIGNER.md).
 
-### Alternative: service-issued challenge
+### Legacy compatibility: request-bound proof
 
-The lower-level SDK also supports `issueChallenge(agentId)` → `answerChallenge(challenge)` → `authenticate(proof)`. Here the service generates and stores the random nonce, expected agent, audience, issue time, and expiry before the agent signs `AgentAuthentication`. The service compares the response with that stored challenge, verifies ERC-1271, then atomically consumes the challenge. It may then issue a short local session. No `/connect` endpoint is required for the preferred first-request flow; a service must expose a way to issue challenges only if it chooses this alternative.
+The Core/agent/service SDKs retain `AgentRequest` proofs for older integrations. Those bind an agent-generated nonce to an exact method, target, and body, and require the service to reconstruct the request and atomically consume `(agentId, nonce)`. The local MCP no longer exposes this route. The v0 demo and integration path use service-issued challenges and sessions instead.
 
-In either flow, the service enforces the time window and replay rule. The validator cannot consume a service's offchain nonce. A valid proof can produce a random, short-lived, service-local session token; the SDK stores only its hash. The integrating service must decide whether to return that token and whether to serve the resource **after** its own authorization check. A token is a cached agent authentication result, not a human credential or resource grant. `readSession` checks expiry and reruns local association, but does not revalidate onchain signer state; immediate invalidation after key revocation requires a service-side recheck or explicit session invalidation.
+In either flow, the service enforces time and replay rules; the validator cannot consume an offchain nonce. A token is a cached agent authentication result, not a human credential or resource grant. `readSession` checks expiry and reruns local association, but does not revalidate onchain signer state; immediate invalidation after key revocation requires a service-side recheck or explicit session invalidation. The service checks permissions on each resource request.
 
 ## Account provenance and owner association
 

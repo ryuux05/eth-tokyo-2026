@@ -26,21 +26,20 @@ local stdio MCP process for the MCP checks:
 | --- | --- | --- |
 | Service A | `AgenticWorld` in `owner` mode | The verified `owner()` maps to a simulated paid user; `/private/report` is allowed. |
 | Service B | `AgenticWorld` in `manual` mode | The agent ID is enrolled locally; `/private/compute` is allowed, but `/private/admin` is denied. |
-| Agent | `createAgentSdk` | Signs each exact HTTP request with its own nonce and audience, then calls both services. |
-| Agentic World MCP | Local stdio server using a demo key adapter | Exposes identity, URL-based service request, and read-only policy preview tools to an MCP client. The demo maps two HTTPS audiences to loopback listeners. |
+| Agent | `createAgentSdk` | Answers each service-issued challenge, obtains separate sessions, then requests resources directly. |
+| Agentic World MCP | Local stdio server using a demo key adapter | Exposes identity, challenge-proof, and read-only policy preview tools. The MCP client—not MCP—sends the proof and resource requests to each local service. |
 
 Expected checks: A and B return 200 for their allowed resources; a Service A
 proof and session fail at B with 401; B returns 403 for `/private/admin` even
-after valid authentication; a repeated signed request returns 401. An MCP
-client discovers the seven tools, checks owner transaction preparation and the P-256 bootstrap path, calls both services by URL, reuses a service-scoped
-session, and confirms a route absent from the local demo transport map fails locally. Finally,
-the owner revokes the operating key onchain. Fresh signed requests then return
-401 at **both** services; the MCP server also refuses new authentication. The
+after valid authentication; a repeated challenge proof returns 401. An MCP
+client discovers the six tools, checks owner transaction preparation and the P-256 bootstrap path, obtains two challenges, uses MCP to sign each, and directly establishes service-scoped sessions. Finally,
+the owner revokes the operating key onchain. Fresh proofs then return
+401 at **both** services; the MCP server also refuses to sign a new session proof. The
 service SDK explicitly bypasses its RPC client's
 cached block height when checking a fresh proof; the regression test covers
 that freshness requirement.
 
-The two services have separate in-memory enrollment, nonce, session and route
+The two services have separate in-memory enrollment, challenge, session and route
 data. Neither calls an Agentic World authentication backend. They independently
 check the same onchain agent identity and current authenticator. The script
 prints deployment addresses and transaction hashes, then shuts down the

@@ -7,10 +7,10 @@ Built for ETHGlobal Tokyo 2026.
 **Architecture freeze:** Agentic World v0 uses an ERC-4337 / ERC-7579 smart
 account, an `AgentValidator` for operating-key authentication and ERC-1271, and an
 `AgentPolicyHook` plus `PolicyEngine` for owner-controlled onchain execution.
-The protocol lets services verify signed HTTP requests independently and keep their own
+The protocol lets services verify signed authentication challenges independently and keep their own
 authorization rules, with manual or `owner()`-derived agent association. See the
-[v0 architecture](docs/ARCHITECTURE-v0.md). The local MCP now canonicalizes
-URL-based requests. P-256 verification uses EIP-7951's native `0x100` precompile;
+[v0 architecture](docs/ARCHITECTURE-v0.md). The local MCP signs service-issued
+challenges and returns the proof to the agent; it never proxies resource requests. P-256 verification uses EIP-7951's native `0x100` precompile;
 EIP-8141 + ERC-8286 remain future work.
 
 Start with the [current implementation](docs/V0-IMPLEMENTATION.md),
@@ -38,8 +38,8 @@ offchain. Each service decides whether and how that agent may access its resourc
 
 - An ERC-4337 / ERC-7579 modular agent account with owner binding,
   `AgentValidator`, and owner-controlled `AgentPolicyHook`.
-- Request-bound, expiring signatures with single-use agent-generated nonces; a
-  service-issued challenge path remains available.
+- Service-issued, expiring challenges with single-use random nonces; the agent
+  gets a short-lived, service-local session after ERC-1271 verification.
 - A separate agent signing SDK and service verification SDK.
 - Two independent services recognizing the same agent with different local permissions.
 - A demonstration where a service chooses manual enrollment or owner-based
@@ -69,7 +69,7 @@ A separate local demo has an agent process authenticate to two independent
 SDK-backed HTTP services, and a real stdio MCP client exercises the same identity
 and services through three semantic tools. Neither path uses a bundler. There is
 no deployed factory address, live KMS adapter, persistent HTTP service, durable nonce/session
-store. The local MCP has a URL-based request format and a macOS Secure Enclave
+store. The local MCP has a challenge-proof tool and a macOS Secure Enclave
 signer adapter; physical-key provisioning and signing have not yet been exercised
 end-to-end in this repository. Only the single-call, revert-on-error
 ERC-7579 execution mode is enabled; all onchain actions are default-denied until
@@ -96,7 +96,7 @@ npm run demo:local
 The script prints temporary deployment addresses and checks a policy-allowed
 UserOperation, owner-based access at Service A (200), manual enrollment at
 Service B (200), distinct sessions, cross-service proof rejection (401),
-service-local admin denial (403), nonce replay rejection (401), and fresh-proof
+service-local admin denial (403), challenge replay rejection (401), and fresh-proof
 rejection at both services after onchain key revocation (401/401). It uses
 publicly known Hardhat owner keys, an ephemeral operating key passed only to
 the demo agent process, and independent in-memory service stores. Its signed

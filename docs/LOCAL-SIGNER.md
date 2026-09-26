@@ -1,21 +1,23 @@
 # Local Secure Enclave signer
 
-Agentic World uses a local macOS helper for request authentication. Its P-256 private key is generated in Apple Secure Enclave and is non-exportable; the model-facing MCP process receives only a public key and request proofs. The key is not an Ethereum EOA key. `AgentValidator` verifies its P-256 signatures through ERC-1271 (and can still verify the earlier secp256k1 demo accounts).
+Agentic World uses a local macOS helper for service-challenge authentication. Its P-256 private key is generated in Apple Secure Enclave and is non-exportable; the model-facing MCP process receives only a public key and signed challenge proofs. The key is not an Ethereum EOA key. `AgentValidator` verifies its P-256 signatures through ERC-1271 (and can still verify earlier secp256k1 demo accounts).
 
 ```text
-Agent → agentic_request({ url, method, body? })
-      → local MCP derives HTTPS audience and exact path/query
-      → local helper validates structured AgentRequest fields
-      → helper generates nonce and 60-second validity, hashes body and EIP-712 data
+Agent → Service: request challenge for 0xAGENT
+Agent → agentic_session_proof({ challenge })
+      → local MCP checks the challenge and current onchain key
+      → local helper validates structured AgentAuthentication fields
       → Secure Enclave signs the digest
-      → MCP checks the returned proof matches its intended request
-      → MCP sends request and proof to service
-      → service verifies ERC-1271 and applies its own authorization
+      → MCP checks the returned proof matches the challenge
+Agent → Service: submit proof
+      → service verifies ERC-1271, consumes challenge, applies its own admission rule
+Service → Agent: Agent-Session
+Agent → Service: resource request with Agent-Session
 ```
 
-The helper has no arbitrary `sign(bytes)` or `signDigest(bytes32)` command. It accepts only an `AgentRequest` with `agentId`, `chainId`, HTTPS `audience`, uppercase supported `method`, origin-form `target`, and exact body bytes. It rejects malformed targets, GET bodies, and bodies over 64 KiB. It generates the nonce and timestamps internally. Any canonical HTTPS origin is eligible; the service decides whether the agent may access the resource. This is **not** an owner-configured service allowlist and does not enforce a black-box model's mandate.
+The helper has no arbitrary `sign(bytes)` or `signDigest(bytes32)` command. The active MCP path accepts only a complete `AgentAuthentication` challenge with agent ID, canonical HTTPS audience, chain ID, service-generated nonce, and short validity window. MCP and helper validate it, and the service accepts it only if it matches a stored unused challenge. The helper retains a legacy structured `AgentRequest` command for compatibility tests; the MCP does not expose that command. Any canonical HTTPS origin is eligible; the service decides whether the agent may establish a session and access a resource.
 
-The EIP-712 wire fields remain `agentId`, `audienceHash`, `nonce`, `issuedAt`, `expiresAt`, `methodHash`, `targetHash`, and `bodyHash`. The agent's simple URL input is not a wire-format change. On EIP-7951 chains, `AgentValidator` verifies P-256 natively through `P256VERIFY` at `0x100`; it no longer falls back to Solidity. Each service independently verifies the ERC-1271 signature and handles replay prevention, association, permissions, and sessions. A session token is cached only inside the MCP process, per HTTPS audience.
+The active EIP-712 `AgentAuthentication` fields are `agentId`, `audienceHash`, `nonce`, `issuedAt`, and `expiresAt`, under the account's chain-bound domain. On EIP-7951 chains, `AgentValidator` verifies P-256 natively through `P256VERIFY` at `0x100`; it does not fall back to Solidity. Each service independently verifies ERC-1271, consumes its own challenge atomically, resolves association, and issues its own short session. The agent—not MCP—holds that session token.
 
 ## Provisioning and use
 
@@ -31,4 +33,4 @@ The availability command must report `secureEnclaveAvailable: true` before provi
 
 `npm run build:signer` compiles the helper and runs a deterministic Keccak/EIP-712 vector test. It does not provision a key. A physical Secure Enclave + Keychain signing run still requires a supported Mac and an explicitly provisioned agent key; the repository's automated Hardhat tests use software P-256 keys for contract compatibility.
 
-The prior `AGENTIC_WORLD_OPERATING_KEY` secp256k1 adapter remains solely for the local demo. It exposes the key to the MCP process and does not meet this local-key boundary. A host agent with unrestricted shell or filesystem access to the user's account is outside the signer boundary; OS account isolation and tool permissions still matter. The helper does not authorize owner-only account changes or ERC-4337 execution through its HTTP authentication command.
+The prior `AGENTIC_WORLD_OPERATING_KEY` secp256k1 adapter remains solely for the local demo. It exposes the key to the MCP process and does not meet this local-key boundary. A host agent with unrestricted shell or filesystem access to the user's account is outside the signer boundary; OS account isolation and tool permissions still matter. The helper does not authorize owner-only account changes or ERC-4337 execution through its challenge-signing command.
