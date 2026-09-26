@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-26T05:53:48Z",
+  "title": "Design System: Agentic World",
+  "extensions": {
+    "colorMeta": {
+      "canvas": { "role": "neutral", "displayName": "Workbench Canvas", "canonical": "#eff4f2", "tonalRamp": ["#142321", "#28413b", "#41645a", "#68887c", "#94ada2", "#becfc6", "#dfe9e3", "#f1f6f2"] },
+      "surface": { "role": "neutral", "displayName": "Clean Surface", "canonical": "#ffffff", "tonalRamp": ["#1d2422", "#343e3a", "#53625b", "#77867e", "#a3afa8", "#cbd3ce", "#e9ecea", "#ffffff"] },
+      "ink": { "role": "neutral", "displayName": "Primary Ink", "canonical": "#132d2e", "tonalRamp": ["#0d1d1e", "#173435", "#295354", "#467677", "#729a9a", "#a7c0c0", "#d5e3e2", "#eff6f5"] },
+      "muted": { "role": "neutral", "displayName": "Secondary Ink", "canonical": "#506768", "tonalRamp": ["#162526", "#2a4142", "#405c5d", "#637d7e", "#8ea5a5", "#b7c9c9", "#dce7e6", "#f1f6f5"] },
+      "line": { "role": "neutral", "displayName": "Structure Line", "canonical": "#cbdad7", "tonalRamp": ["#172523", "#30433f", "#4d6963", "#729088", "#9ab7ad", "#bfd2ca", "#dce8e1", "#f2f7f3"] },
+      "line-strong": { "role": "neutral", "displayName": "Strong Structure Line", "canonical": "#9fb9b4", "tonalRamp": ["#122622", "#29453d", "#47695e", "#6c9082", "#97b7a7", "#bfd4c9", "#e0ebe4", "#f3f8f4"] },
+      "primary-teal": { "role": "primary", "displayName": "Protocol Teal", "canonical": "#006d66", "tonalRamp": ["#062c2a", "#004944", "#006d66", "#168c80", "#42aa9a", "#7bcabc", "#b6e6dc", "#e8f7f2"] },
+      "primary-hover": { "role": "primary", "displayName": "Deep Protocol Teal", "canonical": "#005950", "tonalRamp": ["#062723", "#003f39", "#005950", "#14786e", "#409d90", "#79c2b4", "#b7e1d8", "#ebf6f2"] },
+      "teal-soft": { "role": "primary", "displayName": "Teal Wash", "canonical": "#e1f2ee", "tonalRamp": ["#092b27", "#174940", "#356d60", "#5d9485", "#8cbbac", "#b7d9cd", "#d7ede4", "#f0f9f4"] },
+      "navigation": { "role": "neutral", "displayName": "Navigation Ink", "canonical": "#102a2c", "tonalRamp": ["#0b1b1d", "#102a2c", "#245052", "#427375", "#6c9b9a", "#a3c3c0", "#d2e2df", "#f0f7f4"] },
+      "warning": { "role": "semantic", "displayName": "Warning Earth", "canonical": "#874822", "tonalRamp": ["#321b0d", "#603218", "#874822", "#aa683d", "#c99268", "#dfb998", "#efd9c5", "#fbf3e9"] },
+      "warning-soft": { "role": "semantic", "displayName": "Warning Wash", "canonical": "#fff1df", "tonalRamp": ["#352110", "#63401f", "#926439", "#bc8c60", "#dbb68b", "#efdbbc", "#f9ecd9", "#fff8ed"] },
+      "danger": { "role": "semantic", "displayName": "Revocation Red", "canonical": "#a33b34", "tonalRamp": ["#371615", "#672423", "#923630", "#b6564a", "#cf8277", "#e4afa6", "#f1d8d3", "#fbefed"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Page introduction", "purpose": "One high-level statement before the setup flow." },
+      "title": { "displayName": "Setup title", "purpose": "Names a required operational step." },
+      "body": { "displayName": "Explanation", "purpose": "Short plain-language technical guidance." },
+      "label": { "displayName": "Protocol label", "purpose": "Compact state and data labels, not long prose." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "control-state", "value": "180ms ease", "purpose": "Hover and focus response on controls only." },
+      { "name": "reduced-motion", "value": "none", "purpose": "Disable transitions and smooth scrolling when requested." }
+    ],
+    "breakpoints": [
+      { "name": "compact-rail", "value": "1100px" },
+      { "name": "stack-rail", "value": "850px" },
+      { "name": "single-column-forms", "value": "650px" }
+    ]
+  },
+  "components": [
+    { "name": "Primary Button", "kind": "button", "refersTo": "button-primary", "description": "Owner-wallet transactions such as create and save.", "html": "<button class=\"ds-button-primary\">Create agent account ↗</button>", "css": ".ds-button-primary{background:var(--teal,#006d66);color:#fff;border:0;border-radius:7px;padding:9px 14px;min-height:40px;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer;transition:background-color .18s ease}.ds-button-primary:hover{background:#005950}.ds-button-primary:focus-visible{outline:3px solid #38ac9f;outline-offset:3px}" },
+    { "name": "Secondary Button", "kind": "button", "refersTo": "button-secondary", "description": "Read-only checks and low-risk controls.", "html": "<button class=\"ds-button-secondary\">Verify account</button>", "css": ".ds-button-secondary{background:#fff;color:#132d2e;border:1px solid #9fb9b4;border-radius:7px;padding:9px 14px;min-height:40px;font:600 13px 'IBM Plex Sans',sans-serif;cursor:pointer;transition:background-color .18s ease,border-color .18s ease}.ds-button-secondary:hover{background:#e1f2ee;border-color:#006d66}.ds-button-secondary:focus-visible{outline:3px solid #38ac9f;outline-offset:3px}" },
+    { "name": "Address Input", "kind": "input", "refersTo": "input", "description": "Explicitly labeled wallet or contract address input.", "html": "<label class=\"ds-field\">Agent address<input placeholder=\"0x…\"></label>", "css": ".ds-field{display:grid;gap:7px;color:#132d2e;font:600 12px 'IBM Plex Sans',sans-serif}.ds-field input{width:100%;min-height:42px;padding:9px 11px;border:1px solid #a9bfba;border-radius:6px;background:#fff;color:#132d2e;font:13px 'IBM Plex Sans',sans-serif}.ds-field input:focus-visible{outline:3px solid #38ac9f;outline-offset:3px}" },
+    { "name": "Top Navigation", "kind": "nav", "description": "Owner and chain are visible before transactions.", "html": "<nav class=\"ds-nav\"><strong>Agentic World</strong><span>Chain 31337 · 0x1234…abcd</span></nav>", "css": ".ds-nav{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:16px 24px;background:#102a2c;color:#eef9f5;font:600 14px 'IBM Plex Sans',sans-serif}.ds-nav span{font:11px 'DM Mono',monospace;color:#d4e9e2}" },
+    { "name": "State Pill", "kind": "chip", "refersTo": "state-pill", "description": "Text-first state indicator; never color alone.", "html": "<span class=\"ds-state-pill\">Verified</span>", "css": ".ds-state-pill{display:inline-block;padding:6px 9px;border:1px solid #87bdaf;border-radius:99px;background:#e1f2ee;color:#045b51;font:11px 'DM Mono',monospace}" },
+    { "name": "Policy Rule", "kind": "card", "description": "One editable rule with a visible order and no shadow.", "html": "<article class=\"ds-rule\"><span>01</span><strong>Token purchase</strong><p>First match wins</p></article>", "css": ".ds-rule{padding:19px;border:1px solid #cbdad7;border-radius:9px;background:#fff;color:#132d2e;font:13px 'IBM Plex Sans',sans-serif}.ds-rule span{margin-right:10px;color:#006d66;font:11px 'DM Mono',monospace}.ds-rule p{margin:8px 0 0;color:#506768;font-size:11px}" },
+    { "name": "Service Boundary", "kind": "custom", "description": "A dark explanation that execution policy does not grant API access.", "html": "<aside class=\"ds-boundary\"><strong>Service access is separate.</strong><p>A service applies its own resource permissions.</p></aside>", "css": ".ds-boundary{padding:18px;border-radius:9px;background:#102a2c;color:#eff9f4;font:13px 'IBM Plex Sans',sans-serif}.ds-boundary p{margin:7px 0 0;color:#d3e7df;font-size:12px;line-height:1.55}" }
+  ],
+  "narrative": {
+    "northStar": "Protocol Workbench",
+    "overview": "A technical operator uses this interface to configure one smart account. Restrained surfaces and familiar controls keep chain state, ownership, signer authority, and policy actions inspectable. It rejects generic SaaS dashboard cards, faux-glass crypto styling, dense wallet jargon without explanation, and decorative graphics that obscure the setup sequence.",
+    "keyCharacteristics": ["A numbered setup flow because order is operationally meaningful.", "Exact addresses and hashes in mono, with plain-language labels beside them.", "Read-only checks and wallet transactions use visibly different action treatments.", "Service resource authorization is explained separately from account execution policy."],
+    "rules": [
+      { "name": "The One Accent Rule", "body": "Keep #006d66 for actions and confirmed state, not decorative fills.", "section": "colors" },
+      { "name": "The Data Is Not a Headline Rule", "body": "Addresses and hashes wrap safely in compact mono text; they never determine the page's visual hierarchy.", "section": "typography" },
+      { "name": "The Flat-By-Default Rule", "body": "Do not combine wide soft shadows with bordered panels. State changes use color and text, not simulated floating layers.", "section": "elevation" }
+    ],
+    "dos": ["Do distinguish read-only verification from owner-wallet transactions through label and button treatment.", "Do show exact agent, owner, validator, hook, and EntryPoint addresses after verification.", "Do preserve 4.5:1 body contrast, visible keyboard focus, text status, and reduced-motion behavior.", "Do keep new setup screens within this single-agent workflow unless the product scope changes."],
+    "donts": ["Don't use generic SaaS dashboard cards or hero metrics.", "Don't use faux-glass crypto styling or purple/neon gradients.", "Don't introduce dense wallet jargon without explanation near the relevant action.", "Don't add decorative graphics that obscure the setup sequence.", "Don't imply that onchain execution policy grants service API access."]
+  }
+}

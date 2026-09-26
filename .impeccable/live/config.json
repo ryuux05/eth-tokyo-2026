@@ -1,0 +1,6 @@
+{
+  "files": ["portal/dist/index.html"],
+  "insertBefore": "</body>",
+  "commentSyntax": "html",
+  "cspChecked": true
+}
