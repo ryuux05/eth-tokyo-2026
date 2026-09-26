@@ -8,7 +8,6 @@ import {
   decodePolicy, encodePolicy, isExpectedAgentClone, type PolicyRule,
 } from "../sdk/core.js";
 import { DEPLOYMENTS, type Deployment } from "./config.js";
-import { validP256PublicKey } from "./p256.js";
 
 type RuleKind = "native" | "token";
 type OperatingKey = { scheme: "p256"; qx: Hex; qy: Hex } | { scheme: "secp256k1"; address: Address };
@@ -38,22 +37,14 @@ const ui = {
   connect: element<HTMLButtonElement>("connectButton"), network: element<HTMLElement>("networkBadge"),
   configNotice: element<HTMLElement>("configNotice"), status: element<HTMLElement>("statusMessage"),
   creationAlias: element<HTMLInputElement>("creationAlias"),
-  creationScheme: element<HTMLSelectElement>("creationScheme"),
-  creationP256Fields: element<HTMLElement>("creationP256Fields"),
-  creationLegacyFields: element<HTMLElement>("creationLegacyFields"),
-  creationQx: element<HTMLInputElement>("creationQx"), creationQy: element<HTMLInputElement>("creationQy"),
-  authenticator: element<HTMLInputElement>("authenticatorInput"), salt: element<HTMLInputElement>("saltInput"),
-  newSalt: element<HTMLButtonElement>("newSaltButton"), predicted: element<HTMLElement>("predictedAgent"),
+  creationHelp: element<HTMLElement>("creationHelp"),
   create: element<HTMLButtonElement>("createButton"), agent: element<HTMLInputElement>("agentAddress"),
   verify: element<HTMLButtonElement>("verifyButton"), identityState: element<HTMLElement>("identityState"),
   identityDetails: element<HTMLElement>("identityDetails"), activeAgent: element<HTMLElement>("activeAgent"),
   ownerValue: element<HTMLElement>("ownerValue"), validatorValue: element<HTMLElement>("validatorValue"),
   policyHookValue: element<HTMLElement>("policyHookValue"), entryPointValue: element<HTMLElement>("entryPointValue"),
   signerState: element<HTMLElement>("signerState"), signerValue: element<HTMLElement>("signerValue"),
-  replacementP256Fields: element<HTMLElement>("replacementP256Fields"),
-  replacementLegacyFields: element<HTMLElement>("replacementLegacyFields"),
-  replacementQx: element<HTMLInputElement>("replacementQx"), replacementQy: element<HTMLInputElement>("replacementQy"),
-  replacement: element<HTMLInputElement>("rotationInput"), rotate: element<HTMLButtonElement>("rotateButton"),
+  keyHelp: element<HTMLElement>("keyHelp"), rotate: element<HTMLButtonElement>("rotateButton"),
   restore: element<HTMLButtonElement>("restoreButton"), revoke: element<HTMLButtonElement>("revokeButton"),
   policyState: element<HTMLElement>("policyState"), addNative: element<HTMLButtonElement>("addNativeButton"),
   addToken: element<HTMLButtonElement>("addTokenButton"), rules: element<HTMLElement>("rulesList"),
@@ -74,8 +65,7 @@ let currentKey: OperatingKey | undefined;
 let revoked = false;
 let currentPolicy: Hex = "0x";
 let savedRules: PolicyRule[] = [];
-let predictedAgent: Address | undefined;
-let predictionSequence = 0;
+let localCreationAvailable = false;
 let busy = false;
 let nextRuleId = 1;
 const draftRules: DraftRule[] = [];
@@ -84,15 +74,17 @@ type ManagedIdentity = { agentId: Address; alias: string | null; owner?: Address
 async function refreshManaged(): Promise<void> {
   let response: Response;
   try { response = await fetch(new URL("api/identities", location.href), { cache: "no-store" }); }
-  catch { return; }
-  if (!response.ok) return;
-  const data = await response.json() as { count: number; identities: ManagedIdentity[] };
+  catch { localCreationAvailable = false; refresh(); return; }
+  if (!response.ok) { localCreationAvailable = false; refresh(); return; }
+  const data = await response.json() as { count: number; identities: ManagedIdentity[]; creationAvailable?: boolean };
+  localCreationAvailable = data.creationAvailable === true;
+  refresh();
   ui.managedSection.hidden = false;
   ui.managedCount.textContent = String(data.count);
   ui.managedList.replaceChildren();
   if (!data.count) {
     const empty = document.createElement("p"); empty.className = "managed-empty";
-    empty.textContent = "No local agent IDs yet. Use agentic-world:create -a \"name\" to create one.";
+    empty.textContent = "No local agent IDs yet. Create one below; your wallet approves the deployment.";
     ui.managedList.append(empty); return;
   }
   for (const entry of data.identities) {
@@ -154,40 +146,9 @@ function context() {
   if (!owner || !chainId || !deployment || !verifiedAgent) throw new Error("Connect your wallet and verify an agent first.");
   return { owner, chainId, deployment, agent: verifiedAgent };
 }
-function newSalt(): Hex {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return `0x${Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("")}`;
-}
-function validSigner(value: string): value is Address {
-  return !!owner && isAddress(value) && !same(value, zeroAddress) && !same(value, owner) &&
-    (!verifiedAgent || !same(value, verifiedAgent)) && (!predictedAgent || !same(value, predictedAgent));
-}
-function creationKeyValid(): boolean {
-  return ui.creationScheme.value === "p256"
-    ? validP256PublicKey(ui.creationQx.value.trim(), ui.creationQy.value.trim())
-    : validSigner(ui.authenticator.value.trim());
-}
-function replacementKeyValid(): boolean {
-  if (!currentKey) return false;
-  if (currentKey.scheme === "p256") {
-    const qx = ui.replacementQx.value.trim(); const qy = ui.replacementQy.value.trim();
-    return validP256PublicKey(qx, qy) && (!same(qx, currentKey.qx) || !same(qy, currentKey.qy));
-  }
-  const address = ui.replacement.value.trim();
-  return validSigner(address) && !same(address, currentKey.address);
-}
 function keyLabel(key: OperatingKey): string {
   return key.scheme === "p256" ? `P-256 · qx ${key.qx} · qy ${key.qy}` : `secp256k1 · ${key.address}`;
 }
-function renderKeyFields(): void {
-  ui.creationP256Fields.hidden = ui.creationScheme.value !== "p256";
-  ui.creationLegacyFields.hidden = ui.creationScheme.value === "p256";
-  ui.replacementP256Fields.hidden = currentKey?.scheme !== "p256";
-  ui.replacementLegacyFields.hidden = currentKey?.scheme !== "secp256k1";
-}
-function validSalt(value: string): value is Hex { return /^0x[0-9a-fA-F]{64}$/.test(value); }
-
 function makeRule(kind: RuleKind): DraftRule {
   return { id: nextRuleId++, kind, target: "", selector: kind === "token" ? TOKEN_PURCHASE_SELECTOR : "",
     token: "", maxValue: "0", maxAmount: "0", decimals: "6", decision: Decision.ALLOW };
@@ -209,15 +170,19 @@ function encodeDraft(): Hex {
   return encodePolicy(rules);
 }
 function refresh(): void {
-  renderKeyFields();
   ui.connect.disabled = busy;
-  ui.newSalt.disabled = busy;
-  ui.predicted.textContent = predictedAgent ?? (owner && deployment ? "Enter a valid 32-byte salt" : "Connect a wallet to preview");
-  ui.create.disabled = busy || !owner || !deployment || !predictedAgent || !creationKeyValid();
+  ui.create.disabled = busy || !localCreationAvailable;
+  ui.creationAlias.disabled = busy;
+  ui.creationHelp.textContent = localCreationAvailable
+    ? "Your local MCP sets up the hardware-backed key and opens a wallet approval page. No keys or deployment values to enter."
+    : "To create an identity, open this portal with agentic-world:portal from your connected local MCP. A static page cannot access your hardware signer.";
   ui.verify.disabled = busy || !owner || !deployment || !isAddress(ui.agent.value.trim());
-  ui.rotate.disabled = busy || !verifiedAgent || revoked || !replacementKeyValid();
-  ui.restore.disabled = busy || !verifiedAgent || !revoked || !replacementKeyValid();
+  ui.rotate.disabled = busy || !verifiedAgent || revoked || !localCreationAvailable;
+  ui.restore.disabled = busy || !verifiedAgent || !revoked || !localCreationAvailable;
   ui.revoke.disabled = busy || !verifiedAgent || revoked;
+  ui.keyHelp.textContent = localCreationAvailable
+    ? "Rotate or restore with a new hardware-backed key. Your local MCP prepares it automatically; your owner wallet approves the change."
+    : "Open agentic-world:portal with the local MCP to rotate or restore a hardware-backed key. Revocation and policy changes still use your connected wallet.";
   ui.addNative.disabled = busy || !verifiedAgent;
   ui.addToken.disabled = busy || !verifiedAgent;
   let encoded: Hex | undefined;
@@ -314,17 +279,6 @@ async function assertFactory(): Promise<void> {
 async function assertChain(): Promise<void> {
   if (!chainId || await client().getChainId() !== chainId) throw new Error("Wallet network changed. Reconnect the owner wallet before continuing.");
 }
-async function updatePrediction(): Promise<void> {
-  const sequence = ++predictionSequence;
-  predictedAgent = undefined;
-  if (owner && deployment && validSalt(ui.salt.value.trim())) {
-    const salt = ui.salt.value.trim() as Hex;
-    const predicted = await client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi,
-      functionName: "predictAgent", args: [owner, salt] });
-    if (sequence === predictionSequence && ui.salt.value.trim() === salt) predictedAgent = predicted;
-  }
-  refresh();
-}
 async function connect(): Promise<void> {
   provider = (window as Window & { ethereum?: EIP1193Provider }).ethereum;
   if (!provider) throw new Error("No injected Ethereum wallet found. Open this page in a wallet-enabled browser.");
@@ -348,7 +302,7 @@ async function connect(): Promise<void> {
       }
     }
   } catch { /* Standalone portal uses its checked-in pins. */ }
-  verifiedAgent = undefined; predictedAgent = undefined; currentKey = undefined; revoked = false;
+  verifiedAgent = undefined; currentKey = undefined; revoked = false;
   currentPolicy = "0x"; savedRules = []; draftRules.splice(0, draftRules.length);
   ui.summaryPolicy.textContent = "0 draft rules";
   renderRules();
@@ -370,7 +324,6 @@ async function connect(): Promise<void> {
       }
       await assertFactory();
       ui.configNotice.hidden = true;
-      await updatePrediction();
     } catch (error) {
       deployment = undefined;
       ui.configNotice.hidden = false;
@@ -384,33 +337,28 @@ async function connect(): Promise<void> {
 }
 
 async function createAgent(): Promise<void> {
-  if (!owner || !deployment || !creationKeyValid() || !validSalt(ui.salt.value.trim())) {
-    throw new Error("Connect your owner wallet, enter a valid operating public key, and use a valid 32-byte salt.");
+  if (!localCreationAvailable) throw new Error("Open agentic-world:portal with the local MCP to create an identity.");
+  status("Setting up your local hardware key. A wallet approval page will open; review and confirm there.");
+  let response: Response;
+  try {
+    response = await fetch(new URL("api/create", location.href), { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ alias: ui.creationAlias.value.trim() || undefined }) });
+  } catch {
+    throw new Error("The local creation connection was lost. Check the approval page, wallet transaction and agent list before creating again.");
   }
-  await assertFactory();
-  const predicted = await client().readContract({ address: deployment.factory, abi: agentAccountFactoryAbi,
-    functionName: "predictAgent", args: [owner, ui.salt.value.trim() as Hex] });
-  status("Confirm the factory transaction in your owner wallet. The factory will store your wallet as owner().");
-  const hash = ui.creationScheme.value === "p256"
-    ? await wallet().writeContract({ account: owner, chain: null, address: deployment.factory,
-      abi: agentAccountFactoryAbi, functionName: "createAgentP256",
-      args: [ui.creationQx.value.trim() as Hex, ui.creationQy.value.trim() as Hex, ui.salt.value.trim() as Hex] })
-    : await wallet().writeContract({ account: owner, chain: null, address: deployment.factory,
-      abi: agentAccountFactoryAbi, functionName: "createAgent", args: [getAddress(ui.authenticator.value.trim()), ui.salt.value.trim() as Hex] });
-  status(`Deployment ${short(hash)} submitted. Waiting for confirmation…`);
-  const receipt = await client().waitForTransactionReceipt({ hash });
-  if (receipt.status !== "success") throw new Error("Deployment reverted. No agent was created.");
-  ui.agent.value = predicted;
-  await verifyAgent(predicted);
-  const alias = ui.creationAlias.value.trim();
-  if (!ui.managedSection.hidden) {
-    const registration = await fetch(new URL("api/adopt", location.href), { method: "POST",
-      headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: predicted, alias }) });
-    if (!registration.ok)
-      throw new Error("Agent was created onchain, but this portal could not add it to the local list. Do not repeat the transaction; load the address manually.");
+  const result = await response.json();
+  if (!response.ok || result.status !== "IDENTITY_CREATED") {
+    throw new Error(result.message ?? result.error ?? "Creation did not complete. Check the approval page and wallet before retrying.");
   }
-  status(`Agent ${short(predicted)} created and verified. Its owner is ${short(owner)}.`);
+  if (!isAddress(result.agentId)) throw new Error("Creation returned an invalid agent ID. Refresh the agent list before retrying.");
+  ui.agent.value = result.agentId;
+  ui.creationAlias.value = "";
   await refreshManaged();
+  if (owner && chainId === result.chainId && same(owner, result.owner) && deployment) {
+    await verifyAgent(result.agentId);
+  }
+  status(`Agent ${short(result.agentId)} created and saved locally. ${verifiedAgent === result.agentId ? "You can set its execution policy below." : "Connect its owner wallet to manage its policy."}`);
 }
 
 async function verifyAgent(input?: Address): Promise<void> {
@@ -500,31 +448,35 @@ async function refreshSigner(): Promise<void> {
 async function changeSigner(operation: "rotateAuthenticator" | "restoreAuthenticator" | "revokeAuthenticator"): Promise<void> {
   const { owner, agent } = context();
   await assertChain();
-  if (operation === "revokeAuthenticator" && !window.confirm("Revoke this operating key? New agent signatures will fail until you restore a key.")) return;
-  if (operation !== "revokeAuthenticator" && !replacementKeyValid()) throw new Error("Enter a valid new public key for this account's operating key type.");
-  status("Confirm the signer change in your owner wallet…");
-  let hash: Hex;
-  if (operation === "revokeAuthenticator") {
-    hash = await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: operation });
-  } else if (currentKey?.scheme === "p256") {
-    const args = [ui.replacementQx.value.trim() as Hex, ui.replacementQy.value.trim() as Hex] as const;
-    hash = operation === "rotateAuthenticator"
-      ? await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "rotateP256Authenticator", args })
-      : await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "restoreP256Authenticator", args });
-  } else {
-    const args = [getAddress(ui.replacement.value.trim())] as const;
-    hash = operation === "rotateAuthenticator"
-      ? await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "rotateAuthenticator", args })
-      : await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: "restoreAuthenticator", args });
+  if (operation !== "revokeAuthenticator") {
+    if (!localCreationAvailable) throw new Error("Open the MCP-hosted portal to prepare a hardware-backed replacement key.");
+    status("Preparing a new local hardware key. Review the change in the wallet approval page.");
+    let response: Response;
+    try {
+      response = await fetch(new URL("api/signer", location.href), { method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentId: agent, action: operation === "rotateAuthenticator" ? "rotate" : "restore" }) });
+    } catch {
+      throw new Error("The local approval connection was lost. Check the wallet transaction and refresh the agent before retrying.");
+    }
+    const result = await response.json();
+    if (!response.ok || result.status !== "CONFIRMED_ONCHAIN") throw new Error(result.message ?? result.error ?? "Signer change did not complete.");
+    await refreshSigner();
+    await refreshManaged();
+    status("New hardware-backed signer confirmed. The local MCP will use it automatically.");
+    return;
   }
+  if (!window.confirm("Revoke this operating key? New agent signatures will fail until you restore a key.")) return;
+  status("Confirm revocation in your owner wallet…");
+  const hash = await wallet().writeContract({ account: owner, chain: null, address: agent, abi: agentAccountAbi, functionName: operation });
   status(`Transaction ${short(hash)} submitted. Waiting for confirmation…`);
   const receipt = await client().waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("The signer transaction reverted. Nothing changed.");
-  ui.replacement.value = "";
-  ui.replacementQx.value = ""; ui.replacementQy.value = "";
   await refreshSigner();
-  status(revoked ? "Operating signer revoked. New agent signatures will fail." : `Operating signer active: ${currentKey ? keyLabel(currentKey) : "unknown"}.`);
+  await refreshManaged();
+  status("Operating signer revoked. New agent signatures will fail.");
 }
+
 async function savePolicy(): Promise<void> {
   const { owner, agent } = context();
   await assertChain();
@@ -556,20 +508,10 @@ async function preview(amount: string): Promise<void> {
   ui.previewResult.textContent = `${amount} tokens → ${label}. This previews the saved policy, not your unsaved draft.`;
 }
 
-ui.salt.value = newSalt();
 ui.refreshManaged.addEventListener("click", () => { void refreshManaged().catch(error => status(readableError(error), "error")); });
 void refreshManaged().catch(error => status(readableError(error), "error"));
 ui.connect.addEventListener("click", () => { void action(connect); });
-ui.newSalt.addEventListener("click", () => { ui.salt.value = newSalt(); void action(updatePrediction); });
-ui.salt.addEventListener("input", () => { void updatePrediction().catch(error => status(readableError(error), "error")); });
-ui.authenticator.addEventListener("input", refresh);
-ui.creationScheme.addEventListener("change", refresh);
-ui.creationQx.addEventListener("input", refresh);
-ui.creationQy.addEventListener("input", refresh);
 ui.agent.addEventListener("input", refresh);
-ui.replacement.addEventListener("input", refresh);
-ui.replacementQx.addEventListener("input", refresh);
-ui.replacementQy.addEventListener("input", refresh);
 ui.create.addEventListener("click", () => { void action(createAgent); });
 ui.verify.addEventListener("click", () => { void action(() => verifyAgent()); });
 ui.rotate.addEventListener("click", () => { void action(() => changeSigner("rotateAuthenticator")); });

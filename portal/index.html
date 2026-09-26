@@ -41,25 +41,9 @@
               <label for="creationAlias">Local alias</label>
               <input id="creationAlias" type="text" maxlength="40" autocomplete="off" placeholder="e.g. Research agent" aria-describedby="aliasHelp" />
               <p class="field-help" id="aliasHelp">Optional. Shown only in this local portal and the MCP list, never onchain.</p>
-              <label for="creationScheme">Operating key type</label>
-              <select id="creationScheme"><option value="p256">P-256 / Secure Enclave</option><option value="secp256k1">Legacy Ethereum signer</option></select>
-              <div id="creationP256Fields">
-                <label for="creationQx">P-256 public key · qx</label>
-                <input id="creationQx" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" aria-describedby="p256Help" />
-                <label for="creationQy">P-256 public key · qy</label>
-                <input id="creationQy" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" aria-describedby="p256Help" />
-                <p class="field-help" id="p256Help">Copy qx and qy from the local signer’s provision output. Only the public coordinates go onchain; keep its private key in Secure Enclave.</p>
-              </div>
-              <div id="creationLegacyFields" hidden>
-                <label for="authenticatorInput">Legacy operating signer address</label>
-                <input id="authenticatorInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x… KMS-backed key" aria-describedby="authHelp" />
-                <p class="field-help" id="authHelp">For older secp256k1 agents only. This address must differ from your owner wallet.</p>
-              </div>
-              <label for="saltInput">Deployment salt</label>
-              <div class="input-row"><input id="saltInput" type="text" spellcheck="false" autocomplete="off" aria-describedby="saltHelp" /><button id="newSaltButton" class="button button-secondary" type="button">New salt</button></div>
-              <p class="field-help" id="saltHelp">A 32-byte value makes the address deterministic. Save it if you need to predict the address again.</p>
-              <div class="predicted"><span>Predicted agent ID</span><code id="predictedAgent">Connect a wallet to preview</code></div>
-              <button id="createButton" class="button button-primary" type="button" disabled>Create agent account <span aria-hidden="true">↗</span></button>
+              <p class="field-help" id="creationHelp" role="status">Connecting to the local MCP…</p>
+              <p class="field-help">The private signing key stays in Secure Enclave on macOS or the TPM on Windows. Only its public key goes onchain. Your connected wallet becomes the owner.</p>
+              <button id="createButton" class="button button-primary" type="button" aria-describedby="creationHelp" disabled>Create agent identity <span aria-hidden="true">↗</span></button>
             </div>
             <div class="load-form">
               <h3>Already created one?</h3>
@@ -83,14 +67,7 @@
         <div class="section-head"><span class="section-number">02</span><div><h2 id="signerTitle">Operating signer</h2><p>Rotate or revoke the key without changing the agent ID or its owner.</p></div><span id="signerState" class="state-pill">Load an agent</span></div>
         <div class="section-content">
           <div class="signer-row"><span>Current signer</span><code id="signerValue">—</code></div>
-          <div id="replacementP256Fields" hidden>
-            <label for="replacementQx">Replacement P-256 public key · qx</label>
-            <input id="replacementQx" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" />
-            <label for="replacementQy">Replacement P-256 public key · qy</label>
-            <input id="replacementQy" type="text" spellcheck="false" autocomplete="off" placeholder="0x… 32 bytes" />
-            <p class="field-help">Provision a new local key first, then enter only its public coordinates. Keep the old key until this transaction confirms.</p>
-          </div>
-          <div id="replacementLegacyFields" hidden><label for="rotationInput">Replacement signer address</label><input id="rotationInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x…" /></div>
+          <p class="field-help" id="keyHelp">Replacement keys are prepared by your local MCP. No public-key values to enter.</p>
           <div class="input-row signer-controls"><button id="rotateButton" class="button button-secondary" type="button" disabled>Rotate</button><button id="restoreButton" class="button button-secondary" type="button" disabled>Restore</button></div>
           <button id="revokeButton" class="text-action text-danger" type="button" disabled>Revoke current signer</button>
           <p class="field-help">Revocation stops new signatures from validating onchain. Service sessions already issued may last until their short expiry.</p>

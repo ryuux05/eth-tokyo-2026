@@ -7,12 +7,12 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import hre from "hardhat";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { concatHex, encodeFunctionData, keccak256, parseEther, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, decodeFunctionData, encodeFunctionData, keccak256, parseEther, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
 import { p256 } from "@noble/curves/nist.js";
 import { createAgenticWorldMcp } from "../mcp/server.js";
 import { startDemoService } from "../demo-service/server.js";
 import { startDemoServiceB } from "../demo-service-b/server.js";
-import { agentAccountAbi, encodeAgentExecution } from "../sdk/core.js";
+import { agentAccountAbi, agentAccountFactoryAbi, encodeAgentExecution } from "../sdk/core.js";
 
 // Real local contracts, SDK-backed HTTP services and MCP protocol. The hardware
 // signer and wallet UI are replaced with explicit test fixtures; no user key is touched.
@@ -270,6 +270,79 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     assert.equal((await call("agentic_list_identities")).count, 3, "recovery is idempotent");
     assert.equal((await browserCall("agentic_rotate_authenticator", { agentId: wrapped.agentId, scheme: "p256" }, approveWrapped)).status, "CONFIRMED_ONCHAIN");
     assert.equal((await browserCall("agentic_revoke_authenticator", { agentId: wrapped.agentId }, approveWrapped)).status, "CONFIRMED_ONCHAIN");
+
+    // The portal supplies only an alias. MCP supplies both the public key and
+    // random salt, and reuses the same guarded browser flow as the tool.
+    await browserCall("agentic_portal", {}, async url => { portalUrl = url; });
+    const origin = new URL(portalUrl!).origin;
+    const portalPost = (path: string, body: unknown, extra = { origin }) => post(portalUrl!, path, body, extra);
+    const page = await (await fetch(portalUrl!)).text();
+    for (const id of ["creationQx", "creationQy", "saltInput", "replacementQx", "replacementQy", "creationScheme"])
+      assert(!page.includes(`id="${id}"`), `${id} must not be a user input`);
+    assert.equal((await (await fetch(`${portalUrl}api/identities`)).json()).creationAvailable, true);
+    browserWork = undefined;
+    assert.equal((await portalPost("api/create", {}, { origin: "https://foreign.example" })).status, 403);
+    assert.equal((await portalPost("api/create", { alias: "", qx: "0x1234" })).status, 400);
+    assert.equal((await portalPost("api/create", { salt: `0x${"11".repeat(32)}` })).status, 400);
+    assert.equal((await portalPost("api/create", { owner: owner.account.address })).status, 400);
+    assert.equal((await portalPost("api/create", { alias: "x".repeat(41) })).status, 400);
+    assert.equal(browserWork, undefined, "invalid requests cannot open an approval page");
+
+    let cancelledSalt: Hex | undefined;
+    browserAction = async url => {
+      const intent = await (await post(url, "/prepare", { owner: owner.account.address }, { origin: new URL(url).origin })).json();
+      const decoded = decodeFunctionData({ abi: agentAccountFactoryAbi, data: intent.transaction.data });
+      assert.equal(decoded.functionName, "createAgentP256");
+      cancelledSalt = decoded.args![2] as Hex;
+      assert.equal((await portalPost("api/create", { alias: "Duplicate" })).status, 409);
+      assert.equal((await call("agentic_create_identity", {}, true)).code, "CREATION_IN_PROGRESS");
+      assert.equal((await post(url, "/cancel", {}, { origin: new URL(url).origin })).status, 200);
+    };
+    const cancelled = await portalPost("api/create", { alias: "Cancelled" });
+    assert.equal(cancelled.status, 400);
+    assert.equal((await cancelled.json()).code, "FLOW_CANCELLED");
+    await browserWork;
+    assert.equal((await call("agentic_list_identities")).count, 3, "cancel must not register an identity");
+
+    browserAction = async url => {
+      const context = await (await fetch(`${url}/context`)).json();
+      assert.match(context.qx, /^0x[0-9a-f]{64}$/i);
+      assert.match(context.qy, /^0x[0-9a-f]{64}$/i);
+      const intent = await (await post(url, "/prepare", { owner: owner.account.address }, { origin: new URL(url).origin })).json();
+      const decoded = decodeFunctionData({ abi: agentAccountFactoryAbi, data: intent.transaction.data });
+      assert.equal(decoded.functionName, "createAgentP256");
+      assert.deepEqual(decoded.args!.slice(0, 2), [context.qx, context.qy]);
+      assert.notEqual(decoded.args![2], cancelledSalt, "a new flow gets a new internally generated salt");
+      const hash = await owner.sendTransaction({ to: intent.transaction.to, data: intent.transaction.data, value: 0n });
+      assert.equal((await post(url, "/complete", { hash }, { origin: new URL(url).origin })).status, 200);
+    };
+    const fromPortal = await portalPost("api/create", { alias: "Portal-created" });
+    assert.equal(fromPortal.status, 200, await fromPortal.clone().text());
+    const portalIdentity = await fromPortal.json();
+    await browserWork;
+    assert.equal(portalIdentity.status, "IDENTITY_CREATED");
+    assert.equal(portalIdentity.owner.toLowerCase(), owner.account.address.toLowerCase());
+    assert.equal((await call("agentic_list_identities")).identities.find((item: { agentId: string }) => item.agentId === portalIdentity.agentId).alias, "Portal-created");
+    await session(serviceB.baseUrl, portalIdentity.agentId);
+
+    // Rotation/restore also take no coordinates; keys remain tracked locally.
+    assert.equal((await portalPost("api/signer", { agentId: portalIdentity.agentId, action: "rotate", qx: "0x1234" })).status, 400);
+    assert.equal((await portalPost("api/signer", { agentId: portalIdentity.agentId, action: "restore" })).status, 400, "cannot restore an active key");
+    browserAction = approve;
+    const rotated = await portalPost("api/signer", { agentId: portalIdentity.agentId, action: "rotate" });
+    assert.equal(rotated.status, 200, await rotated.clone().text());
+    assert.equal((await rotated.json()).status, "CONFIRMED_ONCHAIN");
+    await browserWork;
+    await session(serviceB.baseUrl, portalIdentity.agentId);
+    await browserCall("agentic_revoke_authenticator", { agentId: portalIdentity.agentId });
+    browserAction = approve;
+    const restored = await portalPost("api/signer", { agentId: portalIdentity.agentId, action: "restore" });
+    assert.equal(restored.status, 200, await restored.clone().text());
+    assert.equal((await restored.json()).action, "restore");
+    await browserWork;
+    await session(serviceB.baseUrl, portalIdentity.agentId);
+    const persisted = JSON.parse(await readFile(configPath, "utf8"));
+    assert.equal(persisted.authenticatorLabels[portalIdentity.agentId.toLowerCase()].length, 2);
   } finally {
     if (portalUrl) await post(portalUrl, "api/close", {}, { origin: new URL(portalUrl).origin }).catch(() => {});
     await mcp?.close(); await server?.close();
