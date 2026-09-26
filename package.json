@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./core": {
+      "types": "./dist/sdk/core.d.ts",
+      "default": "./dist/sdk/core.js"
+    },
     "./agent": {
       "types": "./dist/sdk/agent.d.ts",
       "default": "./dist/sdk/agent.js"

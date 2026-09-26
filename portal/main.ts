@@ -15,7 +15,10 @@ import {
   type EIP1193Provider,
   type Hex,
 } from "viem";
-import { Decision, TOKEN_PURCHASE_SELECTOR, agentPolicyAbi, decodePolicy, encodePolicy, type PolicyRule } from "../sdk/agent.js";
+import {
+  Decision, TOKEN_PURCHASE_SELECTOR, agentAccountAbi, agentPolicyAbi, agentRegistrationTypedData,
+  decodePolicy, encodePolicy, isExpectedDelegation, mandateRegistryAbi, type PolicyRule,
+} from "../sdk/core.js";
 import { DEPLOYMENTS, type Deployment } from "./config.js";
 
 type RuleKind = "native" | "token";
@@ -31,19 +34,7 @@ type DraftRule = {
   decision: Decision;
 };
 
-type Permit = ReturnType<typeof registrationTypedData>;
-
-const accountAbi = [
-  { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
-] as const;
-const registryAbi = [
-  { type: "function", name: "principalOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "address" }] },
-  { type: "function", name: "nonceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
-  { type: "function", name: "register", stateMutability: "nonpayable", inputs: [
-    { name: "agent", type: "address" }, { name: "nonce", type: "uint256" },
-    { name: "deadline", type: "uint64" }, { name: "agentRootSignature", type: "bytes" },
-  ], outputs: [] },
-] as const;
+type Permit = ReturnType<typeof agentRegistrationTypedData>;
 const tokenMetadataAbi = [
   { type: "function", name: "decimals", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
 ] as const;
@@ -119,17 +110,6 @@ function showStatus(message: string, kind: "info" | "error" = "info"): void {
 function stateTag(node: HTMLElement, text: string, ready = false): void {
   node.textContent = text;
   node.classList.toggle("is-ready", ready);
-}
-function registrationTypedData(agent: Address, principal: Address, network: number, registry: Address, nonce: bigint, deadline: bigint) {
-  return {
-    domain: { name: "Agentic World Mandate Registry", version: "1", chainId: network, verifyingContract: registry },
-    types: { AgentRegistration: [
-      { name: "agent", type: "address" }, { name: "principal", type: "address" },
-      { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint64" },
-    ] },
-    primaryType: "AgentRegistration" as const,
-    message: { agent, principal, nonce, deadline },
-  } as const;
 }
 function stringifyTypedData(value: unknown): string {
   return JSON.stringify(value, (_, item: unknown) => typeof item === "bigint" ? item.toString() : item, 2);
@@ -350,11 +330,10 @@ async function verifyAgent(): Promise<void> {
   const agent = getAddress(ui.agent.value);
   const client = getClient();
   const code = await client.getCode({ address: agent });
-  const expected = `0xef0100${deployment.implementation.slice(2)}`.toLowerCase();
-  if (!code || code.toLowerCase() !== expected) throw new Error("This address is not delegated to the pinned AgentAccount implementation on this chain.");
-  const accountOwner = await client.readContract({ address: agent, abi: accountAbi, functionName: "owner" });
+  if (!isExpectedDelegation(code, deployment.implementation)) throw new Error("This address is not delegated to the pinned AgentAccount implementation on this chain.");
+  const accountOwner = await client.readContract({ address: agent, abi: agentAccountAbi, functionName: "owner" });
   if (!matches(accountOwner, owner)) throw new Error(`The connected wallet is not this agent's owner. Current owner: ${accountOwner}.`);
-  const principal = await client.readContract({ address: deployment.registry, abi: registryAbi, functionName: "principalOf", args: [agent] });
+  const principal = await client.readContract({ address: deployment.registry, abi: mandateRegistryAbi, functionName: "principalOf", args: [agent] });
   if (!matches(principal, zeroAddress) && !matches(principal, owner)) throw new Error(`This agent is already registered to another principal: ${principal}.`);
   const loadedPolicy = await client.readContract({ address: agent, abi: agentPolicyAbi, functionName: "policy" });
   const loadedRules = loadedPolicy === "0x" ? [] : decodePolicy(loadedPolicy);
@@ -389,9 +368,9 @@ async function verifyAgent(): Promise<void> {
     permit = undefined;
     ui.permit.textContent = "This mandate is already registered. You can still edit the agent's execution policy above.";
   } else {
-    const nonce = await client.readContract({ address: deployment.registry, abi: registryAbi, functionName: "nonceOf", args: [agent] });
+    const nonce = await client.readContract({ address: deployment.registry, abi: mandateRegistryAbi, functionName: "nonceOf", args: [agent] });
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-    permit = registrationTypedData(agent, owner, chainId, deployment.registry, nonce, deadline);
+    permit = agentRegistrationTypedData({ agent, principal: owner, chainId, registry: deployment.registry, nonce, deadline });
     ui.permit.textContent = stringifyTypedData(permit);
   }
   ui.signature.value = "";
@@ -439,12 +418,12 @@ async function registerMandate(): Promise<void> {
   const signer = await recoverTypedDataAddress({ ...permit, signature });
   if (!matches(signer, agent)) throw new Error(`Signature recovered ${signer}, not the agent root ${agent}.`);
   showStatus("Confirm the mandate registration in your owner wallet…");
-  const hash = await getWallet().writeContract({ account: owner, chain: null, address: deployment.registry, abi: registryAbi,
+  const hash = await getWallet().writeContract({ account: owner, chain: null, address: deployment.registry, abi: mandateRegistryAbi,
     functionName: "register", args: [agent, permit.message.nonce, permit.message.deadline, signature] });
   showStatus(`Mandate transaction ${short(hash)} submitted. Waiting for confirmation…`);
   const receipt = await getClient().waitForTransactionReceipt({ hash });
   if (receipt.status !== "success") throw new Error("The registration transaction reverted. The mandate was not recorded.");
-  const principal = await getClient().readContract({ address: deployment.registry, abi: registryAbi, functionName: "principalOf", args: [agent] });
+  const principal = await getClient().readContract({ address: deployment.registry, abi: mandateRegistryAbi, functionName: "principalOf", args: [agent] });
   if (!matches(principal, owner)) throw new Error("The transaction succeeded but the registry does not show this owner. Refresh and inspect the registry.");
   registeredPrincipal = owner;
   permit = undefined;

@@ -5,13 +5,13 @@ import {
   assertAddress,
   assertAudience,
   authenticationDigest,
-  DELEGATION_PREFIX,
   encodeAuthenticationProof,
   ERC1271_MAGIC,
+  isExpectedDelegation,
   mandateRegistryAbi,
   type AuthenticationChallenge,
   type AuthenticationProof,
-} from "./shared.js";
+} from "./core.js";
 
 export type Session = {
   agentId: Address;
@@ -74,8 +74,7 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     if (await config.client.getChainId() !== config.chainId) throw new Error("RPC chain ID mismatch");
     const blockNumber = await config.client.getBlockNumber();
     const code = await config.client.getCode({ address: agentId, blockNumber });
-    const expected = `${DELEGATION_PREFIX}${config.implementation.slice(2)}`;
-    if (!code || code.toLowerCase() !== expected.toLowerCase()) throw new Error("Unexpected EIP-7702 delegation");
+    if (!isExpectedDelegation(code, config.implementation)) throw new Error("Unexpected EIP-7702 delegation");
     const owner = await config.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber });
     const principal = await config.client.readContract({ address: config.registry, abi: mandateRegistryAbi, functionName: "principalOf", args: [agentId], blockNumber });
     return { blockNumber, principal: !sameAddress(principal, zeroAddress) && sameAddress(principal, owner) ? principal : undefined };
@@ -134,4 +133,4 @@ export function createServiceSdk(config: ServiceSdkConfig) {
   };
 }
 
-export type { AuthenticationChallenge, AuthenticationProof } from "./shared.js";
+export type { AuthenticationChallenge, AuthenticationProof } from "./core.js";

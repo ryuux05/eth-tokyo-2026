@@ -25,13 +25,29 @@ export type AuthenticationProof = AuthenticationChallenge & {
 };
 
 export const agentAccountAbi = [
+  { type: "function", name: "initialize", stateMutability: "nonpayable", inputs: [
+    { name: "initialAuthenticator", type: "address" }, { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" }, { name: "rootSignature", type: "bytes" },
+  ], outputs: [] },
   { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "authenticator", stateMutability: "view", inputs: [], outputs: [{ type: "address" }] },
+  { type: "function", name: "createdAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] },
+  { type: "function", name: "authenticationRevoked", stateMutability: "view", inputs: [], outputs: [{ type: "bool" }] },
   { type: "function", name: "protocolVersion", stateMutability: "pure", inputs: [], outputs: [{ type: "uint64" }] },
+  { type: "function", name: "rotateAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
+  { type: "function", name: "revokeAuthenticator", stateMutability: "nonpayable", inputs: [], outputs: [] },
+  { type: "function", name: "restoreAuthenticator", stateMutability: "nonpayable", inputs: [{ name: "newAuthenticator", type: "address" }], outputs: [] },
   { type: "function", name: "isValidSignature", stateMutability: "view", inputs: [{ type: "bytes32" }, { type: "bytes" }], outputs: [{ type: "bytes4" }] },
 ] as const;
 
 export const mandateRegistryAbi = [
   { type: "function", name: "principalOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "address" }] },
+  { type: "function", name: "nonceOf", stateMutability: "view", inputs: [{ type: "address" }], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "register", stateMutability: "nonpayable", inputs: [
+    { name: "agent", type: "address" }, { name: "nonce", type: "uint256" },
+    { name: "deadline", type: "uint64" }, { name: "agentRootSignature", type: "bytes" },
+  ], outputs: [] },
+  { type: "function", name: "revoke", stateMutability: "nonpayable", inputs: [{ name: "agent", type: "address" }], outputs: [] },
 ] as const;
 
 const authProofAbi = [{

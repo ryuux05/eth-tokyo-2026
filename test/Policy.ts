@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import hre from "hardhat";
 import { concatHex, encodeAbiParameters, encodeFunctionData, keccak256, toFunctionSelector, zeroAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
-import { Decision, TOKEN_PURCHASE_SELECTOR, decodePolicy, encodePolicy, ownerActionTypedData } from "../sdk/agent.js";
+import { Decision, TOKEN_PURCHASE_SELECTOR, agentAccountAbi, agentInitializationTypedData, decodePolicy, encodePolicy, ownerActionTypedData } from "../sdk/core.js";
 
 const selector = toFunctionSelector("purchase(bytes32)");
 const noApproval = { nonce: 0n, deadline: 0n, signature: "0x" as Hex };
@@ -24,19 +24,13 @@ async function setup(contractOwner = false) {
   const delegationTx = await human.sendTransaction({ to: human.account.address, value: 0n, authorizationList: [authorization] });
   await client.waitForTransactionReceipt({ hash: delegationTx });
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-  const rootPermit = await agentRoot.signTypedData({
-    domain: { name: "Agentic World AgentAccount", version: "1", chainId, verifyingContract: agentRoot.address },
-    types: { AgentInitialization: [
-      { name: "agent", type: "address" }, { name: "owner", type: "address" },
-      { name: "authenticator", type: "address" }, { name: "nonce", type: "uint256" },
-      { name: "deadline", type: "uint64" },
-    ] },
-    primaryType: "AgentInitialization",
-    message: { agent: agentRoot.address, owner: ownerAddress, authenticator: authenticator.account.address, nonce: 0n, deadline },
-  });
+  const rootPermit = await agentRoot.signTypedData(agentInitializationTypedData({
+    agent: agentRoot.address, owner: ownerAddress, authenticator: authenticator.account.address,
+    chainId, nonce: 0n, deadline,
+  }));
   const initTx = ownerContract
     ? await human.writeContract({ address: ownerContract.address, abi: ownerContract.abi, functionName: "initializeAgent", args: [agentRoot.address, authenticator.account.address, 0n, deadline, rootPermit] })
-    : await human.writeContract({ address: agentRoot.address, abi: implementation.abi, functionName: "initialize", args: [authenticator.account.address, 0n, deadline, rootPermit] });
+    : await human.writeContract({ address: agentRoot.address, abi: agentAccountAbi, functionName: "initialize", args: [authenticator.account.address, 0n, deadline, rootPermit] });
   await client.waitForTransactionReceipt({ hash: initTx });
   const fundTx = await human.sendTransaction({ to: agentRoot.address, value: 100n });
   await client.waitForTransactionReceipt({ hash: fundTx });

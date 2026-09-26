@@ -4,7 +4,7 @@ import {
   authenticationDigest,
   type AuthenticationChallenge,
   type AuthenticationProof,
-} from "./shared.js";
+} from "./core.js";
 
 export type DigestSigner = (digest: Hex) => Promise<Hex>;
 
@@ -33,6 +33,5 @@ export function createAgentSdk(config: {
   };
 }
 
-export type { AuthenticationChallenge, AuthenticationProof } from "./shared.js";
-export { Decision, TOKEN_PURCHASE_SELECTOR, agentPolicyAbi, decodePolicy, encodePolicy, ownerActionTypedData } from "./policy.js";
-export type { PolicyRule } from "./policy.js";
+export type { AuthenticationChallenge, AuthenticationProof, PolicyRule } from "./core.js";
+export { Decision, TOKEN_PURCHASE_SELECTOR, agentPolicyAbi, decodePolicy, encodePolicy, ownerActionTypedData } from "./core.js";

@@ -5,7 +5,7 @@ import { encodeAbiParameters, hashTypedData, keccak256, toBytes } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createAgentSdk } from "../sdk/agent.js";
 import { createServiceSdk, type ChallengeStore, type SessionStore } from "../sdk/service.js";
-import type { AuthenticationChallenge } from "../sdk/shared.js";
+import type { AuthenticationChallenge } from "../sdk/core.js";
 
 const VALID = "0x1626ba7e";
 const INVALID = "0xffffffff";
