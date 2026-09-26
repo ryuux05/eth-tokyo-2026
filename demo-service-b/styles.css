@@ -7,6 +7,10 @@
 .wallet-actions{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-top:22px}
 .wallet-actions code{color:#506768;font-size:13px;max-width:100%}
 .owner-summary{margin-top:22px}
+.report-link{color:#006d66;font-weight:600;text-underline-offset:4px}
+.report-link:focus-visible,summary:focus-visible{outline:3px solid #38ac9f;outline-offset:4px}
+summary{cursor:pointer;color:#132d2e;padding:12px 0}
+#visit-instruction{overflow-wrap:anywhere}
 .main-column .section-head code{font-size:13px;overflow-wrap:anywhere}
 .test-column .result+.result{margin-top:10px}
 .event[data-kind="AUTH_REQUIRED"] .event-kind,.event[data-kind="SESSION_DENIED"] .event-kind{color:#a33b34}

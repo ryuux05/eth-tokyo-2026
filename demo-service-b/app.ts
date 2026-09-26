@@ -14,7 +14,7 @@ let lastAllowedEvent: string | undefined;
 async function request(path: string, init: RequestInit = {}): Promise<{ status: number; body: any }> {
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...init, headers, cache: "no-store" });
+  const response = await fetch(path, { ...init, headers, cache: "no-store", signal: AbortSignal.timeout(60_000) });
   let body: any;
   try { body = await response.json(); } catch { body = { error: "Invalid service response" }; }
   return { status: response.status, body };
@@ -99,11 +99,7 @@ byId<HTMLButtonElement>("before-button").addEventListener("click", async () => {
   } catch (error) { setStatus("copy-state", error instanceof Error ? error.message : "Could not reach Service B", true); }
 });
 
-byId<HTMLButtonElement>("copy-agent-prompt").addEventListener("click", async () => {
-  const prompt = `GET ${location.origin}/private/report first. This is my local Service B workbench; its expected audience is https://service-b.example and loopback HTTP is intentional. If its 401 explicitly offers AgenticWorld, retry this same resource with my Agent-ID to receive authentication.challenge. Sign it with agentic_session_proof, then retry the same resource using the returned proof headers. The response should contain the report and Agent-Session. Do not call separate challenge/session endpoints. Report the HTTP status and response. Do not use my human wallet credentials.`;
-  try { await navigator.clipboard.writeText(prompt); setStatus("copy-state", "Instruction copied. Paste it into a Codex session with the Agentic World MCP."); }
-  catch { setStatus("copy-state", `Clipboard unavailable. Give Codex this URL: ${location.origin}`, true); }
-});
+byId("visit-instruction").textContent = `Go to ${location.origin} and get my report.`;
 
 async function refreshEvents(): Promise<void> {
   const { status, body } = await request("/activity");
@@ -126,6 +122,9 @@ async function refreshEvents(): Promise<void> {
 }
 
 byId<HTMLButtonElement>("refresh-button").addEventListener("click", () => { void refreshEvents().catch(error => setStatus("copy-state", error.message, true)); });
-void request("/health").then(({ body }) => { byId("chain-label").textContent = body.chainId === 11155111 ? "SEPOLIA · 11155111" : `CHAIN ${body.chainId} · 127.0.0.1`; }).catch(() => { byId("chain-label").textContent = "SERVICE OFFLINE"; });
+void request("/health").then(({ status, body }) => {
+  if (status !== 200) throw new Error(body.error ?? "Service B unavailable");
+  byId("chain-label").textContent = body.chainId === 11155111 ? "SEPOLIA · 11155111" : `CHAIN ${body.chainId} · 127.0.0.1`;
+}).catch(error => { byId("chain-label").textContent = "SERVICE OFFLINE"; setStatus("copy-state", error.message, true); });
 void refreshEvents().catch(() => {});
 setInterval(() => { void refreshEvents().catch(() => {}); }, 3000);
