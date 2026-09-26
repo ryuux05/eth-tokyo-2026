@@ -5,6 +5,10 @@ type Permissions = { agentId: string; read: boolean; write: boolean };
 type Workspace = { owner: string; agents: Permissions[]; report: { text: string; updatedAt: string; updatedBy?: string } };
 declare global { interface Window { ethereum?: WalletProvider } }
 
+export function mountServiceB(): () => void {
+const lifecycle = new AbortController();
+let disposed = false;
+const listen = (element: HTMLElement, type: string, callback: () => void) => element.addEventListener(type, callback, { signal: lifecycle.signal });
 const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 let workspace: Workspace | undefined;
 let saving = false, refreshing = false;
@@ -15,12 +19,14 @@ let agentRenderKey = "";
 async function request(path: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   if (init.body) headers.set("Content-Type", "application/json");
-  const response = await fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(60_000) });
+  const response = await fetch(path, { ...init, headers, credentials: "same-origin", cache: "no-store", signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(60_000)]) });
   const body = await response.json().catch(() => ({ error: "Invalid service response" }));
+  if (disposed) throw new Error("Page closed");
   if (!response.ok) throw new Error(body.error ?? `Service returned ${response.status}`);
   return body;
 }
 function status(message: string, error = false) {
+  if (disposed) return;
   byId("status").textContent = message;
   byId("status").classList.toggle("error", error);
 }
@@ -55,7 +61,7 @@ function renderAgents(agents: Permissions[]) {
       checkbox.setAttribute("aria-label", `${action === "read" ? "Read" : "Write"} permission for ${agent.agentId}`);
       const label = document.createElement("label");
       label.append(checkbox, document.createTextNode(action === "read" ? "Read" : "Write")); toggles.append(label);
-      checkbox.addEventListener("change", async () => {
+      listen(checkbox, "change", async () => {
         saving = true; refreshVersion++;
         for (const input of container.querySelectorAll<HTMLInputElement>("input")) input.disabled = true;
         status("Saving permissions…");
@@ -76,17 +82,17 @@ function renderAgents(agents: Permissions[]) {
   }
 }
 async function refreshWorkspace() {
-  if (saving) return;
+  if (disposed || saving) return;
   if (refreshing) { refreshQueued = true; return; }
   refreshing = true;
   const version = refreshVersion;
   try {
-    const response = await fetch("/owner/workspace", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(60_000) });
-    if (version !== refreshVersion) return;
+    const response = await fetch("/owner/workspace", { credentials: "same-origin", cache: "no-store", signal: AbortSignal.any([lifecycle.signal, AbortSignal.timeout(60_000)]) });
+    if (disposed || version !== refreshVersion) return;
     if (response.status === 401) { signedOut(); return; }
     const body = await response.json();
     if (!response.ok) throw new Error(body.error ?? "Could not load your workspace");
-    if (saving || version !== refreshVersion) return;
+    if (disposed || saving || version !== refreshVersion) return;
     workspace = body as Workspace;
     byId("wallet-address").textContent = `Signed in · ${workspace.owner}`;
     byId<HTMLInputElement>("private-text").value = workspace.report.text;
@@ -105,7 +111,7 @@ async function refreshWorkspace() {
   }
 }
 
-byId<HTMLButtonElement>("register-wallet").addEventListener("click", async () => {
+listen(byId<HTMLButtonElement>("register-wallet"), "click", async () => {
   const button = byId<HTMLButtonElement>("register-wallet");
   if (!window.ethereum) { status("Open this page in a browser with MetaMask or another wallet.", true); return; }
   button.disabled = true;
@@ -124,16 +130,21 @@ byId<HTMLButtonElement>("register-wallet").addEventListener("click", async () =>
   } catch (error) { status(error instanceof Error ? error.message : "Wallet sign-in failed", true); }
   finally { button.disabled = false; }
 });
-byId("reveal").addEventListener("click", () => {
+listen(byId("reveal"), "click", () => {
   if (!workspace) return;
   const input = byId<HTMLInputElement>("private-text");
   input.type = input.type === "password" ? "text" : "password";
   byId("reveal").textContent = input.type === "password" ? "Show text" : "Hide text";
 });
-byId("refresh-button").addEventListener("click", () => { void refreshWorkspace(); });
+listen(byId("refresh-button"), "click", () => { void refreshWorkspace(); });
 byId("visit-instruction").textContent = `“Go to ${location.origin} and get my report.”`;
 byId("write-instruction").textContent = `“Go to ${location.origin} and update my report to ‘Hello from my agent’.”`;
-void request("/health").then(body => { byId("chain-label").textContent = `SEPOLIA · ${body.chainId}`; })
-  .catch(error => { byId("chain-label").textContent = "SERVICE OFFLINE"; status(error.message, true); });
+void request("/health").then(body => { if (!disposed) byId("chain-label").textContent = `SEPOLIA · ${body.chainId}`; })
+  .catch(error => { if (!disposed) { byId("chain-label").textContent = "SERVICE OFFLINE"; status(error.message, true); } });
 void refreshWorkspace();
-setInterval(() => { if (!document.hidden && workspace) void refreshWorkspace(); }, 3000);
+const timer = setInterval(() => { if (!document.hidden && workspace) void refreshWorkspace(); }, 3000);
+return () => { disposed = true; lifecycle.abort(); clearInterval(timer); };
+}
+
+// The existing loopback HTTP adapter still serves the static build.
+if (typeof document !== "undefined" && document.body?.hasAttribute("data-service-b-static")) mountServiceB();

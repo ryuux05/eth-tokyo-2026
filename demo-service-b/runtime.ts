@@ -1,12 +1,13 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createServiceBHandler } from "./server.js";
-import { hostedServiceBStores } from "./stores.js";
+import { hostedServiceBStores, memoryServiceBStores } from "./stores.js";
 import { createVerifiedSepoliaClient } from "../scripts/sepolia-runtime.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 
 /** Only deployment-controlled domains are trusted; arbitrary Host headers never set the audience. */
 export function serviceBOrigin(environment: NodeJS.ProcessEnv, host?: string): string {
   const configured = environment.SERVICE_B_ORIGIN?.trim();
+  if (!environment.VERCEL && !configured && ["127.0.0.1:8797", "localhost:8797"].includes(host ?? "")) return `http://${host}`;
   const origins = configured ? [configured] : [
     environment.VERCEL_URL && `https://${environment.VERCEL_URL}`,
     environment.VERCEL_ENV === "production" && environment.VERCEL_PROJECT_PRODUCTION_URL && `https://${environment.VERCEL_PROJECT_PRODUCTION_URL}`,
@@ -33,7 +34,7 @@ export function createHostedServiceB(environment: NodeJS.ProcessEnv = process.en
       let handler = handlers.get(origin);
       if (!handler) {
         stage = "storage";
-        const stores = hostedServiceBStores(origin, environment);
+        const stores = !environment.VERCEL && origin.startsWith("http:") ? memoryServiceBStores() : hostedServiceBStores(origin, environment);
         stage = "rpc";
         client ??= createVerifiedSepoliaClient(environment.AGENTIC_SEPOLIA_RPC_URL?.trim() || "https://ethereum-sepolia-rpc.publicnode.com")
           .catch(error => { client = undefined; throw error; });

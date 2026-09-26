@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "files": ["dist/sdk"],
-  "workspaces": ["demo-service-c"],
+  "workspaces": ["demo-service-b", "demo-service-c"],
   "exports": {
     "./core": {
       "types": "./dist/sdk/core.d.ts",
@@ -33,7 +33,8 @@
     "serve:portal": "python3 -m http.server 4173 --directory portal/dist",
     "build:demo-service": "esbuild demo-service/app.ts demo-service/styles.css demo-service/index.html --bundle --platform=browser --format=esm --outdir=demo-service/dist --loader:.html=copy",
     "build:demo-service-b": "esbuild demo-service-b/app.ts demo-service-b/styles.css demo-service-b/index.html --bundle --platform=browser --format=esm --outdir=demo-service-b/dist --loader:.html=copy",
-    "build:demo-service-b:vercel": "node scripts/build-service-b-vercel.mjs",
+    "build:demo-service-b:vercel": "npm run build --workspace @agentic-world/service-b",
+    "dev:demo-service-b": "npm run dev --workspace @agentic-world/service-b",
     "build:demo-service-c": "hardhat build && npm run build --workspace @agentic-world/service-c",
     "dev:demo-service-c": "hardhat build && npm run dev --workspace @agentic-world/service-c",
     "serve:demo-service": "node --import tsx demo-service/server.ts",
@@ -46,7 +47,7 @@
     "demo:local": "hardhat run scripts/local-e2e.ts --network localhost",
     "test": "hardhat test",
     "test:service-c": "hardhat test nodejs test/ServiceC.ts test/ServiceCStores.ts",
-    "typecheck": "tsc --noEmit && npm run typecheck --workspace @agentic-world/service-c"
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace @agentic-world/service-b && npm run typecheck --workspace @agentic-world/service-c"
   },
   "devDependencies": {
     "@account-abstraction/contracts": "^0.8.0",
