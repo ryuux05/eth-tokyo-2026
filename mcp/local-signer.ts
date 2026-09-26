@@ -5,7 +5,7 @@ import { authenticationDigest, requestAuthenticationDigest, type AuthenticationC
 type SignerConfig = { binaryPath: string; label: string };
 type PublicKey = { scheme: "p256"; qx: Hex; qy: Hex };
 
-async function invoke(config: SignerConfig, command: "public-key" | "sign-request" | "sign-challenge", input?: unknown): Promise<unknown> {
+async function invoke(config: SignerConfig, command: "provision" | "public-key" | "sign-request" | "sign-challenge", input?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(config.binaryPath, [command, config.label], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } });
     const stdout: Buffer[] = [];
@@ -34,6 +34,18 @@ export async function signerPublicKey(config: SignerConfig): Promise<PublicKey> 
   if (value.scheme !== "p256" || typeof value.qx !== "string" || typeof value.qy !== "string" ||
       !/^0x[0-9a-fA-F]{64}$/.test(value.qx) || !/^0x[0-9a-fA-F]{64}$/.test(value.qy)) throw new Error("Invalid signer public key");
   return value as PublicKey;
+}
+
+/** Called only for an explicit identity-creation request; never during MCP startup. */
+export async function ensureSignerPublicKey(config: SignerConfig): Promise<PublicKey> {
+  try { return await signerPublicKey(config); }
+  catch {
+    // The Swift helper refuses to overwrite an existing label. If another process
+    // provisioned it meanwhile, reading the key again is safe.
+    try { await invoke(config, "provision"); }
+    catch { return signerPublicKey(config); }
+    return signerPublicKey(config);
+  }
 }
 
 export async function signLocalChallenge(config: SignerConfig, challenge: AuthenticationChallenge): Promise<AuthenticationProof> {
