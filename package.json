@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "files": ["dist/sdk"],
+  "workspaces": ["demo-service-c"],
   "exports": {
     "./core": {
       "types": "./dist/sdk/core.d.ts",
@@ -18,7 +19,7 @@
     }
   },
   "scripts": {
-    "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service && npm run build:demo-service-b",
+    "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service && npm run build:demo-service-b && npm run build:demo-service-c",
     "build:demo": "hardhat build && npm run build:demo-service && npm run build:demo-service-b",
     "build:sdk": "tsc --project tsconfig.sdk.json",
     "prepare": "npm run build:sdk",
@@ -32,15 +33,19 @@
     "serve:portal": "python3 -m http.server 4173 --directory portal/dist",
     "build:demo-service": "esbuild demo-service/app.ts demo-service/styles.css demo-service/index.html --bundle --platform=browser --format=esm --outdir=demo-service/dist --loader:.html=copy",
     "build:demo-service-b": "esbuild demo-service-b/app.ts demo-service-b/styles.css demo-service-b/index.html --bundle --platform=browser --format=esm --outdir=demo-service-b/dist --loader:.html=copy",
+    "build:demo-service-c": "hardhat build && npm run build --workspace @agentic-world/service-c",
+    "dev:demo-service-c": "hardhat build && npm run dev --workspace @agentic-world/service-c",
     "serve:demo-service": "node --import tsx demo-service/server.ts",
     "serve:demo-service-b": "node --import tsx demo-service-b/server.ts",
+    "serve:demo-service-c": "node --import tsx scripts/serve-service-c.mjs",
     "deploy:local-service": "hardhat run scripts/deploy-local-service.ts --network localhost",
     "deploy:sepolia:browser": "hardhat build && node --import tsx scripts/deploy-sepolia-browser.ts",
-    "demo": "npm run build:demo-service && npm run build:demo-service-b && node --import tsx scripts/serve-sepolia.ts",
+    "demo": "hardhat build && npm run build:demo-service && npm run build:demo-service-b && npm run build:demo-service-c && node --import tsx scripts/serve-sepolia.ts",
     "demo:hardhat": "node --import tsx scripts/demo.ts",
     "demo:local": "hardhat run scripts/local-e2e.ts --network localhost",
     "test": "hardhat test",
-    "typecheck": "tsc --noEmit"
+    "test:service-c": "hardhat test nodejs test/ServiceC.ts test/ServiceCStores.ts",
+    "typecheck": "tsc --noEmit && npm run typecheck --workspace @agentic-world/service-c"
   },
   "devDependencies": {
     "@account-abstraction/contracts": "^0.8.0",

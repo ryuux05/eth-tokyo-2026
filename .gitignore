@@ -23,6 +23,17 @@ target/
 .venv/
 __pycache__/
 *.pyc
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
+
+# Local motion briefs and generated showreels (not application assets)
+*.mp4
+*.mov
+*.webm
+agentic-world-showreel*/
+AGENTIC_WORLD_*MOTION*.md
+AGENTIC_WORLD_*VIDEO*.md
 
 # Local deployment state and logs
 broadcast/
