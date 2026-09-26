@@ -19,6 +19,8 @@
     }
   },
   "scripts": {
+    "build:installer": "npm run build:mcp && npm run build:portal && node scripts/build-installer.mjs",
+    "test:installer": "node --test packages/agenticworld/test/*.test.js",
     "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service && npm run build:demo-service-b && npm run build:demo-service-c",
     "build:demo": "hardhat build && npm run build:demo-service && npm run build:demo-service-b",
     "build:sdk": "tsc --project tsconfig.sdk.json",
