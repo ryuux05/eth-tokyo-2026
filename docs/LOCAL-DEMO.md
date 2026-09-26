@@ -32,7 +32,7 @@ local stdio MCP process for the MCP checks:
 Expected checks: A and B return 200 for their allowed resources; a Service A
 proof and session fail at B with 401; B returns 403 for `/private/admin` even
 after valid authentication; a repeated signed request returns 401. An MCP
-client discovers the three tools, calls both services by URL, reuses a service-scoped
+client discovers the seven tools, checks owner transaction preparation and the P-256 bootstrap path, calls both services by URL, reuses a service-scoped
 session, and confirms a route absent from the local demo transport map fails locally. Finally,
 the owner revokes the operating key onchain. Fresh signed requests then return
 401 at **both** services; the MCP server also refuses new authentication. The

@@ -8,7 +8,7 @@ This is the v0 architecture now implemented in the contracts, SDKs, and owner po
 | --- | --- | --- |
 | Account and execution | ERC-4337 smart account, ERC-7579 modular interface | `0xAGENT` is a deployed smart account. It executes `UserOperation`s through a trusted EntryPoint. |
 | Identity | `0xAGENT`, `owner() = 0xHUMAN` | Persistent agent identity and human association. `owner()` is not a grant of the human's service permissions. |
-| Agent authentication | `AgentValidator`, P-256 Secure Enclave or legacy secp256k1 operating key, ERC-1271 | Validate agent-signed UserOperations and service proofs without giving the runtime the human's key. |
+| Agent authentication | `AgentValidator`, P-256 Secure Enclave or legacy secp256k1 operating key, ERC-1271 | Validate agent-signed UserOperations and service proofs without giving the runtime the human's key. P-256 requires EIP-7951 at `0x100`; unsupported chains fail closed. |
 | User execution policy | `AgentPolicyHook` + `PolicyEngine` | Gate onchain execution by the agent account according to owner-configured rules. This cannot enforce the agent's offchain instructions. |
 | Service authentication | Signed HTTP request → ERC-1271 → short-lived service session | Each service verifies the agent account independently; the local MCP now derives proof fields from a URL request. |
 | Service authorization | Service database | Each service chooses manual agent registration **or** `owner()`-derived association, then applies its own route, entitlement, payment, and resource rules. |

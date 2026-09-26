@@ -10,7 +10,8 @@ account, an `AgentValidator` for operating-key authentication and ERC-1271, and 
 The protocol lets services verify signed HTTP requests independently and keep their own
 authorization rules, with manual or `owner()`-derived agent association. See the
 [v0 architecture](docs/ARCHITECTURE-v0.md). The local MCP now canonicalizes
-URL-based requests; EIP-8141 + ERC-8286 remain future work.
+URL-based requests. P-256 verification uses EIP-7951's native `0x100` precompile;
+EIP-8141 + ERC-8286 remain future work.
 
 Start with the [current implementation](docs/V0-IMPLEMENTATION.md),
 [architecture](docs/ARCHITECTURE-v0.md), [owner portal guide](docs/PORTAL.md),
