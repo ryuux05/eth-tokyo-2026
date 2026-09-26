@@ -1,13 +1,14 @@
-# Two SDKs, two trust boundaries
+# Core SDK and two role-specific SDKs
 
-The SDKs share one EIP-712/ABI definition but have separate entry points:
+The dependency order is `contracts → core → service/agent`. The three entry points share one EIP-712/ABI definition but have different jobs:
 
 | Entry point | Runs with | Responsibility |
 | --- | --- | --- |
+| `agentic-world/core` | Both SDKs and owner portal | Contract ABIs, typed messages, policy encoding, delegation-pointer check. No signer, sessions, or backend. |
 | `agentic-world/agent` | Agent runtime | Check the challenge's agent, chain, audience, and lifetime; sign the digest using an injected signer. |
 | `agentic-world/service` | Each independent service | Issue challenges, verify EIP-7702 and ERC-1271, resolve the optional mandate, consume nonces, and issue local sessions. |
 
-Build with `npm run build:sdk`. The package is private for the prototype; entry points resolve to JavaScript and declarations under `dist/sdk`. Each service supplies its own RPC client and storage adapters. There is no Agentic World backend dependency.
+Build with `npm run build:sdk`. The package is private for the prototype; entry points resolve to JavaScript and declarations under `dist/sdk`. Each service supplies its own RPC client and storage adapters. There is no Agentic World backend dependency. See the [core contract](CORE-SDK.md) for exactly what belongs in the shared layer.
 
 ## Agent SDK
 

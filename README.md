@@ -4,7 +4,7 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
-Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md) for onchain autonomy limits, the [owner portal guide](docs/PORTAL.md) for registration and policy authoring, the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
+Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md), the [Core SDK boundary](docs/CORE-SDK.md), the [owner portal guide](docs/PORTAL.md), the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
 
 ## Idea
 
@@ -37,7 +37,7 @@ are not part of the core identity protocol.
 
 ## Status
 
-The first onchain milestone, bounded execution policy, and both SDK cores are implemented locally:
+The contracts, bounded execution policy, Core SDK, and two role-specific SDKs are implemented locally:
 `AgentAccount` manages EIP-7702 identity and authenticators, while
 `MandateRegistry` records principal-approved mandates. The agent SDK signs
 service challenges; the service SDK verifies proofs and issues local sessions.
