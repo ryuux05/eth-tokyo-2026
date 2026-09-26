@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Owner approval · Agentic World</title>
+  <style>
+    :root { color-scheme:light; font-family:"IBM Plex Sans",system-ui,sans-serif; background:#eff4f2; color:#132d2e; }
+    * { box-sizing:border-box; } body { margin:0; min-width:320px; }
+    header { background:#102a2c; color:#fff; padding:17px max(24px,calc((100vw - 960px)/2)); font-size:13px; }
+    .mark { display:inline-grid; place-items:center; width:30px; height:30px; margin-right:10px; border:1px solid #70b9ad; border-radius:5px; color:#bce9db; font:12px ui-monospace,monospace; vertical-align:middle; }
+    main { max-width:960px; margin:auto; padding:58px 24px 76px; display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,440px); gap:52px; }
+    h1 { font-size:clamp(2rem,4vw,3.2rem); letter-spacing:-.03em; line-height:1.12; margin:0 0 20px; text-wrap:balance; }
+    .lead { max-width:55ch; line-height:1.6; color:#506768; } .steps { margin:40px 0 0; padding-left:20px; line-height:1.65; color:#506768; }
+    .steps li { padding:0 0 14px 7px; } .steps strong { color:#132d2e; }
+    .sheet { align-self:start; background:#fff; border:1px solid #cbdad7; border-radius:10px; padding:28px; }
+    h2 { margin:0 0 8px; font-size:23px; letter-spacing:-.02em; } .explain { color:#506768; line-height:1.55; font-size:14px; margin:0 0 21px; }
+    dl { margin:0; } .fact { padding:13px 0; border-top:1px solid #e2ebe8; }
+    dt { color:#506768; font:11px ui-monospace,monospace; text-transform:uppercase; letter-spacing:.04em; margin-bottom:6px; }
+    dd { margin:0; overflow-wrap:anywhere; font:12px/1.5 ui-monospace,monospace; }
+    #details { margin:18px 0; padding:14px 16px; background:#e1f2ee; border-radius:6px; font-size:13px; line-height:1.5; }
+    #details li { overflow-wrap:anywhere; margin:4px 0; }
+    button { width:100%; min-height:46px; border:0; border-radius:7px; background:#006d66; color:#fff; font:600 14px "IBM Plex Sans",system-ui,sans-serif; cursor:pointer; }
+    button:hover:not(:disabled) { background:#005950; } button:focus-visible { outline:3px solid #38ac9f; outline-offset:3px; }
+    button:disabled { opacity:.58; cursor:wait; } .status { min-height:38px; margin:16px 0 0; color:#506768; font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+    .status.error { color:#a33b34; } .result { display:none; padding:14px; margin-top:14px; border-radius:6px; background:#e1f2ee; overflow-wrap:anywhere; font-size:13px; }
+    .result.visible { display:block; } .caution { color:#874822; font-size:12px; line-height:1.5; margin:12px 0 0; }
+    @media(max-width:760px) { main { display:block; padding:38px 20px 60px; } .steps { margin:24px 0 34px; } .sheet { padding:22px; } }
+  </style>
+</head>
+<body>
+  <header><span class="mark">AW</span> Agentic World / owner approval</header>
+  <main>
+    <section aria-labelledby="title">
+      <h1 id="title">Review an onchain change.</h1>
+      <p class="lead" id="summary">Loading the owner action…</p>
+      <ol class="steps">
+        <li><strong>Connect your owner wallet.</strong> The connected address must match the account owner.</li>
+        <li><strong>Review the exact change.</strong> Check the network, agent, and transaction target before approving.</li>
+        <li><strong>Wait for confirmation.</strong> The local MCP verifies the transaction and updated onchain state.</li>
+      </ol>
+    </section>
+    <section class="sheet" aria-labelledby="sheet-title">
+      <h2 id="sheet-title">Owner wallet action</h2>
+      <p class="explain">Your agent can prepare this action, but only your wallet can approve the transaction.</p>
+      <dl>
+        <div class="fact"><dt>Network</dt><dd id="network">Loading…</dd></div>
+        <div class="fact"><dt>Agent account</dt><dd id="agent">Loading…</dd></div>
+        <div class="fact"><dt>Required owner</dt><dd id="owner">Loading…</dd></div>
+        <div class="fact"><dt>Transaction target</dt><dd id="target">Loading…</dd></div>
+      </dl>
+      <ul id="details"></ul>
+      <button id="action" type="button">Connect owner wallet</button>
+      <p id="status" class="status" role="status" aria-live="polite">Waiting for your wallet.</p>
+      <div id="result" class="result"></div>
+      <p class="caution">Only approve the transaction if these details match the wallet prompt. Existing service sessions may outlive an authenticator change.</p>
+    </section>
+  </main>
+  <script type="module">
+    const el = id => document.getElementById(id);
+    const token = location.pathname.split("/").at(-1);
+    const api = async (path, body) => {
+      const response = await fetch(`/flow/${token}/${path}`, { method:body ? "POST" : "GET", headers:body ? {"Content-Type":"application/json"} : {}, body:body ? JSON.stringify(body) : undefined, cache:"no-store" });
+      const value = await response.json();
+      if (!response.ok) throw new Error(value.error || "Owner approval failed");
+      return value;
+    };
+    const status = (message, error=false) => { el("status").textContent=message; el("status").classList.toggle("error",error); };
+    let context, stage="connect", pendingHash;
+    const action=el("action");
+    async function verifyNetwork() {
+      const expected=`0x${context.transaction.chainId.toString(16)}`;
+      const current=await window.ethereum.request({method:"eth_chainId"});
+      if (current.toLowerCase()!==expected) throw new Error("Wallet is on the wrong chain. Select the network shown above.");
+      if (context.deploymentBlockNumber && context.deploymentBlockHash) {
+        const block=await window.ethereum.request({method:"eth_getBlockByNumber",params:[`0x${BigInt(context.deploymentBlockNumber).toString(16)}`,false]});
+        if (block?.hash?.toLowerCase()!==context.deploymentBlockHash.toLowerCase())
+          throw new Error(`This wallet points to a different local node. Set chain ${context.transaction.chainId} RPC to ${context.localRpcUrl}, then reconnect.`);
+      }
+    }
+    async function complete() {
+      const confirmed=await api("complete",{hash:pendingHash});
+      el("result").textContent=`Confirmed onchain: ${confirmed.hash}. You can close this window.`;
+      el("result").classList.add("visible");
+      action.textContent="Confirmed onchain";
+      status("Updated state verified and returned to your agent.");
+      stage="done";
+    }
+    try {
+      context=await api("context");
+      el("summary").textContent=context.summary;
+      el("sheet-title").textContent=context.action === "policy" ? "Set agent policy" : context.action === "rotate" ? "Rotate authenticator" : "Revoke authenticator";
+      el("network").textContent=`${context.chainName} · ${context.transaction.chainId}`;
+      el("agent").textContent=context.agentId;
+      el("owner").textContent=context.transaction.from;
+      el("target").textContent=context.transaction.to;
+      for (const detail of context.details) { const item=document.createElement("li"); item.textContent=detail; el("details").append(item); }
+    } catch(error) { status(error.message,true); action.disabled=true; }
+    action.addEventListener("click",async () => {
+      if (!window.ethereum) { status("No injected wallet found. Open this page in a browser with MetaMask enabled.",true); return; }
+      action.disabled=true;
+      try {
+        if (stage==="connect") {
+          const accounts=await window.ethereum.request({method:"eth_requestAccounts"});
+          if (!Array.isArray(accounts) || !accounts.some(address=>address.toLowerCase()===context.transaction.from.toLowerCase()))
+            throw new Error("Select the owner wallet shown above.");
+          const expected=`0x${context.transaction.chainId.toString(16)}`;
+          const current=await window.ethereum.request({method:"eth_chainId"});
+          if (current.toLowerCase()!==expected) {
+            try { await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:expected}]}); }
+            catch(error) {
+              if (error.code!==4902 || !context.localRpcUrl) throw error;
+              await window.ethereum.request({method:"wallet_addEthereumChain",params:[{chainId:expected,chainName:context.chainName,rpcUrls:[context.localRpcUrl],nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18}}]});
+              await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:expected}]});
+            }
+          }
+          await verifyNetwork();
+          action.textContent="Review in wallet";
+          status("Check the action and transaction target, then approve in your wallet.");
+          stage="send";
+        } else if (stage==="send") {
+          const accounts=await window.ethereum.request({method:"eth_accounts"});
+          if (!accounts.some(address=>address.toLowerCase()===context.transaction.from.toLowerCase())) throw new Error("Owner wallet changed. Reload and reconnect.");
+          await verifyNetwork();
+          pendingHash=await window.ethereum.request({method:"eth_sendTransaction",params:[{from:context.transaction.from,to:context.transaction.to,data:context.transaction.data,value:"0x0"}]});
+          stage="pending";
+          action.textContent="Waiting for confirmation";
+          status(`Transaction ${pendingHash} sent. Waiting for onchain confirmation…`);
+          await complete();
+        } else if (stage==="retry") {
+          stage="pending";
+          action.textContent="Waiting for confirmation";
+          await complete();
+        }
+      } catch(error) {
+        if (stage==="pending") { stage="retry"; action.textContent="Retry confirmation"; }
+        status(error.message || "Wallet action failed",true);
+      } finally { if (stage!=="pending" && stage!=="done") action.disabled=false; }
+    });
+  </script>
+</body>
+</html>

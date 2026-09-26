@@ -30,6 +30,10 @@ const salt = generatePrivateKey(); // A fresh bytes32 salt avoids collisions on 
 const agent = await factory.read.predictAgent([owner.account.address, salt]) as Address;
 const created = await factory.write.createAgent([authenticator.address, salt]);
 await client.waitForTransactionReceipt({ hash: created });
+const otherSalt = generatePrivateKey();
+const otherAgent = await factory.read.predictAgent([owner.account.address, otherSalt]) as Address;
+const otherCreated = await factory.write.createAgent([authenticator.address, otherSalt]);
+await client.waitForTransactionReceipt({ hash: otherCreated });
 const account = await viem.getContractAt("AgentAccount4337", agent);
 const target = await viem.deployContract("PolicyActionTarget");
 const data = encodeFunctionData({ abi: target.abi, functionName: "purchase", args: [keccak256(toBytes("local-rpc-demo"))] });
@@ -131,7 +135,7 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
   try {
     const configPath = join(temporary, "config.json");
     await writeFile(configPath, JSON.stringify({
-      rpcUrl, chainId, agentId: agent, factory: factory.address,
+      rpcUrl, chainId, agentId: agent, agentIds: [agent, otherAgent], factory: factory.address,
       implementation: await factory.read.implementation(),
     }));
     const transport = new StdioClientTransport({ command: process.execPath, args: ["--import", "tsx", mcpScript],
@@ -147,7 +151,12 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
     try {
       const tools = await mcp.listTools();
       assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_create_identity",
-        "agentic_identity", "agentic_policy_check", "agentic_rotate_authenticator", "agentic_session_proof", "agentic_set_policy"]);
+        "agentic_identity", "agentic_list_identities", "agentic_policy_check", "agentic_revoke_authenticator",
+        "agentic_rotate_authenticator", "agentic_session_proof", "agentic_set_policy"]);
+      const listed = await call("agentic_list_identities", {});
+      assert.equal(listed.error, false);
+      assert.deepEqual((listed.data.identities as { agentId: Address }[]).map(item => item.agentId.toLowerCase()).sort(),
+        [agent.toLowerCase(), otherAgent.toLowerCase()].sort());
       const identity = await call("agentic_identity", {});
       assert.equal(identity.error, false);
       assert.equal(String(identity.data.agentId).toLowerCase(), agent.toLowerCase());
@@ -155,20 +164,31 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
       const preview = await call("agentic_policy_check", { target: target.address, valueWei: "0", data });
       assert.equal(preview.data.decision, "ALLOW");
       if (phase === "active") {
+        const ambiguousRevoke = await call("agentic_revoke_authenticator", {});
+        assert.equal(ambiguousRevoke.error, true);
+        assert.equal(ambiguousRevoke.data.code, "AGENT_SELECTION_REQUIRED");
+        const revokeIntent = await call("agentic_revoke_authenticator", { agentId: otherAgent, prepareOnly: true });
+        assert.equal(revokeIntent.error, false);
+        assert.equal((revokeIntent.data.transaction as { to: Address }).to.toLowerCase(), otherAgent.toLowerCase());
+        assert.equal(decodeFunctionData({ abi: agentAccountAbi,
+          data: (revokeIntent.data.transaction as { data: Hex }).data }).functionName, "revokeAuthenticator");
         const prepared = await call("agentic_create_identity", { owner: owner.account.address, salt: generatePrivateKey() });
         assert.equal(prepared.error, false);
         assert.equal(prepared.data.status, "OWNER_TRANSACTION_REQUIRED");
         assert.equal((prepared.data.transaction as { to: Address }).to.toLowerCase(), factory.address.toLowerCase());
         assert.equal(decodeFunctionData({ abi: agentAccountFactoryAbi,
           data: (prepared.data.transaction as { data: Hex }).data }).functionName, "createAgent");
-        const policyIntent = await call("agentic_set_policy", { rules: [{ target: target.address,
+        const ambiguousPolicy = await call("agentic_set_policy", { rules: [] });
+        assert.equal(ambiguousPolicy.error, true);
+        assert.equal(ambiguousPolicy.data.code, "AGENT_SELECTION_REQUIRED");
+        const policyIntent = await call("agentic_set_policy", { agentId: agent, prepareOnly: true, rules: [{ target: target.address,
           selector: "0x12345678", token: zeroAddress, maxValueWei: "0", maxAmount: "0", decision: "DENY" }] });
         assert.equal(policyIntent.error, false);
         assert.equal(policyIntent.data.status, "OWNER_TRANSACTION_REQUIRED");
         assert.equal((policyIntent.data.transaction as { from: Address }).from.toLowerCase(), owner.account.address.toLowerCase());
         assert.equal(decodeFunctionData({ abi: agentPolicyAbi,
           data: (policyIntent.data.transaction as { data: Hex }).data }).functionName, "setPolicy");
-        const rotation = await call("agentic_rotate_authenticator", { scheme: "secp256k1",
+        const rotation = await call("agentic_rotate_authenticator", { scheme: "secp256k1", agentId: agent, prepareOnly: true,
           address: privateKeyToAccount(generatePrivateKey()).address });
         assert.equal(rotation.error, false);
         assert.equal(rotation.data.status, "OWNER_TRANSACTION_REQUIRED");
@@ -215,7 +235,7 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
       console.log(`MCP_RESULT ${JSON.stringify({ phase, agentId: agent, tools: tools.tools.length,
         status: phase === "revoked" ? first.data.code : "SESSION_ESTABLISHED" })}`);
     } finally { await mcp.close(); }
-    if (phase === "active") {
+    if (phase === "active" && process.platform !== "win32") {
       const launcher = join(temporary, "test-p256-signer");
       await writeFile(launcher, `#!/bin/sh\nexec "${process.execPath}" --import tsx "${signerFixtureScript}" "$@"\n`);
       await chmod(launcher, 0o700);
