@@ -1,4 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
+import { createAgenticWorldMiddleware, type AgenticMiddlewareOptions } from "./http.js";
+export { createAgenticWorldMiddleware } from "./http.js";
+export type { AgenticAuthentication, AgenticRequest, AgenticMiddlewareOptions, AgenticMiddleware } from "./http.js";
 import { keccak256, type Address, type Hex, type PublicClient, zeroAddress } from "viem";
 import {
   agentAccountAbi,
@@ -257,6 +260,7 @@ export type AgenticWorldConfig<User> = Omit<ServiceSdkConfig, "implementation" |
 
 /** Service-facing authentication layer. Association lookup never grants a resource by itself. */
 export class AgenticWorld<User> {
+  private readonly audience: string;
   private readonly association: Association<User>;
   private readonly authorizeSession?: (identity: Session, user: User) => Promise<boolean>;
   private readonly service: ReturnType<typeof createServiceSdk>;
@@ -264,6 +268,7 @@ export class AgenticWorld<User> {
   constructor(config: AgenticWorldConfig<User>) {
     const { association, authorizeSession, pinnedImplementation, ...serviceConfig } = config;
     this.association = Object.freeze({ ...association });
+    this.audience = config.audience;
     this.authorizeSession = authorizeSession;
     this.service = createServiceSdk({
       ...serviceConfig,
@@ -309,6 +314,12 @@ export class AgenticWorld<User> {
   async readSession(token: string) {
     const session = await this.service.readSession(token);
     return session ? { session, user: await this.userFor(session) } : undefined;
+  }
+
+  /** Opt-in protected-route middleware; creates an auth offer, not a nonce.
+   * Keep createChallenge/authenticate mounted at the advertised endpoints. */
+  middleware(options: AgenticMiddlewareOptions<User>) {
+    return createAgenticWorldMiddleware(this, this.audience, options);
   }
 }
 
