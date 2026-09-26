@@ -29,31 +29,42 @@ or USDC to try the hosted authentication and policy-preview demos below.
 
 ### Hosted demo versions
 
-Checked on **27 September 2026**: both hosted services trust the original
-implementation, `0xd08B955ca8727d86e708ae5684D5fa7f32635e66`.
-The hosted-demo walkthrough uses **`release/v.0.0.1`**, which creates matching accounts through factory
-`0x63f158897834bbc1579e82dfc29a7aacc8b91f93`.
+Checked on **27 September 2026**: Service B accepts the current implementation,
+`0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd`, matching **agenticworld@0.0.2**
+and `main`. Use the npm installation below to try it.
 
-The current release on **`main`** creates accounts through the newer
-factory listed under [Deployed contracts](#deployed-contracts--sepolia).
-Those new accounts need the services redeployed with the matching implementation
-before hosted authentication will succeed. Existing identities are not upgraded.
-Do not change trust checks or create repeated identities to work around a mismatch.
+The linked Service C preview still uses the original implementation,
+`0xd08B955ca8727d86e708ae5684D5fa7f32635e66`, and needs a legacy identity.
+Its canonical domain currently rejects requests because its configured origin
+does not match. The operator must correct `SERVICE_C_ORIGIN` and redeploy from
+`main` before new accounts can use that hosted demo. Existing identities are not
+upgraded. `release/v.0.0.1` preserves the original source for legacy demos.
 
 ### 1. Install the skill
 
-**Codex — from another project:** send this message in a Codex session:
+Recommended: run this in your terminal to install both the skill and local MCP:
+
+```sh
+npx agenticworld install
+```
+
+The installer detects the Codex and Claude Code CLIs on your computer. Use
+`--client codex`, `--client claude`, or `--client both` to select explicitly.
+Restart your client afterward, then continue to step 3. Installation already
+performs init; it creates no identity. No repository clone is needed.
+
+**Alternative: skill-first Codex setup from another project.** Send:
 
 ```text
-$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/release/v.0.0.1/.agents/skills/agentic-world
+$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/main/.agents/skills/agentic-world
 ```
 
 Start a new session if the skill is not visible, then continue to step 2.
 
-**Claude Code — or Codex using a checkout:** run these terminal commands:
+**Alternative: Claude Code or Codex using a source checkout.** Run:
 
 ```sh
-git clone --branch release/v.0.0.1 https://github.com/ryuux05/eth-tokyo-2026.git
+git clone --branch main https://github.com/ryuux05/eth-tokyo-2026.git
 cd eth-tokyo-2026
 ```
 
@@ -66,20 +77,18 @@ the project's copy. Reuse an existing installation; don't overwrite a conflictin
 skill or MCP registration.
 
 Installing the skill alone does not install the MCP. Init handles that next.
-The one-command npm installer is prepared but **not yet published**; do not run
-a similarly named third-party package. See [installer options](#installer-options).
+See [installer options](#installer-options) for the published npm package.
 
 ### 2. Initialize the local MCP
 
 Send this as a **chat message**, not a terminal command:
 
 ```text
-agentic-world:init — use release/v.0.0.1 for this hosted demo
+agentic-world:init
 ```
 
-For a source checkout, tell the agent to reuse that checkout. If the agent needs
-to clone the runtime, explicitly select `release/v.0.0.1` for this walkthrough.
-Init installs
+If you used `npx agenticworld install`, init is already complete. For a source
+checkout, tell the agent to reuse that checkout. Init installs
 dependencies, builds the MCP/portal/native signer, checks the host, creates a
 private Sepolia configuration, and registers the MCP for your client.
 It creates **no signing key, agent identity, or transaction**.
@@ -162,6 +171,11 @@ only signs the service's challenge.
 Open **[Service C](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/)**.
 This is the compute-credit storefront, **not Service A**.
 
+This older hosted preview requires a legacy identity. For a new npm-created
+identity, wait for the Service C deployment/origin update described above, or
+run the current Service C locally using [its guide](demo-service-c/README.md).
+The following policy steps apply once the service and identity versions match.
+
 1. Connect and register the same owner wallet.
 2. Under **Service contract setup**, reuse an existing Service C purchase target
    or deploy one through your wallet. This one-time target deployment costs
@@ -217,7 +231,7 @@ configuration, agent ETH/USDC funding, and transfer-specific policy.
 To add or replace the bundler after init, say `agentic-world:configure-bundler`.
 The skill guides you to stop the MCP, run `npm run configure:bundler` from this
 checkout, paste the URL into a hidden terminal prompt, and restart the MCP.
-After npm publication, the terminal command is `npx agenticworld configure-bundler`.
+For an npm installation, the terminal command is `npx agenticworld configure-bundler`.
 You can also supply `AGENTIC_WORLD_BUNDLER_RPC_URL` locally. Setup validates the
 endpoint and preserves your identities; it does not send a payment. With no
 bundler configured, authentication and policy previews still work.
@@ -393,8 +407,8 @@ not the hosted services or your Secure Enclave/TPM key.
 
 ### Installer options
 
-The [installer package](packages/agenticworld/README.md) is prepared but not
-published to npm. **After official publication**, the command will be:
+The [installer package](packages/agenticworld/README.md) is published as
+[agenticworld@0.0.2](https://www.npmjs.com/package/agenticworld/v/0.0.2):
 
 ```sh
 npx agenticworld install --client codex
