@@ -1,6 +1,6 @@
 {
   "name": "agenticworld",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Install Agentic World skills and its local hardware-backed MCP for Codex and Claude Code",
   "type": "module",
   "bin": { "agenticworld": "bin/agenticworld.js" },
