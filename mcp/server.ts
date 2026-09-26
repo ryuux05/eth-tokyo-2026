@@ -20,6 +20,7 @@ import { openDefaultBrowser } from "./open-browser.js";
 import { FlowCancelledError } from "./flow-cancel.js";
 
 type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; aliases?: Record<string, string>; factory?: Address; implementation: Address;
+  authenticatorLabels?: Record<string, string[]>;
   deploymentBlockNumber?: string; deploymentBlockHash?: Hex;
   signer?: { kind: "secure-enclave" | "windows-tpm"; binaryPath: string; label: string } };
 
@@ -30,6 +31,7 @@ class ToolError extends Error {
 export function parseConfig(value: unknown): Config {
   const schema = z.strictObject({
     rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(256).optional(), aliases: z.record(z.string(), z.string()).optional(), factory: z.string().optional(), implementation: z.string().optional(),
+    authenticatorLabels: z.record(z.string(), z.array(z.string().min(1).refine(label => Buffer.byteLength(label) <= 128 && !/[\x00-\x1f\x7f]/.test(label))).max(256)).optional(),
     deploymentBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
     deploymentBlockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
     signer: z.strictObject({ kind: z.enum(["secure-enclave", "windows-tpm"]), binaryPath: z.string().refine(isAbsolute, "Signer path must be absolute"), label: z.string().min(1).max(128) }).optional(),
@@ -43,17 +45,20 @@ export function parseConfig(value: unknown): Config {
     if (!isAddress(id) || alias !== alias.trim() || alias.length < 1 || alias.length > 40 || /[\x00-\x1f\x7f]/.test(alias))
       throw new Error("Invalid agent alias");
   }
+  if (Object.keys(parsed.authenticatorLabels ?? {}).some(id => !isAddress(id))) throw new Error("Invalid authenticator label agent ID");
   if (!!parsed.deploymentBlockNumber !== !!parsed.deploymentBlockHash) throw new Error("Deployment fingerprint requires both block number and hash");
   const rpc = new URL(parsed.rpcUrl);
   if (rpc.protocol !== "https:" && !(rpc.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(rpc.hostname))) throw new Error("RPC must use HTTPS or loopback HTTP");
   return { ...parsed, agentId: parsed.agentId ? getAddress(parsed.agentId) : undefined,
     agentIds: parsed.agentIds?.map(id => getAddress(id)), aliases: Object.fromEntries(Object.entries(parsed.aliases ?? {}).map(([id, alias]) => [id.toLowerCase(), alias])),
+    authenticatorLabels: Object.fromEntries(Object.entries(parsed.authenticatorLabels ?? {}).map(([id, labels]) => [id.toLowerCase(), [...new Set(labels)]])),
     factory: trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined),
     implementation: trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined),
     deploymentBlockHash: parsed.deploymentBlockHash as Hex | undefined };
 }
 
-export async function createAgenticWorldMcp(configValue: unknown, operatingKey?: Hex, configPath?: string) {
+export async function createAgenticWorldMcp(configValue: unknown, operatingKey?: Hex, configPath?: string,
+  options: { openBrowser?: (url: string) => Promise<void> } = {}) {
   const config = parseConfig(configValue);
   if (config.chainId === SEPOLIA_CHAIN_ID && operatingKey) throw new Error("Sepolia requires a hardware-backed P-256 signer");
   if (!config.signer && !operatingKey) throw new Error("Configure a local P-256 signer or the demo-only operating key");
@@ -66,6 +71,21 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   let ownerActionInProgress = false;
   let portal: { server: Server; url: string } | undefined;
   let persistQueue: Promise<void> = Promise.resolve();
+  const openBrowser = options.openBrowser ?? openDefaultBrowser;
+
+  async function signerForKey(agentId: Address, publicKey: { qx: Hex; qy: Hex }, additionalLabel?: string) {
+    if (!config.signer) throw new ToolError("SIGNER_UNAVAILABLE", "No local hardware signer is configured");
+    const labels = [...new Set([...(additionalLabel ? [additionalLabel] : []),
+      ...(config.authenticatorLabels?.[agentId.toLowerCase()] ?? []), config.signer.label])];
+    for (const label of labels) {
+      const signer = { ...config.signer, label };
+      try {
+        const key = await signerPublicKey(signer);
+        if (key.qx.toLowerCase() === publicKey.qx.toLowerCase() && key.qy.toLowerCase() === publicKey.qy.toLowerCase()) return signer;
+      } catch { /* A missing pending key must not mask another retained key. */ }
+    }
+    throw new ToolError("AUTHENTICATOR_MISMATCH", "No retained local hardware key matches this authenticator; use a provisioned keyLabel or rotate through the MCP");
+  }
 
   async function requireNativeP256() {
     // Known-valid EIP-7951 vector also used by OpenZeppelin to detect precompile presence.
@@ -218,7 +238,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
 
   server.registerTool("agentic_portal", { description: "Open the local owner portal to view managed agents, edit aliases, and set their onchain execution policies.", inputSchema: z.object({}) },
     async () => guarded(async () => {
-      if (portal) { await openDefaultBrowser(portal.url); return { status: "PORTAL_OPEN", url: portal.url }; }
+      if (portal) { await openBrowser(portal.url); return { status: "PORTAL_OPEN", url: portal.url }; }
       const token = randomBytes(24).toString("hex");
       const prefix = `/portal/${token}/`;
       let base = "";
@@ -260,9 +280,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
             const agentId = getAddress(input.agentId);
             const current = await identity(agentId);
             if (config.signer) {
-              const key = await signerPublicKey(config.signer);
-              if (current.authenticatorScheme !== 2 || current.p256PublicKey?.qx.toLowerCase() !== key.qx.toLowerCase() ||
-                  current.p256PublicKey?.qy.toLowerCase() !== key.qy.toLowerCase()) throw new Error("Agent key does not match local signer");
+              if (current.authenticatorScheme !== 2 || !current.p256PublicKey) throw new Error("Agent does not use P-256");
+              await signerForKey(agentId, current.p256PublicKey);
             } else if (current.authenticator?.toLowerCase() !== legacySigner?.address.toLowerCase()) throw new Error("Agent key does not match local signer");
             config.agentIds = [...new Map([...managedAgentIds(), agentId].map(id => [id.toLowerCase(), id] as const)).values()];
             config.agentId = agentId;
@@ -294,7 +313,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       if (!address || typeof address === "string") { site.close(); throw new ToolError("PORTAL_UNAVAILABLE", "Could not bind portal to loopback"); }
       base = `http://127.0.0.1:${address.port}`;
       portal = { server: site, url: `${base}${prefix}` };
-      try { await openDefaultBrowser(portal.url); }
+      try { await openBrowser(portal.url); }
       catch (error) { site.close(); portal = undefined; throw error; }
       return { status: "PORTAL_OPEN", url: `${base}${prefix}` };
     }));
@@ -369,6 +388,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     const creationSalt = `0x${randomBytes(32).toString("hex")}` as Hex;
     let selected: CreationIntent | undefined;
     const agentId = await runCreationFlow({ chainId: config.chainId, factory: config.factory, rpcUrl: config.rpcUrl, qx: key.qx, qy: key.qy,
+      openBrowser,
       deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
       prepare: async walletOwner => {
         const prepared = await prepareIdentity(walletOwner, creationSalt, key, true);
@@ -427,6 +447,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     ownerActionInProgress = true;
     try {
       const confirmed = await runOwnerActionFlow({ intent, rpcUrl: config.rpcUrl,
+        openBrowser,
         deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
         confirm: async hash => {
           const receipt = await client.waitForTransactionReceipt({ hash, timeout: 180_000 });
@@ -492,18 +513,34 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   server.registerTool("agentic_rotate_authenticator", {
     description: "Open owner-wallet approval to rotate an authenticator; optionally return a read-only transaction preview.",
     inputSchema: z.discriminatedUnion("scheme", [
-      z.strictObject({ scheme: z.literal("p256"), agentId: z.string().optional(), prepareOnly: z.boolean().optional(), qx: z.string().regex(/^0x[0-9a-fA-F]{64}$/), qy: z.string().regex(/^0x[0-9a-fA-F]{64}$/) }),
+      z.strictObject({ scheme: z.literal("p256"), agentId: z.string().optional(), prepareOnly: z.boolean().optional(),
+        qx: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(), qy: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
+        keyLabel: z.string().min(1).refine(label => Buffer.byteLength(label) <= 128 && !/[\x00-\x1f\x7f]/.test(label)).optional() }),
       z.strictObject({ scheme: z.literal("secp256k1"), agentId: z.string().optional(), prepareOnly: z.boolean().optional(), address: z.string() }),
     ]),
   }, async input => guarded(async () => {
+    if (ownerActionInProgress) throw new ToolError("OWNER_ACTION_IN_PROGRESS", "An owner approval page is already open");
     const current = await identity(selectManagedAgentId(input.agentId));
     if (current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_REVOKED", "A revoked authenticator must be restored by a separate owner action");
     let data: Hex;
+    let replacement: Awaited<ReturnType<typeof signerPublicKey>> | undefined;
+    let replacementLabel: string | undefined;
     if (input.scheme === "p256") {
       await requireNativeP256();
-      if (current.p256PublicKey?.qx.toLowerCase() === input.qx.toLowerCase() &&
-          current.p256PublicKey?.qy.toLowerCase() === input.qy.toLowerCase()) throw new ToolError("AUTHENTICATOR_UNCHANGED", "That P-256 key is already active");
-      data = encodeFunctionData({ abi: agentAccountAbi, functionName: "rotateP256Authenticator", args: [input.qx as Hex, input.qy as Hex] });
+      if (!!input.qx !== !!input.qy) throw new ToolError("INVALID_AUTHENTICATOR", "Provide both P-256 coordinates or neither for a new local key");
+      if (input.qx && input.qy) {
+        replacement = { scheme: "p256", qx: input.qx as Hex, qy: input.qy as Hex };
+        if (config.signer) replacementLabel = (await signerForKey(current.agentId, replacement, input.keyLabel)).label;
+      } else {
+        if (input.prepareOnly) throw new ToolError("PUBLIC_KEY_REQUIRED", "A read-only rotation preview needs existing public coordinates; omit prepareOnly to provision a new key");
+        if (!config.signer) throw new ToolError("P256_SIGNER_REQUIRED", "Rotation requires a local hardware P-256 signer");
+        replacementLabel = input.keyLabel ?? `agentic-world-${current.agentId.slice(2).toLowerCase()}-${randomBytes(8).toString("hex")}`;
+        replacement = input.keyLabel ? await signerPublicKey({ ...config.signer, label: replacementLabel })
+          : await ensureSignerPublicKey({ ...config.signer, label: replacementLabel });
+      }
+      if (current.p256PublicKey?.qx.toLowerCase() === replacement.qx.toLowerCase() &&
+          current.p256PublicKey?.qy.toLowerCase() === replacement.qy.toLowerCase()) throw new ToolError("AUTHENTICATOR_UNCHANGED", "That P-256 key is already active");
+      data = encodeFunctionData({ abi: agentAccountAbi, functionName: "rotateP256Authenticator", args: [replacement.qx, replacement.qy] });
     } else {
       if (config.chainId === SEPOLIA_CHAIN_ID) throw new ToolError("P256_REQUIRED", "Sepolia MCP only supports hardware-backed P-256 authenticators");
       if (!isAddress(input.address) || getAddress(input.address) === zeroAddress ||
@@ -516,15 +553,23 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     catch { throw new ToolError("ROTATION_SIMULATION_FAILED", "The current account rejected this rotation; check the new key and owner state"); }
     const intent: OwnerActionIntent = { action: "rotate", agentId: current.agentId,
       summary: "Replace this agent's operating authenticator. Existing service sessions may remain valid until they expire.",
-      details: input.scheme === "p256" ? [`New P-256 Qx: ${input.qx}`, `New P-256 Qy: ${input.qy}`] : [`New demo authenticator: ${input.address}`],
+      details: replacement ? [`New P-256 Qx: ${replacement.qx}`, `New P-256 Qy: ${replacement.qy}`] : [`New demo authenticator: ${input.scheme === "secp256k1" ? input.address : ""}`],
       transaction: { chainId: config.chainId, from: current.owner, to: current.agentId, value: "0", data } };
-    if (input.prepareOnly) return { status: "OWNER_TRANSACTION_REQUIRED", newAuthenticator: input, transaction: intent.transaction };
+    if (input.prepareOnly) return { status: "OWNER_TRANSACTION_REQUIRED", newAuthenticator: replacement ?? input, transaction: intent.transaction };
+    if (replacementLabel) {
+      // Retain both keys before opening the wallet: cancellation keeps the old key
+      // usable, and a submitted transaction can still complete after MCP restarts.
+      config.authenticatorLabels ??= {};
+      config.authenticatorLabels[current.agentId.toLowerCase()] = [...new Set([replacementLabel,
+        ...(config.authenticatorLabels[current.agentId.toLowerCase()] ?? [])])];
+      await persistConfig();
+    }
     return approveOwnerAction(intent, async () => {
       const updated = await identity(current.agentId);
-      const matches = input.scheme === "p256"
-        ? updated.authenticatorScheme === 2 && updated.p256PublicKey?.qx.toLowerCase() === input.qx.toLowerCase() &&
-          updated.p256PublicKey?.qy.toLowerCase() === input.qy.toLowerCase()
-        : updated.authenticatorScheme === 1 && updated.authenticator?.toLowerCase() === input.address.toLowerCase();
+      const matches = replacement
+        ? updated.authenticatorScheme === 2 && updated.p256PublicKey?.qx.toLowerCase() === replacement.qx.toLowerCase() &&
+          updated.p256PublicKey?.qy.toLowerCase() === replacement.qy.toLowerCase()
+        : input.scheme === "secp256k1" && updated.authenticatorScheme === 1 && updated.authenticator?.toLowerCase() === input.address.toLowerCase();
       if (!matches || updated.authenticationRevoked) throw new ToolError("ROTATION_STATE_MISMATCH", "Confirmed transaction did not activate the expected authenticator");
       return { authenticatorScheme: updated.authenticatorScheme,
         authenticator: updated.authenticator, p256PublicKey: updated.p256PublicKey,
@@ -571,11 +616,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     if (current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_REVOKED", "Agent authenticator is revoked");
     if (config.signer) {
       if (current.authenticatorScheme !== 2 || !current.p256PublicKey) throw new ToolError("AUTHENTICATOR_MISMATCH", "Agent does not use a P-256 authenticator");
-      const key = await signerPublicKey(config.signer);
-      if (key.qx.toLowerCase() !== current.p256PublicKey.qx.toLowerCase() || key.qy.toLowerCase() !== current.p256PublicKey.qy.toLowerCase()) {
-        throw new ToolError("AUTHENTICATOR_MISMATCH", "Local hardware P-256 key is not the current authenticator");
-      }
-      return signLocalChallenge(config.signer, challenge);
+      return signLocalChallenge(await signerForKey(agentId, current.p256PublicKey), challenge);
     } else if (current.authenticatorScheme !== 1 || current.authenticator?.toLowerCase() !== legacySigner?.address.toLowerCase()) {
       throw new ToolError("AUTHENTICATOR_MISMATCH", "Demo signer is not the current authenticator");
     }

@@ -1,16 +1,18 @@
 // Test-only software stand-in for the macOS Secure Enclave CLI. This key is public test material.
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { p256 } from "@noble/curves/nist.js";
 import { toBytes } from "viem";
 import { createAgentSdk } from "../../sdk/agent.js";
 
-const secret = new Uint8Array(32);
-secret[31] = 1;
+const [command, label] = process.argv.slice(2);
+const rotating = label?.startsWith("agentic-world-");
+const secret = rotating ? createHash("sha256").update(label).digest() : new Uint8Array(32);
+if (!rotating) secret[31] = 1;
 const publicKey = p256.getPublicKey(secret, false);
 const hex = bytes => `0x${Buffer.from(bytes).toString("hex")}`;
-const [command, label] = process.argv.slice(2);
-if (label !== "test-key" && label !== "tampered") process.exit(1);
-if (command === "public-key") {
+if (label !== "test-key" && label !== "tampered" && !rotating) process.exit(1);
+if (command === "public-key" || command === "provision") {
   console.log(JSON.stringify({ scheme: "p256", qx: hex(publicKey.slice(1, 33)), qy: hex(publicKey.slice(33, 65)) }));
 } else if (command === "sign-request") {
   const input = JSON.parse(readFileSync(0, "utf8"));

@@ -151,8 +151,8 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
     try {
       const tools = await mcp.listTools();
       assert.deepEqual(tools.tools.map(tool => tool.name).sort(), ["agentic_create_identity",
-        "agentic_identity", "agentic_list_identities", "agentic_policy_check", "agentic_revoke_authenticator",
-        "agentic_rotate_authenticator", "agentic_session_proof", "agentic_set_policy"]);
+        "agentic_identity", "agentic_list_identities", "agentic_policy_check", "agentic_portal", "agentic_revoke_authenticator",
+        "agentic_rotate_authenticator", "agentic_session_proof", "agentic_set_alias", "agentic_set_policy"]);
       const listed = await call("agentic_list_identities", {});
       assert.equal(listed.error, false);
       assert.deepEqual((listed.data.identities as { agentId: Address }[]).map(item => item.agentId.toLowerCase()).sort(),
@@ -161,7 +161,7 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
       assert.equal(identity.error, false);
       assert.equal(String(identity.data.agentId).toLowerCase(), agent.toLowerCase());
       assert.equal(identity.data.authenticationRevoked, phase === "revoked");
-      const preview = await call("agentic_policy_check", { target: target.address, valueWei: "0", data });
+      const preview = await call("agentic_policy_check", { agentId: agent, target: target.address, valueWei: "0", data });
       assert.equal(preview.data.decision, "ALLOW");
       if (phase === "active") {
         const ambiguousRevoke = await call("agentic_revoke_authenticator", {});
