@@ -11,6 +11,18 @@
 .report-link:focus-visible,summary:focus-visible{outline:3px solid #38ac9f;outline-offset:4px}
 summary{cursor:pointer;color:#132d2e;padding:12px 0}
 #visit-instruction{overflow-wrap:anywhere}
+.permission-shell{max-width:960px}
+.owner-signin,.text-section,.permissions-section,.agent-instructions{padding:26px 0;border-top:1px solid #cbdad7}
+.private-text-row{display:flex;align-items:center;gap:12px;margin-top:16px}
+.private-text-row input{flex:1;min-width:0;padding:14px;border:1px solid #9fb9b4;border-radius:6px;color:#132d2e;background:#fff;font:16px "DM Mono",monospace}
+.permission-row{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 0;border-bottom:1px solid #cbdad7}
+.permission-row code{overflow-wrap:anywhere;min-width:0;color:#132d2e}
+.permission-toggles{display:flex;gap:24px;flex-shrink:0}
+.permission-toggles label{display:flex;align-items:center;gap:8px;font-weight:600;cursor:pointer;color:#132d2e}
+.permission-toggles input{appearance:auto;width:20px;height:20px;accent-color:#006d66}
+.permission-toggles input:focus-visible{outline:3px solid #38ac9f;outline-offset:3px}
+#updated,#write-instruction,.agent-instructions code{overflow-wrap:anywhere}
+@media(max-width:620px){.permission-row{align-items:flex-start;flex-direction:column}.private-text-row{flex-wrap:wrap}.private-text-row input{flex-basis:100%}}
 .main-column .section-head code{font-size:13px;overflow-wrap:anywhere}
 .test-column .result+.result{margin-top:10px}
 .event[data-kind="AUTH_REQUIRED"] .event-kind,.event[data-kind="SESSION_DENIED"] .event-kind{color:#a33b34}

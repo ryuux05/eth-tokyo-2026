@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#102a2c">
-  <title>Service B · Owner association</title>
+  <title>Service B · Agent permissions</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -14,44 +14,40 @@
 <body>
   <header class="topbar">
     <div class="brand"><span class="brand-mark" aria-hidden="true">A<span>·</span>W</span><span>Agentic World <span class="slash">/</span> Service B</span></div>
-    <span class="top-note">OWNER ASSOCIATION <span class="live-dot" aria-hidden="true"></span> <span id="chain-label">CONNECTING</span></span>
+    <span id="chain-label" class="top-note">CONNECTING</span>
   </header>
-  <main class="shell">
-    <div class="intro">
-      <p class="eyebrow">SERVICE-OWNED AUTHORIZATION <span>WALLET → AGENT</span></p>
-      <h1>Register yourself<span class="period">.</span><br>Let the agent prove itself.</h1>
-      <p class="lede">Your wallet becomes a Service B customer. An agent still needs its own onchain identity and authenticator before it can access your private report.</p>
+  <main class="shell permission-shell">
+    <header class="intro">
+      <h1>Your text.<br>Your agent’s permissions.</h1>
+      <p class="lede">Read lets your agent see the text. Write lets it change the text. You decide with two checkboxes.</p>
       <p><a class="report-link" href="/private/report">Get my private report</a></p>
-      <p class="lede" id="visit-instruction">Tell your agent: “Go to this website and get my report.”</p>
-    </div>
-    <div class="workbench">
-      <section class="main-column" aria-label="Register owner wallet and inspect agent">
-        <div class="section-head"><span class="step">01</span><div><h2>Register your wallet</h2><p>Sign a one-time message to prove control. This costs no gas and does not give Service B your wallet key.</p></div></div>
-        <div class="wallet-actions"><button id="register-wallet" class="button primary" type="button">Connect and register wallet</button><code id="wallet-address">No wallet connected</code></div>
-        <p id="wallet-state" class="inline-state" role="status">No owner wallet registered in this service yet.</p>
-        <div class="identity-row owner-summary"><div><span class="mini-label">SERVICE B REPORT ENTITLEMENT</span><strong id="entitlement-value">Not registered</strong></div><div><span class="mini-label">AGENT ASSOCIATION</span><strong>Checked from onchain owner()</strong></div></div>
-
-        <div class="section-head separated"><span class="step">02</span><div><h2>Use your agent identity</h2><p>With the Agentic World skill and MCP installed, ask your agent to get the report. If you need an identity, ask it to create one with the same owner wallet.</p></div></div>
-        <p class="inline-state">Service B never enrolls agent IDs manually. It reads <code>owner()</code> from the pinned AgentAccount after the agent proves its signature.</p>
-        <details><summary>Optional: inspect an agent’s owner</summary>
-        <form id="inspect-form" class="inline-form">
-          <label class="field grow" for="agent-id"><span>AGENT ACCOUNT · 0xAGENT</span><input id="agent-id" type="text" autocomplete="off" spellcheck="false" placeholder="Paste the ID returned by Codex" required></label>
-          <button class="button secondary" type="submit">Check association</button>
-        </form>
-        <p id="agent-state" class="inline-state" role="status">No agent account checked yet.</p>
-        <div id="agent-details" class="identity-row" hidden><div><span class="mini-label">ONCHAIN OWNER</span><code id="agent-owner"></code></div><div><span class="mini-label">SERVICE ACCESS</span><strong id="agent-access"></strong></div></div>
-        </details>
-      </section>
-      <aside class="test-column" aria-label="Before and after access test">
-        <div class="test-heading"><span class="eyebrow">LIVE TEST · SERVICE B</span><h2>See the boundary</h2><p>Same private resource, two different outcomes. The agent must prove its own identity; wallet registration alone is not a session.</p></div>
-        <div class="test-step"><div class="test-index">A</div><div class="test-body"><h3>Before: no agent identity</h3><p>Request the report without an AgentSession. Service B must return <code>401</code>.</p><button id="before-button" class="button light" type="button">Try without an agent</button></div></div>
-        <div class="test-step last"><div class="test-index">B</div><div class="test-body"><h3>After: your agent gets the report</h3><p>Give your agent this website’s URL and ask for your report. It follows the report link and handles Agentic World sign-in with the installed skill.</p><p id="copy-state" class="session-state" role="status">No copied protocol instructions or manually entered agent ID needed.</p></div></div>
-        <div id="before-result" class="result empty" role="status"><span class="result-code">—</span><div><strong>Before request not tried</strong><p>No AgentSession has been sent.</p></div></div>
-        <div id="after-result" class="result empty" role="status"><span class="result-code">—</span><div><strong>Waiting for agent access</strong><p>A successful request from Codex will appear here automatically.</p></div></div>
-      </aside>
-    </div>
-    <section class="activity" aria-label="Service B decisions"><div class="activity-heading"><div><span class="eyebrow">SERVICE B DECISIONS</span><h2>Live activity</h2></div><button id="refresh-button" type="button" class="text-button">Refresh</button></div><div id="events" class="events"><p>No decisions yet.</p></div></section>
-    <footer><span>AGENTIC WORLD / SERVICE B</span><span>Wallet registration is local to this service. Agent identity is onchain.</span></footer>
+    </header>
+    <section aria-labelledby="owner-title" class="owner-signin">
+      <h2 id="owner-title">Sign in as the owner</h2>
+      <div class="wallet-actions"><button id="register-wallet" class="button primary" type="button">Sign in with wallet</button><code id="wallet-address">Not signed in</code></div>
+      <p class="inline-state">One message signature opens a one-hour session. Checkbox changes need no transaction or additional signature.</p>
+    </section>
+    <section aria-labelledby="text-title" class="text-section">
+      <h2 id="text-title">Private text</h2>
+      <div class="private-text-row"><input id="private-text" type="password" value="************" readonly autocomplete="off" aria-label="Private report text"><button id="reveal" class="button secondary" type="button" disabled>Show text</button></div>
+      <p id="updated" class="inline-state">Sign in to inspect your private text.</p>
+      <p class="inline-state">Hidden on the page by default. Only your signed-in owner session or an agent with Read can retrieve it.</p>
+    </section>
+    <section aria-labelledby="permissions-title" class="permissions-section">
+      <div class="activity-heading"><h2 id="permissions-title">Agent permissions</h2><button id="refresh-button" type="button" class="text-button">Refresh</button></div>
+      <p class="inline-state">Your agents appear after authenticating. Read starts on; Write starts off. Changes apply to the next request, including an existing session.</p>
+      <div id="agents">Sign in, then ask your agent to get the report. It will appear here after authenticating.</div>
+    </section>
+    <p id="status" class="inline-state" role="status">Sign in to manage your agents.</p>
+    <section class="agent-instructions" aria-labelledby="try-title">
+      <h2 id="try-title">Ask your agent</h2>
+      <p id="visit-instruction">“Go to this website and get my report.”</p>
+      <p id="write-instruction">“Go to this website and update my report to ‘Hello from my agent’.”</p>
+      <p class="inline-state">The Agentic World skill and MCP handle sign-in. No protocol prompt or agent ID entry is required.</p>
+      <details><summary>Resource API</summary><p>Read: <code>GET /private/report</code>. Update: <code>PUT /private/report</code> with <code>Content-Type: application/json</code> and <code>{"text":"your new text"}</code> (1–2000 characters). Both use the same Agentic World authentication offer. Read and Write are independent. A write response confirms the update without returning the text.</p></details>
+    </section>
+    <details class="activity"><summary>Recent activity</summary><div id="events"></div></details>
+    <footer><span>AGENTIC WORLD / SERVICE B</span><span>These are service permissions, not the account’s onchain execution policy.</span></footer>
   </main>
 </body>
 </html>
