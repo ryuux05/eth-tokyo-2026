@@ -62,6 +62,10 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     const request = { method: "GET", target: "/private/report", body: new Uint8Array() };
     const proof = await agent.signRequest(request, "https://service-a.example");
     const digest = requestAuthenticationDigest(proof);
+    const nativeSignature = await signDigest(digest);
+    const native = await publicClient.call({ to: "0x0000000000000000000000000000000000000100",
+      data: concatHex([digest, nativeSignature.slice(0, 66) as Hex, `0x${nativeSignature.slice(66)}` as Hex, qx, qy]) });
+    assert.equal(native.data, toHex(1n, { size: 32 }), "EIP-7951 precompile must verify on the Osaka test chain");
     assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0x1626ba7e");
     const sessions = new Map<Hex, Session>();
     const nonces = new Set<Hex>();

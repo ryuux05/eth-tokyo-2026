@@ -16,7 +16,12 @@ export default defineConfig({
     hardhatMainnet: {
       type: "edr-simulated",
       chainType: "l1",
-      hardfork: "prague",
+      hardfork: "osaka",
+    },
+    localhost: {
+      type: "http",
+      chainType: "l1",
+      url: process.env.DEMO_RPC_URL ?? "http://127.0.0.1:8545",
     },
   },
 });

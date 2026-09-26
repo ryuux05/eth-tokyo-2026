@@ -223,7 +223,8 @@ contract AgentValidator is IERC7579Validator {
                 r := mload(add(signature, 0x20))
                 s := mload(add(signature, 0x40))
             }
-            return P256.verify(digest, r, s, key.qx, key.qy);
+            // EIP-7951 at 0x100. Fail closed on chains without the precompile.
+            return P256.verifyNative(digest, r, s, key.qx, key.qy);
         }
         if (key.scheme != 1) return false;
         (address recovered, ECDSA.RecoverError error,) = ECDSA.tryRecover(digest, signature);
