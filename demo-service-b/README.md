@@ -1,4 +1,4 @@
-# Service B · Get my report
+# Service B · Read and write permissions
 
 Register your owner wallet once. With the Agentic World skill and MCP installed,
 tell your agent: **“Go to https://YOUR-SERVICE-B-DOMAIN and get my report.”**
@@ -12,6 +12,26 @@ owner's registration and returns the report with a short-lived session.
 No copied protocol prompt, manual agent enrollment, separate agent-challenge route,
 payment, or contract deployment is needed. Missing identity or owner registration
 still requires the user to complete that setup; the agent must not bypass it.
+
+## Permission demo
+
+Sign in with the owner wallet once (a one-hour HttpOnly browser session; no gas).
+The private text is masked by default, with an owner-only Show text control.
+An authenticated agent appears automatically in that owner's panel. Read starts
+enabled and Write starts disabled. Toggle either checkbox to change that agent's
+service permissions; no onchain policy or wallet transaction changes.
+
+- Read: `GET /private/report` returns the owner's stored text.
+- Write: `PUT /private/report` with JSON `{ "text": "Hello from my agent" }`
+  updates it (1–2000 characters). The response only acknowledges the write.
+- Every request checks the current permissions, including existing Agent-Sessions.
+  Removing Read or Write takes effect on the next request, not after session expiry.
+- Write does not imply Read. Agents with neither permission cannot access the text.
+
+Ask naturally: **“Go to this website and update my report to ‘Hello from my agent’.”**
+The owner page polls for updates. The plaintext and permissions are only available
+through authenticated routes; stars are a display choice, not the access control.
+The resource API is discoverable in the homepage's Resource API section.
 
 ## Vercel
 
