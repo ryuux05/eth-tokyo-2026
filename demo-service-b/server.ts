@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, verifyMessage, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
-import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type Session } from "../sdk/service.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
@@ -169,26 +169,6 @@ export async function startDemoServiceB(options: Options) {
         sendJson(response, 200, { agentId, owner, ownerRegistered: owners.has(owner.toLowerCase()),
           report: owners.get(owner.toLowerCase())?.report ?? false });
       } catch (error) { sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not inspect agent" }); }
-      return;
-    }
-    if (request.method === "POST" && path === "/agent/challenge") {
-      try {
-        const input = await readJson(request);
-        if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Invalid agent ID");
-        const challenge = await service.createChallenge(input.agentId);
-        record("AGENT_CHALLENGE", "Service-issued challenge", undefined, challenge.agentId);
-        sendJson(response, 200, challenge);
-      } catch { sendJson(response, 401, { error: "Could not issue an agent challenge" }); }
-      return;
-    }
-    if (request.method === "POST" && path === "/agent/session") {
-      try {
-        const proof = await readJson(request);
-        const result = await service.authenticate(proof as unknown as AuthenticationProof);
-        record("AGENT_SESSION", "ERC-1271 proof accepted; owner is registered", result.session.owner, result.session.agentId);
-        sendJson(response, 200, { agentId: result.session.agentId, owner: result.session.owner, expiresAt: result.session.expiresAt },
-          { "Agent-Session": result.token });
-      } catch { sendJson(response, 401, { error: "Agent proof rejected or owner wallet is not registered" }); }
       return;
     }
     if (request.method === "GET" && path === "/private/report") {

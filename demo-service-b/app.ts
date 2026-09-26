@@ -100,7 +100,7 @@ byId<HTMLButtonElement>("before-button").addEventListener("click", async () => {
 });
 
 byId<HTMLButtonElement>("copy-agent-prompt").addEventListener("click", async () => {
-  const prompt = `GET ${location.origin}/private/report first. If its 401 explicitly offers AgenticWorld, use the advertised challenge and session endpoints with my Agentic World identity, then retry the report with the Agent-Session header. Report the HTTP status and response. Do not use my human wallet credentials.`;
+  const prompt = `GET ${location.origin}/private/report first. This is my local Service B workbench; its expected audience is https://service-b.example and loopback HTTP is intentional. If its 401 explicitly offers AgenticWorld, retry this same resource with my Agent-ID to receive authentication.challenge. Sign it with agentic_session_proof, then retry the same resource using the returned proof headers. The response should contain the report and Agent-Session. Do not call separate challenge/session endpoints. Report the HTTP status and response. Do not use my human wallet credentials.`;
   try { await navigator.clipboard.writeText(prompt); setStatus("copy-state", "Instruction copied. Paste it into a Codex session with the Agentic World MCP."); }
   catch { setStatus("copy-state", `Clipboard unavailable. Give Codex this URL: ${location.origin}`, true); }
 });

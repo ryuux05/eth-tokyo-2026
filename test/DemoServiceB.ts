@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { p256 } from "@noble/curves/nist.js";
 import hre from "hardhat";
 import { toBytes, toHex, type Address, type Hex } from "viem";
-import { createAgentSdk } from "../sdk/agent.js";
+import { createAgentSdk, sessionProofHeaders } from "../sdk/agent.js";
 import { startDemoServiceB } from "../demo-service-b/server.js";
 
 describe("Service B owner registration", () => {
@@ -28,9 +28,9 @@ describe("Service B owner registration", () => {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     });
     const prove = async () => {
-      const challengeResponse = await post("/agent/challenge", { agentId });
-      assert.equal(challengeResponse.status, 200);
-      const challenge = await challengeResponse.json();
+      const challengeResponse = await fetch(`${running.baseUrl}/private/report`, { headers: { "Agent-ID": agentId } });
+      assert.equal(challengeResponse.status, 401);
+      const challenge = (await challengeResponse.json()).authentication.challenge;
       return agent.answerChallenge(challenge, "https://service-b.example");
     };
     try {
@@ -40,13 +40,13 @@ describe("Service B owner registration", () => {
       assert.equal(offered.status, 401, "no identity means no session");
       assert.match(offered.headers.get("www-authenticate") ?? "", /^AgenticWorld /);
       assert.deepEqual((await offered.json()).authentication, { scheme: "AgenticWorld", audience: "https://service-b.example",
-        challengeEndpoint: "/agent/challenge", sessionEndpoint: "/agent/session" });
+        transport: "resource" });
 
       const before = await post("/agent/lookup", { agentId });
       assert.equal(before.status, 200);
       assert.equal((await before.json()).ownerRegistered, false);
-      const unregistered = await post("/agent/session", await prove());
-      assert.equal(unregistered.status, 401, "agent alone cannot enter an unregistered owner's service account");
+      const unregistered = await fetch(`${running.baseUrl}/private/report`, { headers: sessionProofHeaders(await prove()) });
+      assert.equal(unregistered.status, 403, "agent alone cannot enter an unregistered owner's service account");
       assert.equal(unregistered.headers.get("www-authenticate"), null, "failed proof is not a fresh Agentic World offer");
 
       const walletChallengeResponse = await post("/owner/challenge", { owner: owner.account.address });
@@ -67,7 +67,7 @@ describe("Service B owner registration", () => {
 
       const after = await post("/agent/lookup", { agentId });
       assert.equal((await after.json()).ownerRegistered, true);
-      const sessionResponse = await post("/agent/session", await prove());
+      const sessionResponse = await fetch(`${running.baseUrl}/private/report`, { headers: sessionProofHeaders(await prove()) });
       assert.equal(sessionResponse.status, 200);
       const session = sessionResponse.headers.get("Agent-Session");
       assert.ok(session);

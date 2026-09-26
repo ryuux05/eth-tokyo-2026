@@ -105,13 +105,15 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     assert.equal(offered.status, 401);
     const offer = (await offered.json()).authentication;
     assert.equal(offer.scheme, "AgenticWorld");
-    const challengeResponse = await post(base, offer.challengeEndpoint, { agentId });
-    assert.equal(challengeResponse.status, 200);
-    return call("agentic_session_proof", { challenge: await challengeResponse.json() });
+    assert.equal(offer.transport, "resource");
+    const challengeResponse = await fetch(`${base}/private/report`, { headers: { "Agent-ID": agentId } });
+    assert.equal(challengeResponse.status, 401);
+    return call("agentic_session_proof", { challenge: (await challengeResponse.json()).authentication.challenge });
   }
+  const sendProof = (base: string, signed: { headers: Record<string, string> }) => fetch(`${base}/private/report`, { headers: signed.headers });
   async function session(base: string, agentId: Address) {
     const signed = await proof(base, agentId);
-    const response = await post(base, "/agent/session", signed);
+    const response = await sendProof(base, signed);
     assert.equal(response.status, 200, await response.text());
     const token = response.headers.get("agent-session");
     assert(token);
@@ -141,20 +143,22 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     assert.equal((await call("agentic_revoke_authenticator", {}, true)).code, "AGENT_SELECTION_REQUIRED");
 
     // Both services reject otherwise valid proofs until the relevant user association exists.
-    assert.equal((await post(serviceA.baseUrl, "/agent/session", await proof(serviceA.baseUrl, agentId))).status, 401);
-    assert.equal((await post(serviceB.baseUrl, "/agent/session", await proof(serviceB.baseUrl, agentId))).status, 401);
+    assert.equal((await sendProof(serviceA.baseUrl, await proof(serviceA.baseUrl, agentId))).status, 403);
+    assert.equal((await sendProof(serviceB.baseUrl, await proof(serviceB.baseUrl, agentId))).status, 403);
     const enroll = await (await post(serviceA.baseUrl, "/user/enrollment-challenge", { agentId })).json();
     assert.equal((await post(serviceA.baseUrl, "/user/enroll", { agentId, nonce: enroll.nonce,
       signature: await owner.signMessage({ message: enroll.message }) })).status, 200);
     const registration = await (await post(serviceB.baseUrl, "/owner/challenge", { owner: owner.account.address })).json();
     assert.equal((await post(serviceB.baseUrl, "/owner/register", { owner: owner.account.address, nonce: registration.nonce,
       signature: await owner.signMessage({ message: registration.message }) })).status, 200);
+    await post(serviceA.baseUrl, "/admin/permission", { agentId, resource: "report", allowed: true }, { "x-operator-token": serviceA.operatorToken });
     const aProof = await proof(serviceA.baseUrl, agentId);
-    assert.equal((await post(serviceB.baseUrl, "/agent/session", aProof)).status, 401);
-    const accepted = await post(serviceA.baseUrl, "/agent/session", aProof);
+    assert.equal((await sendProof(serviceB.baseUrl, aProof)).status, 401);
+    const accepted = await sendProof(serviceA.baseUrl, aProof);
     assert.equal(accepted.status, 200);
     const aToken = accepted.headers.get("agent-session")!;
-    assert.equal((await post(serviceA.baseUrl, "/agent/session", aProof)).status, 401);
+    assert.equal((await sendProof(serviceA.baseUrl, aProof)).status, 401);
+    await post(serviceA.baseUrl, "/admin/permission", { agentId, resource: "report", allowed: false }, { "x-operator-token": serviceA.operatorToken });
     assert.equal((await resource(serviceA.baseUrl, aToken)).status, 403);
     assert.equal((await post(serviceA.baseUrl, "/admin/permission", { agentId, resource: "report", allowed: true },
       { "x-operator-token": serviceA.operatorToken })).status, 200);
@@ -222,7 +226,7 @@ test("P-256 MCP lifecycle: browser creation, both services, policy, rotation, re
     const listed = await call("agentic_list_identities");
     assert.equal(listed.count, 2);
     assert.equal(listed.identities.find((item: { agentId: string }) => item.agentId === agentId).status, "REVOKED");
-    const challenge = await (await post(serviceB.baseUrl, "/agent/challenge", { agentId })).json();
+    const challenge = (await (await fetch(`${serviceB.baseUrl}/private/report`, { headers: { "Agent-ID": agentId } })).json()).authentication.challenge;
     assert.equal((await call("agentic_session_proof", { challenge }, true)).code, "AUTHENTICATOR_REVOKED");
     await session(serviceB.baseUrl, second.agentId);
     assert.equal(await client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked" }), true);

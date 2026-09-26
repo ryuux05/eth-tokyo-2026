@@ -1,4 +1,5 @@
 import { stringToHex } from "viem";
+import { sessionProofHeaders, type AuthenticationProof } from "../sdk/shared.js";
 
 type Permission = "report" | "compute";
 type Enrollment = { agentId: string; owner: string; scheme: string; permissions: Record<Permission, boolean> };
@@ -113,9 +114,9 @@ document.querySelectorAll<HTMLButtonElement>(".gate-button").forEach(button => b
 byId<HTMLButtonElement>("challenge-button").addEventListener("click", async () => {
   if (!selected) return;
   try {
-    const result = await request("/agent/challenge", { method: "POST", body: JSON.stringify({ agentId: selected.agentId }) });
-    if (result.status !== 200) throw new Error(result.body.error ?? "Challenge failed");
-    challenge = result.body as Challenge;
+    const result = await request("/private/report", { headers: { "Agent-ID": selected.agentId } });
+    if (result.status !== 401 || !result.body.authentication?.challenge) throw new Error(result.body.error ?? "Challenge failed");
+    challenge = result.body.authentication.challenge as Challenge;
     const output = byId("challenge-output"); output.textContent = JSON.stringify(challenge, null, 2); output.hidden = false;
     byId("copy-challenge").hidden = false;
     setStatus(byId("session-state"), "Challenge ready. Sign it using agentic_session_proof, then paste the proof below.");
@@ -135,11 +136,11 @@ byId<HTMLButtonElement>("session-button").addEventListener("click", async () => 
     let proof: unknown = JSON.parse(proofInput.value);
     // Some MCP clients display structured output inside a proof wrapper.
     if (proof && typeof proof === "object" && "proof" in proof) proof = (proof as { proof: unknown }).proof;
-    const result = await request("/agent/session", { method: "POST", body: JSON.stringify(proof) });
+    const result = await request("/private/report", { headers: sessionProofHeaders(proof as AuthenticationProof) });
     if (result.status !== 200) throw new Error(result.body.error ?? "Session rejected");
     const token = result.headers.get("Agent-Session");
     if (!token) throw new Error("Service did not return Agent-Session");
-    sessionToken = token; sessionExpiry = result.body.expiresAt as number;
+    sessionToken = token; sessionExpiry = Number(result.headers.get("Agent-Session-Expires-At"));
     setStatus(state, `Session active for ${result.body.agentId.slice(0, 10)}… until ${new Date(sessionExpiry * 1000).toLocaleTimeString()}. Token is kept in this tab only.`);
     if (operatorToken) await refresh();
   } catch (error) { setStatus(state, error instanceof Error ? error.message : "Could not create session", true); }

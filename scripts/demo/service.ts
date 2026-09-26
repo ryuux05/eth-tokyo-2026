@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createPublicClient, http, isAddress, type Address, type Hex } from "viem";
-import { AgenticWorld, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../../sdk/service.js";
+import { AgenticWorld, type AuthenticationChallenge, type AgenticRequest, type Session } from "../../sdk/service.js";
 
 type DemoUser = { id: string; routes: readonly string[] };
 type DemoConfig = {
@@ -54,55 +54,18 @@ const service = new AgenticWorld<DemoUser>({
   sessions: { async put(hash, session) { sessions.set(hash, session); }, async get(hash) { return sessions.get(hash); } },
 });
 
+const requireResource = service.middleware({ authorize: ({ user }, request) => user.routes.includes(request.url ?? "") });
 const server = createServer(async (request, response) => {
   const target = request.url ?? "";
-  if (request.method === "POST" && ["/agent/challenge", "/agent/session"].includes(target)) {
-    try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of request) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > 4096) throw new Error("Authentication payload too large");
-        chunks.push(bytes);
-      }
-      const input = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
-      if (target === "/agent/challenge") {
-        if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Invalid agent ID");
-        const challenge = await service.createChallenge(input.agentId);
-        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(challenge));
-      } else {
-        const authenticated = await service.authenticate(input as AuthenticationProof);
-        response.writeHead(200, { "content-type": "application/json", "Agent-Session": authenticated.token })
-          .end(JSON.stringify({ agentId: authenticated.session.agentId, owner: authenticated.session.owner }));
-      }
-    } catch {
-      response.writeHead(401).end();
-    }
-    return;
-  }
   if (request.method !== "GET" || !["/private/report", "/private/compute", "/private/admin"].includes(target)) {
     response.writeHead(404).end();
     return;
   }
-  let authenticated: Awaited<ReturnType<typeof service.readSession>>;
-  try {
-    const sessionHeader = request.headers["agent-session"];
-    authenticated = typeof sessionHeader === "string" ? await service.readSession(sessionHeader) : undefined;
-  } catch {
-    response.writeHead(401).end();
-    return;
-  }
-  if (!authenticated) {
-    response.writeHead(401).end();
-    return;
-  }
-  if (!authenticated.user?.routes.includes(target)) {
-    response.writeHead(403).end();
-    return;
-  }
-  response.writeHead(200, { "content-type": "application/json" })
-    .end(JSON.stringify({ service: config.kind, resource: target, agentId: authenticated.session.agentId }));
+  await requireResource(request, response, () => {
+    const { session } = (request as AgenticRequest<DemoUser>).agentic!;
+    response.writeHead(200, { "content-type": "application/json" })
+      .end(JSON.stringify({ service: config.kind, resource: target, agentId: session.agentId }));
+  });
 });
 
 await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));

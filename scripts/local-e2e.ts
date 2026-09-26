@@ -195,18 +195,17 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
         assert.equal(decodeFunctionData({ abi: agentAccountAbi,
           data: (rotation.data.transaction as { data: Hex }).data }).functionName, "rotateAuthenticator");
       }
-      const challengeResponse = await fetch(`${serviceA.url}/agent/challenge`, { method: "POST",
-        headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: agent }) });
-      assert.equal(challengeResponse.status, 200);
-      const challenge = await challengeResponse.json() as Record<string, unknown>;
+      const challengeResponse = await fetch(`${serviceA.url}/private/report`, { headers: { "Agent-ID": agent } });
+      assert.equal(challengeResponse.status, 401);
+      const challenge = (await challengeResponse.json()).authentication.challenge as Record<string, unknown>;
       const first = await call("agentic_session_proof", { challenge });
       if (phase === "revoked") {
         assert.equal(first.error, true);
         assert.equal(first.data.code, "AUTHENTICATOR_REVOKED");
       } else {
         assert.equal(first.error, false);
-        const sendProof = (baseUrl: string, proof: Record<string, unknown>) => fetch(`${baseUrl}/agent/session`, {
-          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(proof),
+        const sendProof = (baseUrl: string, proof: Record<string, unknown>) => fetch(`${baseUrl}${baseUrl === serviceA.url ? "/private/report" : "/private/compute"}`, {
+          headers: proof.headers as Record<string, string>,
         });
         const crossProof = await sendProof(serviceB.url, first.data);
         assert.equal(crossProof.status, 401);
@@ -218,10 +217,9 @@ async function runMcp(serviceA: { url: string; audience: string }, serviceB: { u
         assert.equal(replay.status, 401);
         const aResource = await fetch(`${serviceA.url}/private/report`, { headers: { "Agent-Session": aToken } });
         assert.equal(aResource.status, 200);
-        const bChallengeResponse = await fetch(`${serviceB.url}/agent/challenge`, { method: "POST",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: agent }) });
-        assert.equal(bChallengeResponse.status, 200);
-        const bProof = await call("agentic_session_proof", { challenge: await bChallengeResponse.json() });
+        const bChallengeResponse = await fetch(`${serviceB.url}/private/compute`, { headers: { "Agent-ID": agent } });
+        assert.equal(bChallengeResponse.status, 401);
+        const bProof = await call("agentic_session_proof", { challenge: (await bChallengeResponse.json()).authentication.challenge });
         assert.equal(bProof.error, false);
         const bAuth = await sendProof(serviceB.url, bProof.data);
         assert.equal(bAuth.status, 200);

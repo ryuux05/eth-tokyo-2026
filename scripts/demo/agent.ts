@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { isAddress, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createAgentSdk, type AuthenticationChallenge, type AuthenticationProof } from "../../sdk/agent.js";
+import { createAgentSdk, sessionProofHeaders, type AuthenticationChallenge, type AuthenticationProof } from "../../sdk/agent.js";
 
 type Endpoint = { url: string; audience: string };
 type DemoConfig = {
@@ -23,14 +23,14 @@ const signer = privateKeyToAccount(config.operatingKey);
 const agent = createAgentSdk({ agentId: config.agentId, chainId: config.chainId,
   signDigest: digest => signer.sign({ hash: digest }) });
 
+const resourcePath = (endpoint: Endpoint) => endpoint.url === config.serviceA.url ? "/private/report" : "/private/compute";
+
 async function establishSession(endpoint: Endpoint): Promise<{ response: Response; proof: AuthenticationProof }> {
-  const challengeResponse = await fetch(`${endpoint.url}/agent/challenge`, { method: "POST",
-    headers: { "content-type": "application/json" }, body: JSON.stringify({ agentId: config.agentId }) });
-  assert.equal(challengeResponse.status, 200);
-  const challenge = await challengeResponse.json() as AuthenticationChallenge;
+  const challengeResponse = await fetch(`${endpoint.url}${resourcePath(endpoint)}`, { headers: { "Agent-ID": config.agentId } });
+  assert.equal(challengeResponse.status, 401);
+  const challenge = (await challengeResponse.json()).authentication.challenge as AuthenticationChallenge;
   const proof = await agent.answerChallenge(challenge, endpoint.audience);
-  const response = await fetch(`${endpoint.url}/agent/session`, { method: "POST",
-    headers: { "content-type": "application/json" }, body: JSON.stringify(proof) });
+  const response = await fetch(`${endpoint.url}${resourcePath(endpoint)}`, { headers: sessionProofHeaders(proof) });
   return { response, proof };
 }
 
@@ -54,8 +54,7 @@ const ownerResource = await fetch(`${config.serviceA.url}/private/report`, { hea
 assert.equal(ownerResource.status, 200, "paid owner-associated Service A resource");
 assert.equal((await ownerResource.json()).agentId.toLowerCase(), config.agentId.toLowerCase());
 
-const crossAudience = await fetch(`${config.serviceB.url}/agent/session`, { method: "POST",
-  headers: { "content-type": "application/json" }, body: JSON.stringify(ownerAuth.proof) });
+const crossAudience = await fetch(`${config.serviceB.url}/private/compute`, { headers: sessionProofHeaders(ownerAuth.proof) });
 assert.equal(crossAudience.status, 401, "Service A proof must fail at Service B");
 const crossSession = await fetch(`${config.serviceB.url}/private/compute`, {
   headers: { "Agent-Session": aSession },
@@ -75,8 +74,7 @@ assert.equal(repeatedSession.status, 200, "Service B session should work at Serv
 
 const forbiddenRoute = await fetch(`${config.serviceB.url}/private/admin`, { headers: { "Agent-Session": bSession } });
 assert.equal(forbiddenRoute.status, 403, "valid authentication must not grant admin access");
-const replay = await fetch(`${config.serviceA.url}/agent/session`, { method: "POST",
-  headers: { "content-type": "application/json" }, body: JSON.stringify(ownerAuth.proof) });
+const replay = await fetch(`${config.serviceA.url}/private/report`, { headers: sessionProofHeaders(ownerAuth.proof) });
 assert.equal(replay.status, 401, "reusing one challenge must fail");
 
 console.log(`DEMO_RESULT ${JSON.stringify({ agentId: config.agentId,

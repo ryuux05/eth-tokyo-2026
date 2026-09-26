@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, recoverMessageAddress, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
-import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type AuthenticationProof, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type Session } from "../sdk/service.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
@@ -195,26 +195,6 @@ export async function startDemoService(options: Options) {
       return;
     }
 
-    if (request.method === "POST" && path === "/agent/challenge") {
-      try {
-        const input = await readJson(request);
-        if (typeof input.agentId !== "string" || !isAddress(input.agentId)) throw new Error("Invalid agent ID");
-        const challenge = await service.createChallenge(input.agentId);
-        record("CHALLENGE", challenge.agentId, "Service issued a challenge");
-        sendJson(response, 200, challenge);
-      } catch { sendJson(response, 401, { error: "Could not issue a challenge for this agent" }); }
-      return;
-    }
-    if (request.method === "POST" && path === "/agent/session") {
-      try {
-        const proof = await readJson(request);
-        const result = await service.authenticate(proof as unknown as AuthenticationProof);
-        record("SESSION", result.session.agentId, "ERC-1271 proof accepted; service session issued");
-        sendJson(response, 200, { agentId: result.session.agentId, expiresAt: result.session.expiresAt },
-          { "Agent-Session": result.token });
-      } catch { sendJson(response, 401, { error: "Proof rejected or agent not enrolled" }); }
-      return;
-    }
     if (request.method === "GET" && (path === "/private/report" || path === "/private/compute")) {
       const resource: Permission = path === "/private/report" ? "report" : "compute";
       await protectedResources[resource](request, response, () => {
