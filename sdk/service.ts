@@ -10,8 +10,11 @@ import {
   encodeRequestAuthenticationProof,
   ERC1271_MAGIC,
   isExpectedAgentAccountCode,
+  isExpectedAgentClone,
   mandateRegistryAbi,
   requestAuthenticationDigest,
+  SEPOLIA_CHAIN_ID,
+  trustedImplementation,
   type HttpRequest,
   type RequestAuthenticationProof,
   type AuthenticationChallenge,
@@ -84,7 +87,7 @@ export type ServiceSdkConfig = {
   client: PublicClient;
   chainId: number;
   audience: string;
-  implementation: Address;
+  implementation?: Address;
   /** Read owner() at the same block as the ERC-1271 check. */
   readOwner?: boolean;
   registry?: Address;
@@ -111,9 +114,10 @@ function sameChallenge(a: AuthenticationChallenge, b: AuthenticationChallenge): 
 export function createServiceSdk(config: ServiceSdkConfig) {
   // Snapshot the trusted implementation. V0 checks the exact factory clone
   // runtime; the earlier EIP-7702 pointer remains supported for old deployments.
-  config = Object.freeze({ ...config });
+  const implementation = trustedImplementation(config.chainId, config.implementation);
+  config = Object.freeze({ ...config, implementation });
   assertAudience(config.audience);
-  assertAddress(config.implementation);
+  assertAddress(implementation);
   if (config.registry) assertAddress(config.registry);
   if (!config.requestNonces && !config.challenges) throw new Error("Configure a request nonce store or challenge store");
   if (!Number.isSafeInteger(config.chainId) || config.chainId <= 0) throw new Error("Invalid chain ID");
@@ -131,7 +135,10 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     // Authentication must not reuse viem's cached chain head after key revocation.
     const blockNumber = await config.client.getBlockNumber({ cacheTime: 0 });
     const code = await config.client.getCode({ address: agentId, blockNumber });
-    if (!isExpectedAgentAccountCode(code, config.implementation)) throw new Error("Unexpected agent account implementation");
+    const expectedCode = config.chainId === SEPOLIA_CHAIN_ID
+      ? isExpectedAgentClone(code, implementation)
+      : isExpectedAgentAccountCode(code, implementation);
+    if (!expectedCode) throw new Error("Unexpected agent account implementation");
     const owner = config.readOwner || config.registry
       ? await config.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber })
       : undefined;
@@ -241,7 +248,7 @@ export type Association<User> =
 
 export type AgenticWorldConfig<User> = Omit<ServiceSdkConfig, "implementation" | "readOwner" | "registry"> & {
   /** Trusted deployment address, supplied at service startup; never from an agent request. */
-  pinnedImplementation: Address;
+  pinnedImplementation?: Address;
   association: Association<User>;
   /** Service-owned admission rule. Resource permissions still need checking on every request. */
   authorizeSession?: (identity: Session, user: User) => Promise<boolean>;
@@ -259,7 +266,7 @@ export class AgenticWorld<User> {
     this.authorizeSession = authorizeSession;
     this.service = createServiceSdk({
       ...serviceConfig,
-      implementation: pinnedImplementation,
+      implementation: trustedImplementation(config.chainId, pinnedImplementation),
       readOwner: association.mode === "owner",
     });
   }

@@ -33,6 +33,7 @@ export {
 export type { PolicyRule } from "./policy.js";
 export { AGENT_SINGLE_EXECUTION_MODE, agent4337ExecutionAbi, encodeAgentExecution } from "./execution.js";
 export type { OwnerApproval } from "./execution.js";
+export { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation } from "./deployments.js";
 
 export function isExpectedDelegation(code: Hex | undefined, implementation: Address): boolean {
   return code?.toLowerCase() === `${DELEGATION_PREFIX}${implementation.slice(2)}`.toLowerCase();

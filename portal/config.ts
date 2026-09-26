@@ -1,4 +1,5 @@
 import type { Address } from "viem";
+import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 
 export type Deployment = { implementation: Address; factory: Address };
 
@@ -6,8 +7,5 @@ export type Deployment = { implementation: Address; factory: Address };
  *  Never accept either address from a URL parameter or an agent request.
  */
 export const DEPLOYMENTS: Record<number, Deployment> = {
-  11155111: {
-    factory: "0x63f158897834bbc1579e82dfc29a7aacc8b91f93",
-    implementation: "0xd08B955ca8727d86e708ae5684D5fa7f32635e66",
-  },
+  [SEPOLIA_CHAIN_ID]: SEPOLIA_DEPLOYMENT,
 };

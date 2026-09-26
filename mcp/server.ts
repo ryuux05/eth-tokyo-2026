@@ -8,7 +8,8 @@ import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod/v4";
 import { createAgentSdk } from "../sdk/agent.js";
-import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, encodePolicy, Decision, type PolicyRule } from "../sdk/core.js";
+import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, encodePolicy, Decision,
+  SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, type PolicyRule } from "../sdk/core.js";
 import { assertAudience, type AuthenticationChallenge } from "../sdk/core.js";
 import { ensureSignerPublicKey, signLocalChallenge, signerPublicKey } from "./local-signer.js";
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
@@ -24,9 +25,9 @@ class ToolError extends Error {
   constructor(readonly code: string, message: string) { super(message); }
 }
 
-function parseConfig(value: unknown): Config {
+export function parseConfig(value: unknown): Config {
   const schema = z.strictObject({
-    rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(32).optional(), factory: z.string().optional(), implementation: z.string(),
+    rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(32).optional(), factory: z.string().optional(), implementation: z.string().optional(),
     deploymentBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
     deploymentBlockHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/).optional(),
     signer: z.strictObject({ kind: z.enum(["secure-enclave", "windows-tpm"]), binaryPath: z.string().refine(isAbsolute, "Signer path must be absolute"), label: z.string().min(1).max(128) }).optional(),
@@ -35,18 +36,20 @@ function parseConfig(value: unknown): Config {
   if (parsed.signer && ((parsed.signer.kind === "secure-enclave" && process.platform !== "darwin") ||
       (parsed.signer.kind === "windows-tpm" && process.platform !== "win32"))) throw new Error("Signer kind does not match this host platform");
   if ((parsed.agentId && !isAddress(parsed.agentId)) || parsed.agentIds?.some(id => !isAddress(id)) ||
-      (parsed.factory && !isAddress(parsed.factory)) || !isAddress(parsed.implementation)) throw new Error("Invalid account, factory, or implementation address");
+      (parsed.factory && !isAddress(parsed.factory)) || (parsed.implementation && !isAddress(parsed.implementation))) throw new Error("Invalid account, factory, or implementation address");
   if (!!parsed.deploymentBlockNumber !== !!parsed.deploymentBlockHash) throw new Error("Deployment fingerprint requires both block number and hash");
   const rpc = new URL(parsed.rpcUrl);
   if (rpc.protocol !== "https:" && !(rpc.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(rpc.hostname))) throw new Error("RPC must use HTTPS or loopback HTTP");
   return { ...parsed, agentId: parsed.agentId ? getAddress(parsed.agentId) : undefined,
     agentIds: parsed.agentIds?.map(id => getAddress(id)),
-    factory: parsed.factory ? getAddress(parsed.factory) : undefined, implementation: getAddress(parsed.implementation),
+    factory: trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined),
+    implementation: trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined),
     deploymentBlockHash: parsed.deploymentBlockHash as Hex | undefined };
 }
 
 export async function createAgenticWorldMcp(configValue: unknown, operatingKey?: Hex, configPath?: string) {
   const config = parseConfig(configValue);
+  if (config.chainId === SEPOLIA_CHAIN_ID && operatingKey) throw new Error("Sepolia requires a hardware-backed P-256 signer");
   if (!config.signer && !operatingKey) throw new Error("Configure a local P-256 signer or the demo-only operating key");
   if (operatingKey && !/^0x[0-9a-fA-F]{64}$/.test(operatingKey)) throw new Error("Invalid operating key");
   if (config.signer && operatingKey) throw new Error("Do not provide an operating key when a hardware P-256 signer is configured");
@@ -105,7 +108,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyHash", blockNumber }),
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyRevision", blockNumber }),
     ]);
-    return { agentId, chainId: config.chainId, owner, authenticatorScheme: scheme,
+    return { agentId, chainId: config.chainId, factory: config.factory, implementation: config.implementation,
+      owner, authenticatorScheme: scheme,
       authenticator: scheme === 1 ? authenticator : undefined,
       p256PublicKey: scheme === 2 ? { qx: p256PublicKey[0], qy: p256PublicKey[1] } : undefined,
       authenticationRevoked: revoked,
@@ -157,16 +161,30 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       policyHash: current.policyHash, policyRevision: current.policyRevision, blockNumber: current.blockNumber, previewOnly: true };
   }));
 
-  async function prepareIdentity(owner: string, salt: Hex, providedKey?: Awaited<ReturnType<typeof signerPublicKey>>) {
-    const key = providedKey ?? (config.signer ? await signerPublicKey(config.signer) : undefined);
+  async function assertTrustedFactory() {
     if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
-    if (!isAddress(owner) || getAddress(owner) === zeroAddress) throw new ToolError("INVALID_OWNER", "Expected a human owner wallet address");
-    const actualChain = await client.getChainId();
-    if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
+    if (await client.getChainId() !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
     const factoryCode = await client.getBytecode({ address: config.factory });
     if (!factoryCode || factoryCode === "0x") throw new ToolError("FACTORY_UNAVAILABLE", "Trusted factory is not deployed");
     const implementation = await client.readContract({ address: config.factory, abi: agentAccountFactoryAbi, functionName: "implementation" });
-    if (implementation.toLowerCase() !== config.implementation.toLowerCase()) throw new ToolError("IMPLEMENTATION_MISMATCH", "Factory implementation differs from the trusted pin");
+    if (implementation.toLowerCase() !== config.implementation.toLowerCase())
+      throw new ToolError("IMPLEMENTATION_MISMATCH", "Factory implementation differs from the trusted pin");
+    if (config.chainId === SEPOLIA_CHAIN_ID) {
+      const [validator, policyHook] = await Promise.all([
+        client.readContract({ address: config.factory, abi: agentAccountFactoryAbi, functionName: "validator" }),
+        client.readContract({ address: config.factory, abi: agentAccountFactoryAbi, functionName: "policyHook" }),
+      ]);
+      if (validator.toLowerCase() !== SEPOLIA_DEPLOYMENT.validator.toLowerCase() ||
+          policyHook.toLowerCase() !== SEPOLIA_DEPLOYMENT.policyHook.toLowerCase())
+        throw new ToolError("MODULE_MISMATCH", "Sepolia factory modules differ from the trusted deployment");
+    }
+  }
+
+  async function prepareIdentity(owner: string, salt: Hex, providedKey?: Awaited<ReturnType<typeof signerPublicKey>>) {
+    const key = providedKey ?? (config.signer ? await signerPublicKey(config.signer) : undefined);
+    await assertTrustedFactory();
+    if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
+    if (!isAddress(owner) || getAddress(owner) === zeroAddress) throw new ToolError("INVALID_OWNER", "Expected a human owner wallet address");
     const predictedAgent = await client.readContract({ address: config.factory, abi: agentAccountFactoryAbi,
       functionName: "predictAgent", args: [getAddress(owner), salt as Hex] });
     const existingCode = await client.getBytecode({ address: predictedAgent });
@@ -195,11 +213,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     if (creatingIdentity) throw new ToolError("CREATION_IN_PROGRESS", "An identity creation page is already open");
     creatingIdentity = true;
     try {
-    if (await client.getChainId() !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
-    const factoryCode = await client.getBytecode({ address: config.factory });
-    if (!factoryCode || factoryCode === "0x") throw new ToolError("FACTORY_UNAVAILABLE", "Trusted factory is not deployed");
-    const implementation = await client.readContract({ address: config.factory, abi: agentAccountFactoryAbi, functionName: "implementation" });
-    if (implementation.toLowerCase() !== config.implementation.toLowerCase()) throw new ToolError("IMPLEMENTATION_MISMATCH", "Factory implementation differs from the trusted pin");
+    await assertTrustedFactory();
     await requireNativeP256();
     const key = await ensureSignerPublicKey(config.signer);
     const creationSalt = `0x${randomBytes(32).toString("hex")}` as Hex;
@@ -248,7 +262,12 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         config.agentId = intent.predictedAgent;
         if (configPath) {
           const temp = `${configPath}.${randomBytes(4).toString("hex")}.tmp`;
-          await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+          const persisted = { ...config };
+          if (config.chainId === SEPOLIA_CHAIN_ID) {
+            Reflect.deleteProperty(persisted, "factory");
+            Reflect.deleteProperty(persisted, "implementation");
+          }
+          await writeFile(temp, `${JSON.stringify(persisted, null, 2)}\n`, { mode: 0o600 });
           await rename(temp, configPath);
         }
         return intent.predictedAgent;
@@ -344,6 +363,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
           current.p256PublicKey?.qy.toLowerCase() === input.qy.toLowerCase()) throw new ToolError("AUTHENTICATOR_UNCHANGED", "That P-256 key is already active");
       data = encodeFunctionData({ abi: agentAccountAbi, functionName: "rotateP256Authenticator", args: [input.qx as Hex, input.qy as Hex] });
     } else {
+      if (config.chainId === SEPOLIA_CHAIN_ID) throw new ToolError("P256_REQUIRED", "Sepolia MCP only supports hardware-backed P-256 authenticators");
       if (!isAddress(input.address) || getAddress(input.address) === zeroAddress ||
           input.address.toLowerCase() === current.owner.toLowerCase() || input.address.toLowerCase() === current.agentId.toLowerCase()) {
         throw new ToolError("INVALID_AUTHENTICATOR", "Invalid operating address");
