@@ -36,6 +36,14 @@ test("Service C hosted storage fails closed without Redis and isolates audiences
     assert.equal(set[3], "EX"); assert.ok(Number(set[4]) > 0 && Number(set[4]) <= 60);
   }
   await assert.rejects(first.sessions.put(nonce, { agentId, expiresAt: now - 1 }), /expired/);
+  const walletChallenge = { owner: agentId, nonce, message: "Register with Service C", expiresAt: now + 60 };
+  await first.ownerChallenges.put(walletChallenge);
+  assert.deepEqual(await second.ownerChallenges.get(nonce), walletChallenge);
+  assert.deepEqual(await Promise.all([first.ownerChallenges.consume(nonce), second.ownerChallenges.consume(nonce)]), [true, false]);
+  assert.equal(await first.owners.has(agentId), false);
+  await first.owners.register(agentId);
+  assert.equal(await second.owners.has(agentId), true);
+  assert.equal(await other.owners.has(agentId), false);
 });
 
 test("Service C Redis REST transport keeps credentials server-side and redacts failures", async () => {

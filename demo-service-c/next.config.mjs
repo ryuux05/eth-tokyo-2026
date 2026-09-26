@@ -9,7 +9,7 @@ const config = {
     return config;
   },
   async rewrites() {
-    return ["config", "health", "activity", "transaction", "policy/preview", "private/quote"].map(path => ({
+    return ["config", "health", "activity", "transaction", "policy/preview", "private/quote", "owner/status", "owner/challenge", "owner/register"].map(path => ({
       source: `/${path}`, destination: `/api/${path}`,
     }));
   },

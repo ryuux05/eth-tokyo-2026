@@ -4,17 +4,30 @@ import type { AuthenticationChallenge, ChallengeStore, Session, SessionStore } f
 
 export type PolicyEvent = { at: string; agentId: Address; target: Address; amount: string; decision: string;
   blockNumber: string; policyRevision: string; source: string };
+export type OwnerChallenge = { owner: Address; nonce: Hex; message: string; expiresAt: number };
 export type ServiceCStores = { challenges: ChallengeStore; sessions: SessionStore;
+  owners: { has(owner: Address): Promise<boolean>; register(owner: Address): Promise<void> };
+  ownerChallenges: { put(value: OwnerChallenge): Promise<void>; get(nonce: Hex): Promise<OwnerChallenge | undefined>; consume(nonce: Hex): Promise<boolean> };
   record(event: PolicyEvent): Promise<void>; events(): Promise<PolicyEvent[]> };
 
 /** Only for the loopback demo/test adapter. Never used by a hosted deployment. */
 export function memoryStores(): ServiceCStores {
   const challenges = new Map<Hex, AuthenticationChallenge>(), sessions = new Map<Hex, Session>();
+  const owners = new Set<string>(), ownerChallenges = new Map<Hex, OwnerChallenge>();
   const events: PolicyEvent[] = [];
   const prune = <T extends { expiresAt: number }>(store: Map<Hex, T>) => {
     for (const [key, value] of store) if (value.expiresAt <= Math.floor(Date.now() / 1000)) store.delete(key);
   };
   return {
+    owners: { async has(owner) { return owners.has(owner.toLowerCase()); }, async register(owner) {
+      if (owners.size >= 1000 && !owners.has(owner.toLowerCase())) throw new Error("Owner capacity reached");
+      owners.add(owner.toLowerCase());
+    } },
+    ownerChallenges: {
+      async put(value) { prune(ownerChallenges); if (ownerChallenges.size >= 1000) throw new Error("Owner challenge capacity reached"); ownerChallenges.set(value.nonce, value); },
+      async get(nonce) { prune(ownerChallenges); return ownerChallenges.get(nonce); },
+      async consume(nonce) { prune(ownerChallenges); return ownerChallenges.delete(nonce); },
+    },
     challenges: {
       async put(value) { prune(challenges); if (challenges.size >= 1000) throw new Error("Challenge capacity reached"); challenges.set(value.nonce, value); },
       async get(key) { prune(challenges); return challenges.get(key); },
@@ -62,6 +75,15 @@ export function redisStores(command: RedisCommand, namespace: string): ServiceCS
     if (await command(["SET", name, JSON.stringify(value), "EX", ttl]) !== "OK") throw new Error("Shared state write failed");
   };
   return {
+    owners: {
+      async has(owner) { return await command(["GET", key("owner", owner)]) === "registered"; },
+      async register(owner) { if (await command(["SET", key("owner", owner), "registered"]) !== "OK") throw new Error("Owner registration failed"); },
+    },
+    ownerChallenges: {
+      put: value => put(key("owner-challenge", value.nonce), value),
+      get: nonce => get<OwnerChallenge>(key("owner-challenge", nonce)),
+      async consume(nonce) { return typeof await command(["GETDEL", key("owner-challenge", nonce)]) === "string"; },
+    },
     challenges: {
       put: value => put(key("challenge", value.nonce), value),
       get: nonce => get<AuthenticationChallenge>(key("challenge", nonce)),

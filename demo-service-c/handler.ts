@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getAddress, isAddress, parseAbi, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
+import { randomBytes } from "node:crypto";
+import { getAddress, isAddress, parseAbi, verifyMessage, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { agentPolicyAbi } from "../sdk/policy.js";
 import { AgenticWorld, type AgenticRequest } from "../sdk/service.js";
@@ -21,6 +22,17 @@ function address(value: string | null): Address {
   if (!value || !isAddress(value) || value.toLowerCase() === zeroAddress) throw new Error("Enter a valid nonzero address");
   return getAddress(value);
 }
+async function readJson(request: IncomingMessage): Promise<Record<string, unknown>> {
+  if (request.headers["content-type"]?.split(";")[0] !== "application/json") throw new Error("Expected JSON");
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const part of request) {
+    const bytes = Buffer.from(part); size += bytes.length;
+    if (size > 8192) throw new Error("Request too large"); chunks.push(bytes);
+  }
+  const input: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("Expected object");
+  return input as Record<string, unknown>;
+}
 
 /** Policy decision workbench. There are deliberately no broadcast, payment or signing APIs. */
 export async function createServiceCHandler(options: Options) {
@@ -33,8 +45,9 @@ export async function createServiceCHandler(options: Options) {
   const service = new AgenticWorld<{ owner: Address }>({
     client: options.client, chainId: options.chainId, pinnedImplementation: options.implementation,
     audience: options.audience,
-    // Every verified agent can read its own policy. No paid service entitlement is implied.
-    association: { mode: "owner", async resolveUser(owner) { return { owner }; } },
+    // Register the human once. Every authenticated agent belonging to that owner can obtain a quote.
+    // This service entitlement never authorizes an account transaction.
+    association: { mode: "owner", async resolveUser(owner) { return await options.stores.owners.has(owner) ? { owner } : null; } },
     challenges: options.stores.challenges,
     sessions: options.stores.sessions,
   });
@@ -64,6 +77,8 @@ export async function createServiceCHandler(options: Options) {
     const result = { agentId, owner, revoked, target, token, chainId: options.chainId, blockNumber: blockNumber.toString(),
       amount, amountBaseUnits: units.toString(), policy, policyHash, policyRevision: policyRevision.toString(),
       decision: decisionNames[decision], executionSubmitted: false,
+      purchase: { product: "Compute credits", status: "NOT_PAID", creditsDelivered: false,
+        action: { target, valueWei: "0", data: purchaseData(token, units) } },
       note: "Policy decision only. Does not check allowance, balance, gas, or guarantee execution. A revoked authenticator cannot execute even if policy says ALLOW." };
     await options.stores.record({ at: new Date().toISOString(), agentId, target, amount, decision: result.decision, blockNumber: result.blockNumber,
       policyRevision: result.policyRevision, source });
@@ -77,11 +92,41 @@ export async function createServiceCHandler(options: Options) {
     }
     const url = new URL(request.url ?? "/", baseUrl);
     url.pathname = url.pathname.replace(/^\/api\//, "/");
-    if (request.method !== "GET") { json(response, 405, { error: "Read-only service; wallet transactions happen in your browser" }); return; }
+    if (request.method !== "GET" && !(request.method === "POST" && ["/owner/challenge", "/owner/register"].includes(url.pathname))) {
+      json(response, 405, { error: "Only wallet registration accepts POST. This service never submits payments." }); return;
+    }
     try {
-      if (url.pathname === "/health" || url.pathname === "/config") {
+      if (request.method === "POST" && url.pathname === "/owner/challenge") {
+        const input = await readJson(request);
+        const owner = address(typeof input.owner === "string" ? input.owner : null);
+        const nonce = `0x${randomBytes(32).toString("hex")}` as Hex;
+        const expiresAt = Math.floor(Date.now() / 1000) + 300;
+        const message = `Register ${owner} with Agentic World Service C\nOrigin: ${baseUrl}\nChain ID: ${options.chainId}\nNonce: ${nonce}\nExpires: ${new Date(expiresAt * 1000).toISOString()}\n\nAllow agents owned by this wallet to request policy quotes. This does not authorize spending or change an agent policy.`;
+        await options.stores.ownerChallenges.put({ owner, nonce, message, expiresAt });
+        json(response, 200, { owner, nonce, message, expiresAt });
+      } else if (request.method === "POST" && url.pathname === "/owner/register") {
+        const input = await readJson(request);
+        if (typeof input.nonce !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(input.nonce) ||
+            typeof input.signature !== "string" || !/^0x[0-9a-fA-F]{130}$/.test(input.signature)) throw new Error("Invalid proof");
+        const owner = address(typeof input.owner === "string" ? input.owner : null);
+        const challenge = await options.stores.ownerChallenges.get(input.nonce as Hex);
+        if (!challenge || challenge.owner !== owner || challenge.expiresAt <= Math.floor(Date.now() / 1000) ||
+            !challenge.message.includes(`\nOrigin: ${baseUrl}\n`) ||
+            !await verifyMessage({ address: owner, message: challenge.message, signature: input.signature as Hex }) ||
+            !await options.stores.ownerChallenges.consume(challenge.nonce)) {
+          json(response, 401, { error: "Wallet proof invalid or expired. Register your owner wallet again." }); return;
+        }
+        await options.stores.owners.register(owner);
+        json(response, 200, { owner, registered: true });
+      } else if (request.method !== "GET") {
+        json(response, 405, { error: "Unsupported method" });
+      } else if (url.pathname === "/owner/status") {
+        const owner = address(url.searchParams.get("owner"));
+        json(response, 200, { owner, registered: await options.stores.owners.has(owner) });
+      } else if (url.pathname === "/health" || url.pathname === "/config") {
         json(response, 200, { service: "Service C", chainId: options.chainId, token, decimals: 6, audience: options.audience,
-          implementation: options.implementation, mode: "policy-preview", deploymentBytecode: artifact.bytecode });
+          implementation: options.implementation, association: "owner", ownerRegistrationRequired: true,
+          mode: "policy-preview", deploymentBytecode: artifact.bytecode });
       } else if (url.pathname === "/activity") {
         json(response, 200, { events: await options.stores.events() });
       } else if (url.pathname === "/policy/preview") {
@@ -105,4 +150,3 @@ export async function createServiceCHandler(options: Options) {
     } catch (error) { if (!response.headersSent) json(response, 400, { error: "Policy check failed. Check agent, target, amount and RPC availability." }); }
   };
 }
-
