@@ -20,6 +20,8 @@ Authentication establishes **which agent signed**. Manual mode resolves that age
 
 ## ERC-4337 execution and policy
 
+Execution feature branch: [direct USDC payments](EXECUTION.md) add recipient-bound version-2 transfer policies, structured expiring P-256 signatures, a Pimlico adapter and MCP execution tools. These changes are locally tested, not yet deployed to Sepolia. The raw-hash signer mentioned below is the legacy secp256k1 adapter; new P-256 execution signs the separate `AgentExecution` envelope.
+
 The agent SDK can sign an EntryPoint-provided `userOpHash`; `encodeAgentExecution` builds the account call data for ERC-7579 single-call execution, optionally with an exact-action owner approval. The account accepts `validateUserOp` only from its configured EntryPoint and delegates signature validation to the fixed `AgentValidator`. Its execution path invokes `AgentPolicyHook` before and after the call. `PolicyEngine` defaults to deny and evaluates ordered, owner-set target/selector/value rules. The token-purchase demo decodes only `purchaseCompute(address,uint256)` and checks actual token balance change after the call; its limits are per call, not cumulative.
 
 The operating key cannot set policy. A rule may require a separate owner EIP-712 signature bound to the exact action, current policy hash/revision, nonce, deadline, agent, and chain. This is an onchain action approval, not a service mandate.
@@ -32,7 +34,7 @@ The [owner portal](PORTAL.md) creates/verifies accounts, manages operating keys 
 
 - Redeploy the corrected account stack on Sepolia and update the trusted pins. A factory and EntryPoint are already deployed; they are not the same thing as verifying the corrected source onchain.
 - Test the browser-wallet and physical Secure Enclave/TPM flow on the target machines. Automated lifecycle tests use explicit software signer and wallet fixtures.
-- For agent onchain execution through MCP, add a structured hardware UserOperation signing path and bundler integration. These are not exposed by the authentication-only MCP today. Local tests exercise signed P-256 operations through the official EntryPoint v0.8, but not a bundler.
+- Validate the implemented structured signing and Pimlico payment path against the newly deployed stack. Local tests exercise actual P-256 transfers through the official EntryPoint and a bundler fixture, but live Pimlico and physical hardware execution still need verification.
 - Before deploying the example services publicly, replace in-memory stores with durable atomic stores and add real customer/payment systems, administration, TLS and rate limiting.
 - Add independent security review, especially around hook reentrancy, token behavior, owner-key custody, RPC consistency/reorgs, and service replay storage. Do not treat local tests as an audit.
 

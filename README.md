@@ -100,9 +100,12 @@ onchain execution as ready. Existing immutable accounts cannot be upgraded.
 Local tests exercise P-256 authentication, both services, owner approval flows,
 rotation across MCP restarts, and policy changes through the official EntryPoint
 v0.8. Hardware signing and real wallet-extension interactions still need a
-hands-on run. Services intentionally use in-memory stores; there is no bundler
-integration or MCP UserOperation execution tool. Only single-call, revert-on-error
-ERC-7579 execution is supported, and execution defaults to deny. See the
+hands-on run. This feature branch adds direct USDC payments through a Pimlico
+adapter, structured native signing, and exact-action owner approval. Local
+end-to-end tests use a bundler fixture; live Pimlico submission is not yet verified.
+The old Sepolia pins remain unchanged and payments fail closed for those accounts.
+Only single-call, revert-on-error ERC-7579 execution is supported, and execution
+defaults to deny. See the [execution rollout and tools](docs/EXECUTION.md) and the
 [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
 
 ### Deployed contracts — Sepolia

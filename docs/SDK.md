@@ -134,6 +134,12 @@ const token = response.headers.get("Agent-Session");
 
 Lower-level `createChallenge`, `authenticate`, `readSession`, and compatibility `issueChallenge` remain available for custom transports, but middleware users do not expose them as HTTP endpoints. Legacy request-bound proof helpers remain separate; they are not the active MCP flow. `signUserOperationHash` and `encodeAgentExecution` do not supply a bundler or fund/submit transactions.
 
+## USDC execution (new deployment required)
+
+The agent export also provides `createPaymentExecutor`, `pimlicoBundler`, `executionSigningRequest`, `executionDigest`, and `encodeTransferPolicy`. Service middleware is unchanged. Supply a trusted chain client/implementation, Pimlico adapter, structured native `sign` callback, exact-action owner `approve` callback, and **durable** `journal.get/put`; serialize callers across processes (the MCP uses a disk lock). `pay(requestId, { agentId, recipient, amount })` submits once; `status(requestId)` verifies the independent chain receipt. Keep the same request ID after a timeout. Only `CONFIRMED` means an actual transfer was observed. Never use an in-memory journal for real payments.
+
+`signUserOperationHash` remains a legacy secp256k1 helper. P-256 execution uses an expiring EIP-712 `AgentExecution` envelope and native structured signing, not a provider-supplied raw digest. See [EXECUTION.md](EXECUTION.md) for tool examples, policy encoding, gas ceilings and the uncompleted Sepolia rollout gate.
+
 Working integrations: [Service A](../demo-service/server.ts), [Service B](../demo-service-b/server.ts). Tests: [middleware](../test/ServiceMiddleware.ts), [MCP end-to-end](../test/McpE2E.ts).
 
 Hosted demos: [Service A](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/)
