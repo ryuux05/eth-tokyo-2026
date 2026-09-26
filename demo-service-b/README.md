@@ -38,10 +38,10 @@ The resource API is discoverable in the homepage's Resource API section.
 Create a **separate Vercel project** from this repository:
 
 - Root Directory: `demo-service-b`.
-- Framework: **Other** (not Next.js).
+- Framework: **Next.js**.
 - Node.js: **24.x**.
 - Enable **Include source files outside of the Root Directory in the Build Step**.
-- Keep the install/build commands from `vercel.json`; leave Output Directory override off.
+- Keep the install/build commands from `vercel.json`; output directory is `.next`.
 - Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (read/write).
   The same database as Service C is supported; B uses a separate namespace.
 - `AGENTIC_SEPOLIA_RPC_URL` is optional; blank or absent uses the public Sepolia RPC.
@@ -51,8 +51,8 @@ Create a **separate Vercel project** from this repository:
   use the stable production domain for the demo.
 - Disable Vercel login protection for the public demo domain so agents can reach it.
 
-The build emits Vercel Build Output API v3: static HTML/CSS/JS plus a bundled Node
-function. No Hardhat, signer, browser wallet, or private key runs in the function.
+The Next.js app renders the owner page and routes API calls through the same SDK
+handler. No Hardhat, signer, browser wallet, or private key runs in the function.
 The browser wallet signs only the registration message. RPC URLs/tokens stay server-side.
 Add appropriate Vercel request-rate limits before broad public use.
 
@@ -65,9 +65,11 @@ must return 401, not the report. Live activity shows successful agent access.
 From the repository root:
 
 ```sh
-npm run build:demo-service-b
-npm run serve:demo-service-b
+npm run dev:demo-service-b
 ```
+
+For the existing lightweight loopback adapter used by `npm run demo`, run
+`npm run build:demo-service-b` then `npm run serve:demo-service-b`.
 
 Local URL: `http://127.0.0.1:8797`. Only this loopback adapter uses memory, so local
 registrations reset on restart. Hosted deployments require Redis and fail closed
