@@ -63,6 +63,13 @@
     const status=(message,kind="")=>{el("status").textContent=message;el("status").className=kind;};
     let context,pendingHash,stage="connect",inWallet=false,cancelled=false;
     const action=el("action"),cancel=el("cancel");
+    let walletUnresolved=false;
+    const pageConnection=new EventSource(`/flow/${token}/events`);
+    const walletState=async state=>{
+      const response=await fetch(`/flow/${token}/wallet`,{method:"POST",headers:{"X-Agentic-Wallet-State":state}});
+      if(!response.ok)throw new Error("Approval session closed. Return to your agent to open a new page.");
+    };
+    window.addEventListener("pageshow",event=>{if(event.persisted)location.reload();});
     async function verifyNetwork(){
       const expected=`0x${context.transaction.chainId.toString(16)}`;
       const current=await window.ethereum.request({method:"eth_chainId"});
@@ -76,7 +83,7 @@
     async function complete(){
       const confirmed=await api("complete",{hash:pendingHash});
       el("result").textContent=`Confirmed onchain: ${confirmed.hash}. You can close this tab.`;
-      el("result").classList.add("visible");stage="done";
+      el("result").classList.add("visible");stage="done";pageConnection.close();
       action.textContent="Confirmed onchain";action.disabled=true;cancel.disabled=true;
       status("Updated state verified and returned to your agent.","success");
     }
@@ -91,6 +98,9 @@
       if(context.submittedHash){
         pendingHash=context.submittedHash;stage="retry";action.textContent="Check submitted transaction";cancel.disabled=true;
         status(`Transaction ${pendingHash} was submitted. Check it before starting another action.`);
+      }else if(context.walletPending){
+        walletUnresolved=true;stage="uncertain";action.disabled=true;
+        status("A wallet request from the previous page is unresolved. Reject it and check wallet activity, then cancel this session before retrying.","error");
       }
     }catch(error){status(error?.message||"This link expired. Request a new approval page.","error");action.disabled=true;cancel.disabled=true;}
     action.addEventListener("click",async()=>{
@@ -117,9 +127,15 @@
         }else if(stage==="send"){
           const accounts=await window.ethereum.request({method:"eth_accounts"});
           if(!accounts.some(address=>address.toLowerCase()===context.transaction.from.toLowerCase()))throw new Error("Owner wallet changed. Reconnect before approving.");
-          await verifyNetwork();inWallet=true;cancel.disabled=true;
+          await verifyNetwork();
+          await walletState("pending");walletUnresolved=true;inWallet=true;cancel.disabled=true;
           try{pendingHash=await window.ethereum.request({method:"eth_sendTransaction",params:[{from:context.transaction.from,to:context.transaction.to,data:context.transaction.data,value:"0x0"}]});}
-          finally{inWallet=false;if(!pendingHash)cancel.disabled=false;}
+          catch(error){
+            if(error?.code===4001){await walletState("rejected");walletUnresolved=false;}
+            else stage="uncertain";
+            throw error;
+          }finally{inWallet=false;if(!pendingHash)cancel.disabled=false;}
+          walletUnresolved=false;
           stage="pending";action.textContent="Check submitted transaction";
           status(`Transaction ${pendingHash} submitted. Waiting for confirmation…`);
           await complete();
@@ -129,19 +145,24 @@
       }catch(error){
         if(stage==="pending")stage="retry";
         status(error?.message||"Wallet action failed. Check its transaction status.","error");
-      }finally{if(stage!=="pending"&&stage!=="done")action.disabled=false;}
+      }finally{if(stage!=="pending"&&stage!=="done"&&stage!=="uncertain"&&!cancelled)action.disabled=false;}
     });
     cancel.addEventListener("click",async()=>{
       if(pendingHash||inWallet){status("A wallet transaction may be pending. Reject or check it before starting another action.","error");return;}
       cancel.disabled=true;
       try{
-        await api("cancel",{});cancelled=true;action.disabled=true;
-        status("Session closed. No transaction was submitted. You can close this tab and retry.");
+        await api("cancel",{});cancelled=true;action.disabled=true;pageConnection.close();
+        status(walletUnresolved
+          ?"Session closed. Reject any outstanding wallet prompt and check wallet activity before retrying."
+          :"Session closed. No transaction was submitted. You can close this tab and retry.");
       }catch(error){cancel.disabled=false;status(error?.message||"Could not cancel this session.","error");}
     });
     window.addEventListener("pagehide",()=>{
-      if(!pendingHash&&!inWallet&&!cancelled&&stage!=="done")
-        void fetch(`/flow/${token}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",keepalive:true});
+      // The stream closing is authoritative even when unload requests are lost.
+      // Deliver a hash if the tab closes between wallet submission and /complete.
+      if(pendingHash&&!cancelled&&stage!=="done")
+        void fetch(`/flow/${token}/complete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hash:pendingHash}),keepalive:true}).catch(()=>{});
+      pageConnection.close();
     });
   </script>
 </body>

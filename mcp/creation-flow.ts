@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Address, Hex } from "viem";
 import { openDefaultBrowser } from "./open-browser.js";
-import { FlowCancelledError } from "./flow-cancel.js";
+import { FlowCancelledError, FlowInterruptedError, watchApprovalPage } from "./flow-cancel.js";
 
 export type CreationIntent = { predictedAgent: Address; transaction: { chainId: number; from: Address; to: Address; value: string; data: Hex } };
 
@@ -15,6 +15,8 @@ type FlowOptions = {
   confirm: (hash: Hex, intent: CreationIntent) => Promise<Address>;
   openBrowser?: (url: string) => Promise<void>;
   timeoutMs?: number;
+  disconnectGraceMs?: number;
+  signal?: AbortSignal;
 };
 
 /** A single-use, loopback-only wallet approval page. Its secret URL never leaves MCP. */
@@ -30,12 +32,19 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
   let settle: (value: Address) => void = () => {};
   let fail: (error: Error) => void = () => {};
   const outcome = new Promise<Address>((resolve, reject) => { settle = resolve; fail = reject; });
+  // The browser opener can itself await HTTP; observe rejections immediately.
+  void outcome.catch(() => {});
+  const lifecycle = watchApprovalPage(() => {
+    if (inFlight) return; // A known hash is confirmed independently of the tab.
+    fail(submittedHash || lifecycle.walletPending ? new FlowInterruptedError(submittedHash) : new FlowCancelledError());
+  }, options.disconnectGraceMs);
   const server = createServer(async (request, response) => {
     const send = (status: number, value: unknown) => {
       response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "content-security-policy": "default-src 'none'; frame-ancestors 'none'" });
       response.end(JSON.stringify(value));
     };
     if (request.headers.host !== base.slice("http://".length) || !request.url?.startsWith(`/flow/${token}`)) { send(404, { error: "Not found" }); return; }
+    if (lifecycle.handle(request, response, `/flow/${token}`, base)) return;
     const path = request.url;
     if (path === `/flow/${token}` && request.method === "GET") {
       response.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; script-src 'nonce-agentic-creation'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
@@ -44,16 +53,17 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
     }
     if (path === `/flow/${token}/context` && request.method === "GET") {
       const rpc = new URL(options.rpcUrl);
-      send(200, { chainId: options.chainId, chainName: options.chainId === 31337 ? "Agentic World local" : `Chain ${options.chainId}`,
+      send(200, { chainId: options.chainId, chainName: options.chainId === 31337 ? "Agentic World local" : options.chainId === 11155111 ? "Ethereum Sepolia" : "Ethereum network",
         factory: options.factory, qx: options.qx, qy: options.qy,
         deploymentBlockNumber: options.deploymentBlockNumber, deploymentBlockHash: options.deploymentBlockHash,
         localRpcUrl: ["127.0.0.1", "localhost"].includes(rpc.hostname) ? options.rpcUrl : undefined,
-        submittedHash, submittedOwner: submittedHash ? intent?.transaction.from : undefined });
+        submittedHash, submittedOwner: submittedHash ? intent?.transaction.from : undefined,
+        intent, walletPending: lifecycle.walletPending });
       return;
     }
     if (path === `/flow/${token}/cancel` && request.method === "POST" && request.headers.origin === base) {
       if (submittedHash || inFlight) { send(409, { error: "A transaction was submitted. Closing this page cannot cancel it; check its hash before retrying." }); return; }
-      response.once("close", () => fail(new FlowCancelledError()));
+      response.once("finish", () => fail(lifecycle.walletPending ? new FlowInterruptedError() : new FlowCancelledError()));
       send(200, { cancelled: true });
       return;
     }
@@ -67,7 +77,7 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
     try {
       const body = JSON.parse(data) as Record<string, unknown>;
       if (path.endsWith("/prepare")) {
-        if (intent || preparing) { send(409, { error: "Owner already selected; reload the flow to start over" }); return; }
+        if (intent || preparing) { send(409, { error: "Owner already selected; cancel this flow to start over" }); return; }
         if (typeof body.owner !== "string") { send(400, { error: "Select an owner wallet" }); return; }
         preparing = true;
         try { intent = await options.prepare(body.owner); }
@@ -81,11 +91,17 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
         inFlight = true;
         try {
           const agentId = await options.confirm(body.hash as Hex, intent);
-          response.once("close", () => settle(agentId));
           send(200, { agentId });
+          // Do not depend on the HTTP connection still being open after mining.
+          if (response.destroyed) settle(agentId);
+          else response.once("finish", () => settle(agentId));
+          response.once("close", () => settle(agentId));
         } finally { inFlight = false; }
       }
-    } catch (error) { send(400, { error: error instanceof Error ? error.message : "Creation failed" }); }
+    } catch (error) {
+      send(400, { error: error instanceof Error ? error.message : "Creation failed" });
+      if (lifecycle.detached) fail(submittedHash || lifecycle.walletPending ? new FlowInterruptedError(submittedHash) : new FlowCancelledError());
+    }
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -94,12 +110,23 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Could not bind local creation page");
   base = `http://127.0.0.1:${address.port}`;
-  const timer = setTimeout(() => fail(new Error("Identity creation timed out; call the tool again to retry")), options.timeoutMs ?? 300_000);
+  const timer = setTimeout(() => fail(submittedHash || lifecycle.walletPending ? new FlowInterruptedError(submittedHash)
+    : new FlowCancelledError()), options.timeoutMs ?? 300_000);
+  const abort = () => {
+    // A broadcast transaction is independent of the cancelled MCP call.
+    // Continue its confirmation so a successful creation is still saved.
+    if (submittedHash) return;
+    fail(lifecycle.walletPending ? new FlowInterruptedError() : new FlowCancelledError());
+  };
+  options.signal?.addEventListener("abort", abort, { once: true });
   try {
-    await (options.openBrowser ?? openDefaultBrowser)(`${base}/flow/${token}`);
+    if (options.signal?.aborted) abort();
+    else await (options.openBrowser ?? openDefaultBrowser)(`${base}/flow/${token}`);
     return await outcome;
   } finally {
     clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
+    lifecycle.dispose();
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
