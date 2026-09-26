@@ -135,6 +135,12 @@ wallet registration and associates an authenticated agent through its onchain
 `owner()`. Service-local state resets on restart; onchain identities persist.
 The legacy local-chain launcher is available explicitly as `npm run demo:hardhat`.
 
+Service B also supports [Vercel deployment](demo-service-b/README.md). Register your
+owner wallet, then tell your agent **“Go to https://YOUR-SERVICE-B-DOMAIN and get my
+report.”** The homepage exposes the report link; the installed Agentic World skill
+handles the SDK authentication offer. No copied protocol prompt or agent ID input
+is needed. Hosted registrations and sessions use shared Redis rather than memory.
+
 Service C is a **Next.js compute-credit storefront with read-only purchase checks**.
 Register your owner wallet, select a 1 or 2 USDC pack, and copy the agent prompt.
 Deploy or reuse its purchase contract once. Configure Token purchase rules in the
