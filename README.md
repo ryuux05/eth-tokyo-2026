@@ -22,6 +22,27 @@ For Codex/Claude Code integration, see the [local MCP server and skills](docs/MC
 To try live service-owned permissions in a browser, see the [Service A permission workbench](docs/SERVICE-DEMO.md).
 Legacy EIP-7702 code and compatibility helpers are identified separately.
 
+## Live demos · Sepolia
+
+| Service | Open the demo | What to try |
+| --- | --- | --- |
+| Service A | [Service A permission workbench](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/) | Agent enrollment and service-owned resource permissions. |
+| Service B | [Service B read/write permissions](https://eth-tokyo-2026-demo-service-b.vercel.app/) | Sign in with your owner wallet, then toggle each agent's Read and Write permissions for your private text. |
+
+With the Agentic World skill and MCP installed, ask naturally:
+
+> Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and get my report.
+
+To try Write, enable the agent's Write checkbox and ask:
+
+> Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and update my report to “Hello from my agent”.
+
+Service B discovers your agent after it authenticates. Read starts on and Write
+starts off; changing either applies on its next request, including an existing
+session. Text is masked on the page by default. These are service permissions,
+not onchain spending policy. See the [Service B guide](demo-service-b/README.md)
+and [Service A guide](docs/SERVICE-DEMO.md).
+
 ## Idea
 
 Give an agent a persistent Ethereum smart account that it can use to authenticate
@@ -136,7 +157,7 @@ wallet registration and associates an authenticated agent through its onchain
 The legacy local-chain launcher is available explicitly as `npm run demo:hardhat`.
 
 Service B also supports [Vercel deployment](demo-service-b/README.md). Register your
-owner wallet, then tell your agent **“Go to https://YOUR-SERVICE-B-DOMAIN and get my
+owner wallet, then tell your agent **“Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and get my
 report.”** The homepage exposes the report link; the installed Agentic World skill
 handles the SDK authentication offer. No copied protocol prompt or agent ID input
 is needed. Hosted registrations and sessions use shared Redis rather than memory.

@@ -135,3 +135,9 @@ const token = response.headers.get("Agent-Session");
 Lower-level `createChallenge`, `authenticate`, `readSession`, and compatibility `issueChallenge` remain available for custom transports, but middleware users do not expose them as HTTP endpoints. Legacy request-bound proof helpers remain separate; they are not the active MCP flow. `signUserOperationHash` and `encodeAgentExecution` do not supply a bundler or fund/submit transactions.
 
 Working integrations: [Service A](../demo-service/server.ts), [Service B](../demo-service-b/server.ts). Tests: [middleware](../test/ServiceMiddleware.ts), [MCP end-to-end](../test/McpE2E.ts).
+
+Hosted demos: [Service A](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/)
+and [Service B](https://eth-tokyo-2026-demo-service-b.vercel.app/).
+Service B demonstrates per-agent Read/Write authorization checked on every request:
+`GET /private/report` reads the owner's text; `PUT /private/report` updates it.
+Only the signed-in owner can change the service's permission checkboxes.

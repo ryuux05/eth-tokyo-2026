@@ -1,6 +1,20 @@
 # Service A: permission workbench
 
-This is a **long-running, loopback-only service** using the real `AgenticWorld` service SDK against Sepolia. Each end user enrolls their agent with an owner-wallet signature. Its [operator page](../demo-service/index.html) changes two service-local permissions; retrying with the same `Agent-Session` shows them take effect immediately. The separate [owner portal](PORTAL.md) controls onchain identity and execution policy, not Service A's API permissions.
+## Hosted demos
+
+- [Service A: enrollment and resource permissions](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/).
+- [Service B: owner-associated Read/Write permissions](https://eth-tokyo-2026-demo-service-b.vercel.app/).
+
+For Service B, sign in with your owner wallet and ask your agent to visit the site
+and get your report. The homepage links to `/private/report`, where the installed
+skill handles the SDK authentication offer. After the agent appears, toggle Read
+or Write to change its access. Write allows updating the stored text; it does not
+grant Read. Changes apply on the next request, including an existing session.
+See the [Service B guide](../demo-service-b/README.md).
+
+## Local Service A adapter
+
+The local adapter below is a **long-running, loopback-only service** using the real `AgenticWorld` service SDK against Sepolia. Each end user enrolls their agent with an owner-wallet signature. Its [operator page](../demo-service/index.html) changes two service-local permissions; retrying with the same `Agent-Session` shows them take effect immediately. The separate [owner portal](PORTAL.md) controls onchain identity and execution policy, not Service A's API permissions.
 
 ## Start it
 
