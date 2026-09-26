@@ -1,5 +1,5 @@
 import spawn from "cross-spawn";
-import { access, cp, lstat, mkdir, open, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, open, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -224,6 +224,21 @@ export async function install(options = {}, { home = homedir(), cwd = process.cw
     const signerBinaryPath = join(runtime, "dist", "signer", `agentic-signer${process.platform === "win32" ? ".exe" : ""}`);
     const { initializeMcpConfig } = await import(pathToFileURL(join(runtime, "dist", "scripts", "init-mcp-config.js")).href);
     await initializeMcpConfig({ configPath, signerBinaryPath, rpcUrl, updateRpc: options.updateRpc });
+    // Managed runtime upgrades must also use the new native protocol decoder.
+    // Preserve the key label, identities, RPC, and all other config fields.
+    const originalConfig = await readFile(configPath, "utf8");
+    const currentConfig = JSON.parse(originalConfig);
+    if (currentConfig.signer?.binaryPath !== signerBinaryPath) {
+      const old = relative(join(data, "runtime"), currentConfig.signer?.binaryPath ?? "").split(sep);
+      if (old.length !== 7 || !/^\d+\.\d+\.\d+$/.test(old[0]) || old.slice(1).join("/") !== `node_modules/agenticworld/runtime/dist/signer/agentic-signer${process.platform === "win32" ? ".exe" : ""}`)
+        throw new Error("Existing signer is not installer-managed; update its binary explicitly before upgrading");
+      const temporary = `${configPath}.${process.pid}.signer-upgrade.tmp`;
+      try {
+        await writeFile(temporary, JSON.stringify({ ...currentConfig, signer: { ...currentConfig.signer, binaryPath: signerBinaryPath } }, null, 2) + "\n", { flag: "wx", mode: 0o600 });
+        if (await readFile(configPath, "utf8") !== originalConfig) throw new Error("Config changed during upgrade; stop the MCP and retry");
+        await rename(temporary, configPath);
+      } finally { await rm(temporary, { force: true }); }
+    }
     // Recheck immediately before writes: another process/user may have changed a
     // client config while the runtime was building. Use each client's own CLI.
     for (const planned of registrations) {
@@ -240,6 +255,18 @@ export async function install(options = {}, { home = homedir(), cwd = process.cw
         // Do not merge with or overwrite an unrelated/manual skill directory.
         await mkdir(current.path);
         await cp(join(installed, "skills", current.client, "SKILL.md"), join(current.path, "SKILL.md"), { force: false, errorOnExist: true });
+      } else {
+        const skillPath = join(current.path, "SKILL.md");
+        const original = await readFile(skillPath, "utf8");
+        for (const version of await readdir(join(data, "runtime"))) {
+          if (!/^\d+\.\d+\.\d+$/.test(version)) continue;
+          const previous = join(data, "runtime", version, "node_modules/agenticworld/skills", current.client, "SKILL.md");
+          if (await exists(previous) && await readFile(previous, "utf8") === original) {
+            if (await readFile(skillPath, "utf8") !== original) throw new Error("Skill changed during upgrade; left unchanged");
+            await cp(join(installed, "skills", current.client, "SKILL.md"), skillPath);
+            break;
+          }
+        }
       }
       console.log(`${current.client}: skill ${current.reuse ? "reused at" : "installed at"} ${current.path}`);
     }

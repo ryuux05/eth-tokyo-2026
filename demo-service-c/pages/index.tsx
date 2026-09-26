@@ -11,7 +11,7 @@ export default function PolicyWorkbench() {
   return <><Head><title>Service C · Compute credits</title><meta name="viewport" content="width=device-width,initial-scale=1" /></Head>
 <header className="topbar"><strong>Agentic World <span>/ Service C</span></strong><span id="network">Connecting…</span></header>
 <main>
-  <header className="intro"><h1>Compute for your agent.</h1><p>Choose a pack. Ask your agent whether its account policy allows the purchase.</p><p className="demo-label">Sepolia demo · Purchase checked—not paid.</p></header>
+  <header className="intro"><h1>Compute for your agent.</h1><p>Choose a pack. Check its policy here, or ask your agent to purchase it.</p><p className="demo-label">Sepolia testnet · Purchases spend test USDC.</p></header>
   <section className="owner-access" aria-label="Owner-based service access">
     <div><h2>Register your wallet, not each agent.</h2><p id="connected-wallet">Your agents get quote access through their onchain owner(). Registration does not grant spending permission.</p></div>
     <button id="connect-wallet" className="secondary" disabled>Register owner wallet</button>
@@ -25,7 +25,7 @@ export default function PolicyWorkbench() {
     <form id="preview-form">
       <input id="amount" type="hidden" defaultValue="1" />
       <div className="actions"><button type="button" id="copy" disabled>Copy 1-USDC purchase prompt</button><button type="submit" id="preview" className="secondary" disabled>Check account policy</button></div>
-      <p id="prompt-help" className="hint">Use the contract setup below once, then copy the prompt into your agent session. No tokens or compute credits are delivered.</p>
+      <p id="prompt-help" className="hint">Check account policy is read-only. The copied purchase prompt requests an actual USDC spend through the updated MCP. Fund your agent with Sepolia ETH and USDC and configure its bundler first.</p>
       <details className="prompt-details"><summary>See the prompt</summary><pre id="agent-prompt">Choose a service target to prepare the prompt. Your agent can select its own identity.</pre></details>
     </form>
   </section>
@@ -51,7 +51,7 @@ export default function PolicyWorkbench() {
   </details>
   <section className="status-region" aria-label="Operation status"><p id="status" role="status">Connecting to Sepolia…</p><a id="tx-link" hidden target="_blank" rel="noopener noreferrer">View submitted transaction</a><button id="check-tx" className="secondary" hidden>Check submitted transaction</button></section>
   <details className="history"><summary>Recent policy checks</summary><div id="history" aria-live="polite">No checks yet.</div></details>
-  <footer>Onchain policy preview—not a transfer or an execution guarantee. No token funding or allowance is needed. Testnet USDC amounts are not a live USD price.</footer>
+  <footer>Browser checks are read-only. Agent purchases require a bounded allowance and follow your onchain policy. A confirmed USDC transfer and Purchased event prove the testnet purchase; no real cloud compute is delivered.</footer>
 </main>
 </>;
 }

@@ -28,3 +28,7 @@ for (const [source, destination] of [
   await writeFile(resolve(output, destination), code);
 }
 console.log("Installer package assembled (MCP, portal, native signer sources/binaries, skills). No native key was created.");
+for (const client of ["codex", "claude"]) {
+  const skill = resolve(output, `skills/${client}/SKILL.md`);
+  await writeFile(skill, `${await readFile(skill, "utf8")}\n${await readFile(resolve(root, "docs/COMPUTE_PURCHASES.md"), "utf8")}`);
+}
