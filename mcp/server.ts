@@ -14,6 +14,7 @@ import { ensureSignerPublicKey, signLocalChallenge, signerPublicKey } from "./lo
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
 import { runOwnerActionFlow, type OwnerActionIntent } from "./owner-action-flow.js";
 import { BrowserLaunchError } from "./open-browser.js";
+import { FlowCancelledError } from "./flow-cancel.js";
 
 type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; factory?: Address; implementation: Address;
   deploymentBlockNumber?: string; deploymentBlockHash?: Hex;
@@ -115,10 +116,12 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   async function guarded(fn: () => Promise<unknown>) {
     try { return result(await fn()); }
     catch (error) {
-      const code = error instanceof ToolError ? error.code : error instanceof BrowserLaunchError ? "BROWSER_UNAVAILABLE" : "OPERATION_FAILED";
+      const code = error instanceof ToolError ? error.code : error instanceof BrowserLaunchError ? "BROWSER_UNAVAILABLE"
+        : error instanceof FlowCancelledError ? "FLOW_CANCELLED" : "OPERATION_FAILED";
       // Never serialize transport errors: URLs can contain credentials and upstream messages can echo request data.
       return { ...result({ code, message: error instanceof ToolError ? error.message : error instanceof BrowserLaunchError
-        ? "Could not open the local approval page in the default browser" : "Agentic World operation failed; check server diagnostics" }), isError: true };
+        ? "Could not open the local approval page in the default browser" : error instanceof FlowCancelledError
+        ? error.message : "Agentic World operation failed; check server diagnostics" }), isError: true };
     }
   }
 

@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Address, Hex } from "viem";
 import { openDefaultBrowser } from "./open-browser.js";
+import { FlowCancelledError } from "./flow-cancel.js";
 
 export type CreationIntent = { predictedAgent: Address; transaction: { chainId: number; from: Address; to: Address; value: string; data: Hex } };
 
@@ -25,6 +26,7 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
   let intent: CreationIntent | undefined;
   let preparing = false;
   let inFlight = false;
+  let submittedHash: Hex | undefined;
   let settle: (value: Address) => void = () => {};
   let fail: (error: Error) => void = () => {};
   const outcome = new Promise<Address>((resolve, reject) => { settle = resolve; fail = reject; });
@@ -45,7 +47,14 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
       send(200, { chainId: options.chainId, chainName: options.chainId === 31337 ? "Agentic World local" : `Chain ${options.chainId}`,
         factory: options.factory, qx: options.qx, qy: options.qy,
         deploymentBlockNumber: options.deploymentBlockNumber, deploymentBlockHash: options.deploymentBlockHash,
-        localRpcUrl: ["127.0.0.1", "localhost"].includes(rpc.hostname) ? options.rpcUrl : undefined });
+        localRpcUrl: ["127.0.0.1", "localhost"].includes(rpc.hostname) ? options.rpcUrl : undefined,
+        submittedHash, submittedOwner: submittedHash ? intent?.transaction.from : undefined });
+      return;
+    }
+    if (path === `/flow/${token}/cancel` && request.method === "POST" && request.headers.origin === base) {
+      if (submittedHash || inFlight) { send(409, { error: "A transaction was submitted. Closing this page cannot cancel it; check its hash before retrying." }); return; }
+      response.once("close", () => fail(new FlowCancelledError()));
+      send(200, { cancelled: true });
       return;
     }
     if (request.method !== "POST" || ![`/flow/${token}/prepare`, `/flow/${token}/complete`].includes(path) ||
@@ -67,10 +76,12 @@ export async function runCreationFlow(options: FlowOptions): Promise<Address> {
       } else {
         if (!intent || inFlight) { send(409, { error: "No pending owner transaction" }); return; }
         if (typeof body.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(body.hash)) { send(400, { error: "Invalid transaction hash" }); return; }
+        if (submittedHash && submittedHash.toLowerCase() !== body.hash.toLowerCase()) { send(409, { error: "A different transaction was already submitted" }); return; }
+        submittedHash = body.hash as Hex;
         inFlight = true;
         try {
           const agentId = await options.confirm(body.hash as Hex, intent);
-          response.once("finish", () => settle(agentId));
+          response.once("close", () => settle(agentId));
           send(200, { agentId });
         } finally { inFlight = false; }
       }

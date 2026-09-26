@@ -3,154 +3,145 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Create agent identity · Agentic World</title>
+  <title>Create identity · Agentic World</title>
   <style>
-    :root { color-scheme: light; --canvas:#eef4f2; --paper:#fff; --ink:#102d30; --muted:#4f6969; --line:#bdd0cc; --teal:#006d66; --soft:#e2f2ee; --amber:#a05d31; font-family:"IBM Plex Sans",system-ui,sans-serif; }
+    :root { color-scheme:light; font-family:"IBM Plex Sans",system-ui,sans-serif; --canvas:#eff4f2; --surface:#fff; --ink:#132d2e; --muted:#506768; --line:#cbdad7; --teal:#006d66; --danger:#a33b34; }
     * { box-sizing:border-box; } body { margin:0; min-width:320px; background:var(--canvas); color:var(--ink); }
-    button { font:inherit; cursor:pointer; } button:focus-visible { outline:3px solid #2c9e91; outline-offset:3px; }
-    button:disabled { cursor:wait; opacity:.56; } .bar { padding:17px max(24px,calc((100vw - 1080px)/2)); background:var(--ink); color:white; font-size:13px; letter-spacing:.02em; }
-    .mark { display:inline-grid; place-items:center; width:31px; height:31px; margin-right:10px; border:1px solid #70b9ad; border-radius:5px; color:#bce9db; font:12px ui-monospace,monospace; vertical-align:middle; }
-    main { max-width:1080px; margin:0 auto; padding:62px 24px 88px; display:grid; grid-template-columns:minmax(0,1fr) minmax(320px,460px); gap:66px; }
-    .eyebrow,.key-label,.step,.fact dt { font:11px ui-monospace,SFMono-Regular,monospace; letter-spacing:.06em; text-transform:uppercase; }
-    .eyebrow { color:var(--teal); margin:0 0 25px; } h1 { font-size:clamp(2.45rem,5vw,4.55rem); line-height:1.04; letter-spacing:-.055em; font-weight:600; margin:0 0 25px; }
-    .lead { max-width:39ch; color:var(--muted); line-height:1.6; font-size:16px; }
-    .path { margin-top:64px; padding:0; list-style:none; border-left:1px solid var(--line); }
-    .path li { position:relative; padding:0 0 28px 26px; font-size:13px; color:var(--muted); line-height:1.55; }
-    .path li:last-child { padding-bottom:0; } .path li::before { content:""; position:absolute; left:-5px; top:4px; width:9px; height:9px; border-radius:50%; background:var(--teal); }
-    .path strong { display:block; color:var(--ink); font-size:14px; margin-bottom:3px; }
-    .sheet { background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:30px; align-self:start; box-shadow:0 12px 34px #294b4510; }
-    .step { display:flex; justify-content:space-between; color:var(--teal); border-bottom:1px solid var(--line); padding-bottom:16px; margin-bottom:25px; }
-    h2 { margin:0 0 8px; font-size:24px; letter-spacing:-.03em; } .explain { color:var(--muted); font-size:13px; line-height:1.55; margin:0 0 24px; }
-    dl { margin:0; } .fact { padding:13px 0; border-top:1px solid #e2ebe8; } .fact dt { color:var(--muted); margin-bottom:7px; } .fact dd { margin:0; font-size:13px; overflow-wrap:anywhere; }
-    .fact dd.code { font-family:ui-monospace,SFMono-Regular,monospace; font-size:11px; line-height:1.55; }
-    .key { margin:23px 0; padding:14px 16px; border:1px solid #b4d3cc; border-left:4px solid var(--teal); border-radius:5px; background:var(--soft); }
-    .key-label { display:block; color:var(--teal); margin-bottom:8px; } .key code { display:block; overflow-wrap:anywhere; font-size:11px; line-height:1.5; }
-    .action { width:100%; min-height:48px; border:0; border-radius:6px; color:#fff; background:var(--teal); font-size:14px; font-weight:600; }
-    .action:hover:not(:disabled) { background:#005a55; } .status { min-height:38px; margin:16px 0 0; color:var(--muted); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
-    .status.error { color:#9a3d31; } .result { display:none; margin-top:14px; padding:15px; border-radius:6px; background:var(--soft); font-size:13px; overflow-wrap:anywhere; }
-    .result.visible { display:block; } .caution { color:var(--amber); font-size:12px; line-height:1.5; margin:10px 0 0; }
-    @media(max-width:780px) { main { display:block; padding:42px 20px 60px; } .path { margin:32px 0 44px; } .sheet { padding:22px; } }
-    @media(prefers-reduced-motion:reduce) { * { scroll-behavior:auto !important; } }
+    header { padding:14px max(20px,calc((100vw - 660px)/2)); background:#102a2c; color:#fff; font-size:13px; }
+    .mark { display:inline-grid; place-items:center; width:28px; height:28px; margin-right:9px; border:1px solid #70b9ad; border-radius:5px; color:#bce9db; font:12px ui-monospace,monospace; vertical-align:middle; }
+    main { max-width:660px; margin:auto; padding:34px 20px 54px; }
+    h1 { margin:0 0 10px; font-size:2rem; line-height:1.16; letter-spacing:-.025em; font-weight:600; text-wrap:balance; }
+    .lead { max-width:64ch; margin:0 0 22px; color:var(--muted); font-size:14px; line-height:1.55; }
+    .sheet { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:22px 24px; }
+    dl { margin:0 0 18px; } .fact { display:grid; grid-template-columns:145px minmax(0,1fr); gap:14px; align-items:baseline; border-bottom:1px solid #e2ebe8; padding:9px 0; }
+    dt { color:var(--muted); font-size:12px; } dd { margin:0; font-size:13px; line-height:1.45; overflow-wrap:anywhere; }
+    .code { font:11px/1.5 ui-monospace,SFMono-Regular,monospace; }
+    details { margin:0 0 18px; color:var(--muted); font-size:12px; }
+    summary { cursor:pointer; width:max-content; max-width:100%; } details p { margin:8px 0 0; overflow-wrap:anywhere; }
+    button { width:100%; min-height:42px; border-radius:7px; font:600 14px "IBM Plex Sans",system-ui,sans-serif; cursor:pointer; transition:background-color .18s ease,border-color .18s ease; }
+    button:focus-visible,summary:focus-visible { outline:3px solid #38ac9f; outline-offset:3px; }
+    button:disabled { cursor:not-allowed; opacity:.58; }
+    #action { color:#fff; background:var(--teal); border:1px solid var(--teal); }
+    #action:hover:not(:disabled) { background:#005950; }
+    #cancel { width:auto; min-height:36px; margin-top:5px; padding:0 8px; border:0; color:var(--muted); background:transparent; font-weight:500; }
+    #cancel:hover:not(:disabled) { color:var(--ink); text-decoration:underline; }
+    #status { min-height:24px; margin:11px 0 0; color:var(--muted); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+    #status.error { color:var(--danger); } #status.success { color:var(--teal); }
+    #result { display:none; margin-top:16px; padding:14px; background:#e1f2ee; border-radius:7px; font-size:13px; overflow-wrap:anywhere; }
+    #result.visible { display:block; } .caution { margin:12px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+    @media(max-width:560px) { main { padding:26px 16px 42px; } h1 { font-size:1.65rem; } .sheet { padding:18px; } .fact { display:block; } dt { margin-bottom:4px; } }
+    @media(prefers-reduced-motion:reduce) { button { transition:none; } }
   </style>
 </head>
 <body>
-  <header class="bar"><span class="mark">AW</span> Agentic World <span style="opacity:.65">/ local owner approval</span></header>
+  <header><span class="mark">AW</span> Agentic World / owner approval</header>
   <main>
-    <section aria-labelledby="title">
-      <p class="eyebrow">01 / Identity creation</p>
-      <h1 id="title">An agent of its own.</h1>
-      <p class="lead">Your agent gets a distinct onchain address. You remain its owner; its operating key stays in this device’s Secure Enclave.</p>
-      <ol class="path">
-        <li><strong>Connect your human wallet</strong>The account you select becomes the agent’s permanent owner.</li>
-        <li><strong>Review the factory transaction</strong>Check the network, factory, and predicted identity before approving in your wallet.</li>
-        <li><strong>Return to your agent</strong>This page verifies the confirmed transaction and reports the agent address back to Claude or Codex.</li>
-      </ol>
-    </section>
-    <section class="sheet" aria-labelledby="sheet-title">
-      <div class="step"><span>Owner approval</span><span>Local browser flow</span></div>
-      <h2 id="sheet-title">Create agent identity</h2>
-      <p class="explain">This page can only request a transaction from your wallet. Your agent cannot approve it for you.</p>
+    <h1>Create agent identity</h1>
+    <p class="lead">Your wallet becomes the agent’s fixed owner. One transaction creates its separate onchain address.</p>
+    <section class="sheet" aria-label="Identity creation review">
       <dl>
         <div class="fact"><dt>Network</dt><dd id="network">Loading…</dd></div>
-        <div class="fact"><dt>Factory contract</dt><dd class="code" id="factory">Loading…</dd></div>
+        <div class="fact"><dt>Factory</dt><dd class="code" id="factory">Loading…</dd></div>
         <div class="fact"><dt>Owner wallet</dt><dd class="code" id="owner">Not connected</dd></div>
-        <div class="fact"><dt>Predicted agent address</dt><dd class="code" id="agent">Connect wallet to calculate</dd></div>
+        <div class="fact"><dt>New agent ID</dt><dd class="code" id="agent">Connect wallet to calculate</dd></div>
       </dl>
-      <div class="key"><span class="key-label">Local P-256 authenticator</span><code id="authenticator">Loading…</code></div>
-      <button class="action" id="action" type="button">Connect wallet</button>
-      <p class="status" id="status" role="status" aria-live="polite">Waiting for your wallet.</p>
-      <div class="result" id="result"></div>
-      <p class="caution">Only approve if the wallet shows the expected local network and factory address.</p>
+      <details><summary>Local P-256 authenticator</summary><p class="code" id="authenticator">Loading…</p></details>
+      <button id="action" type="button">Connect wallet</button>
+      <button id="cancel" type="button">Cancel and close session</button>
+      <p id="status" role="status" aria-live="polite">No transaction submitted.</p>
+      <div id="result" role="status" aria-live="polite"></div>
+      <p class="caution">Check the network, factory, and 0 ETH value in your wallet before approving.</p>
     </section>
   </main>
   <script type="module">
-    const el = id => document.getElementById(id);
-    const token = location.pathname.split("/").at(-1);
-    const api = async (path, body) => {
-      const response = await fetch(`/flow/${token}/${path}`, { method: body ? "POST" : "GET", headers: body ? { "Content-Type":"application/json" } : {}, body: body ? JSON.stringify(body) : undefined, cache:"no-store" });
-      const value = await response.json();
-      if (!response.ok) throw new Error(value.error || "Local creation flow failed");
-      return value;
+    const el=id=>document.getElementById(id);
+    const token=location.pathname.split("/").at(-1);
+    const api=async(path,body)=>{
+      const response=await fetch(`/flow/${token}/${path}`,{method:body?"POST":"GET",headers:body?{"Content-Type":"application/json"}:{},body:body?JSON.stringify(body):undefined,cache:"no-store"});
+      const value=await response.json();if(!response.ok)throw new Error(value.error||"Local owner approval failed");return value;
     };
-    const status = (message, error=false) => { el("status").textContent=message; el("status").classList.toggle("error",error); };
-    let context;
-    let intent;
-    let owner;
-    let stage="connect";
-    let pendingHash;
-    const action=el("action");
-    async function verifyWalletNetwork() {
+    const status=(message,kind="")=>{el("status").textContent=message;el("status").className=kind;};
+    let context,intent,owner,pendingHash,stage="connect",inWallet=false,cancelled=false;
+    const action=el("action"),cancel=el("cancel");
+    async function verifyNetwork(){
       const expected=`0x${context.chainId.toString(16)}`;
-      const current=await window.ethereum.request({ method:"eth_chainId" });
-      if (current.toLowerCase()!==expected) throw new Error("Wallet is on the wrong chain. Select the network shown above.");
-      if (context.deploymentBlockNumber && context.deploymentBlockHash) {
-        const block=await window.ethereum.request({ method:"eth_getBlockByNumber", params:[`0x${BigInt(context.deploymentBlockNumber).toString(16)}`,false] });
-        if (block?.hash?.toLowerCase()!==context.deploymentBlockHash.toLowerCase()) {
-          throw new Error(`This wallet points to a different local node. Set chain ${context.chainId} RPC to ${context.localRpcUrl}, then reconnect.`);
-        }
+      const current=await window.ethereum.request({method:"eth_chainId"});
+      if(current.toLowerCase()!==expected)throw new Error("Wallet is on the wrong chain. Select the network shown above.");
+      if(context.deploymentBlockNumber&&context.deploymentBlockHash){
+        const block=await window.ethereum.request({method:"eth_getBlockByNumber",params:[`0x${BigInt(context.deploymentBlockNumber).toString(16)}`,false]});
+        if(block?.hash?.toLowerCase()!==context.deploymentBlockHash.toLowerCase())
+          throw new Error(`Wallet points to a different local node. Set chain ${context.chainId} RPC to ${context.localRpcUrl}, then reconnect.`);
       }
     }
-    try {
+    try{
       context=await api("context");
       el("network").textContent=`${context.chainName} · ${context.chainId}`;
       el("factory").textContent=context.factory;
       el("authenticator").textContent=`${context.qx} / ${context.qy}`;
-    } catch(error) { status(error.message,true); action.disabled=true; }
-    action.addEventListener("click", async () => {
-      if (!window.ethereum) { status("No injected wallet found. Open this page in a browser with MetaMask enabled.",true); return; }
+      if(context.submittedHash){
+        pendingHash=context.submittedHash;owner=context.submittedOwner;stage="retry";
+        el("owner").textContent=owner;action.textContent="Check submitted transaction";cancel.disabled=true;
+        status(`Transaction ${pendingHash} was submitted. Check it before starting another creation.`);
+      }
+    }catch(error){status(error?.message||"This link expired. Request a new creation page.","error");action.disabled=true;cancel.disabled=true;}
+    async function complete(){
+      const result=await api("complete",{hash:pendingHash});
+      el("result").textContent=`Identity created: ${result.agentId}. You can close this tab.`;
+      el("result").classList.add("visible");
+      stage="done";action.textContent="Identity created";action.disabled=true;cancel.disabled=true;
+      status("Confirmed onchain and returned to your agent.","success");
+    }
+    action.addEventListener("click",async()=>{
+      if(cancelled||stage==="done")return;
+      if(stage!=="retry"&&!window.ethereum){status("No wallet found. Open this link in a browser with MetaMask or another injected wallet.","error");return;}
       action.disabled=true;
-      try {
-        if (stage==="connect") {
-          const accounts=await window.ethereum.request({ method:"eth_requestAccounts" });
-          if (!Array.isArray(accounts) || !accounts[0]) throw new Error("Select an owner wallet to continue.");
+      try{
+        if(stage==="connect"){
+          const accounts=await window.ethereum.request({method:"eth_requestAccounts"});
+          if(!Array.isArray(accounts)||!accounts[0])throw new Error("Select an owner wallet to continue.");
           owner=accounts[0];
           const target=`0x${context.chainId.toString(16)}`;
-          const current=await window.ethereum.request({ method:"eth_chainId" });
-          if (current.toLowerCase()!==target.toLowerCase()) {
-            try { await window.ethereum.request({ method:"wallet_switchEthereumChain", params:[{chainId:target}] }); }
-            catch(error) {
-              if (error.code!==4902 || !context.localRpcUrl) throw error;
-              await window.ethereum.request({ method:"wallet_addEthereumChain", params:[{chainId:target, chainName:context.chainName, rpcUrls:[context.localRpcUrl], nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18}}] });
-              await window.ethereum.request({ method:"wallet_switchEthereumChain", params:[{chainId:target}] });
+          const current=await window.ethereum.request({method:"eth_chainId"});
+          if(current.toLowerCase()!==target.toLowerCase()){
+            try{await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:target}]});}
+            catch(error){
+              if(error.code!==4902||!context.localRpcUrl)throw error;
+              await window.ethereum.request({method:"wallet_addEthereumChain",params:[{chainId:target,chainName:context.chainName,rpcUrls:[context.localRpcUrl],nativeCurrency:{name:"Ether",symbol:"ETH",decimals:18}}]});
+              await window.ethereum.request({method:"wallet_switchEthereumChain",params:[{chainId:target}]});
             }
           }
-          await verifyWalletNetwork();
-          intent=await api("prepare",{owner});
-          el("owner").textContent=owner;
-          el("agent").textContent=intent.predictedAgent;
-          action.textContent="Create identity in wallet";
-          stage="send";
-          status("Review the owner, factory, and predicted agent. Then confirm in your wallet.");
-        } else if (stage==="send") {
-          const accounts=await window.ethereum.request({ method:"eth_accounts" });
-          if (!accounts.some(address=>address.toLowerCase()===owner.toLowerCase())) throw new Error("Owner wallet changed. Reload and connect again.");
-          await verifyWalletNetwork();
-          const hash=await window.ethereum.request({ method:"eth_sendTransaction", params:[{ from:owner, to:intent.transaction.to, data:intent.transaction.data, value:"0x0" }] });
-          pendingHash=hash;
-          stage="pending";
-          action.textContent="Waiting for confirmation";
-          status(`Transaction ${hash} sent. Waiting for onchain confirmation…`);
-          const complete=await api("complete",{hash:pendingHash});
-          el("result").textContent=`Identity created: ${complete.agentId}. You can close this window.`;
-          el("result").classList.add("visible");
-          action.textContent="Identity created";
-          status("Confirmed onchain and returned to your agent.");
-          return;
-        } else if (stage==="retry") {
-          stage="pending";
-          action.textContent="Waiting for confirmation";
-          const complete=await api("complete",{hash:pendingHash});
-          el("result").textContent=`Identity created: ${complete.agentId}. You can close this window.`;
-          el("result").classList.add("visible");
-          action.textContent="Identity created";
-          status("Confirmed onchain and returned to your agent.");
-          return;
+          await verifyNetwork();intent=await api("prepare",{owner});
+          el("owner").textContent=owner;el("agent").textContent=intent.predictedAgent;
+          stage="send";action.textContent="Create identity in wallet";
+          status("Review the owner and predicted agent, then approve in your wallet.");
+        }else if(stage==="send"){
+          const accounts=await window.ethereum.request({method:"eth_accounts"});
+          if(!accounts.some(address=>address.toLowerCase()===owner.toLowerCase()))throw new Error("Owner wallet changed. Reconnect before creating.");
+          await verifyNetwork();inWallet=true;cancel.disabled=true;
+          try{pendingHash=await window.ethereum.request({method:"eth_sendTransaction",params:[{from:owner,to:intent.transaction.to,data:intent.transaction.data,value:"0x0"}]});}
+          finally{inWallet=false;if(!pendingHash)cancel.disabled=false;}
+          stage="pending";action.textContent="Check submitted transaction";
+          status(`Transaction ${pendingHash} submitted. Waiting for confirmation…`);
+          await complete();
+        }else if(stage==="retry"){
+          stage="pending";await complete();
         }
-      } catch(error) {
-        if(stage==="pending") { stage="retry"; action.textContent="Retry confirmation"; }
-        status(error.message || "Wallet action failed",true);
-      }
-      finally { if(stage!=="pending") action.disabled=false; }
+      }catch(error){
+        if(stage==="pending")stage="retry";
+        status(error?.message||"Wallet action failed. Check its transaction status.","error");
+      }finally{if(stage!=="pending"&&stage!=="done")action.disabled=false;}
+    });
+    cancel.addEventListener("click",async()=>{
+      if(pendingHash||inWallet){status("A wallet transaction may be pending. Reject or check it before starting another creation.","error");return;}
+      cancel.disabled=true;
+      try{
+        await api("cancel",{});cancelled=true;action.disabled=true;
+        status("Session closed. No transaction was submitted. You can close this tab and retry.");
+      }catch(error){cancel.disabled=false;status(error?.message||"Could not cancel this session.","error");}
+    });
+    window.addEventListener("pagehide",()=>{
+      if(!pendingHash&&!inWallet&&!cancelled&&stage!=="done")
+        void fetch(`/flow/${token}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",keepalive:true});
     });
   </script>
 </body>

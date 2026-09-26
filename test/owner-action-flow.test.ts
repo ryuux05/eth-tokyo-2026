@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runOwnerActionFlow } from "../mcp/owner-action-flow.js";
+import type { Address } from "viem";
+import { runOwnerActionFlow, type OwnerActionIntent } from "../mcp/owner-action-flow.js";
 
 test("owner action page binds to loopback, rejects cross-origin completion, and confirms once", async () => {
   const owner = "0x1111111111111111111111111111111111111111";
@@ -21,7 +22,7 @@ test("owner action page binds to loopback, rejects cross-origin completion, and 
   assert.equal(url.hostname, "127.0.0.1");
   const page = await fetch(opened);
   assert.equal(page.status, 200);
-  assert.match(await page.text(), /Owner wallet action/);
+  assert.match(await page.text(), /Owner approval/);
   const context = await fetch(`${opened}/context`);
   assert.equal(context.status, 200);
   assert.equal((await context.json()).transaction.from, owner);
@@ -35,4 +36,41 @@ test("owner action page binds to loopback, rejects cross-origin completion, and 
   assert.equal(completed.status, 200);
   assert.deepEqual(await flow, { hash, state: { authenticationRevoked: true } });
   assert.equal(confirmations, 1);
+});
+
+test("owner approval can be cancelled before a transaction, but not after submission", async () => {
+  const owner = "0x1111111111111111111111111111111111111111" as Address;
+  const agent = "0x2222222222222222222222222222222222222222" as Address;
+  const hash = `0x${"3".repeat(64)}` as const;
+  const intent: OwnerActionIntent = { action: "revoke", agentId: agent, summary: "Revoke authentication", details: ["No new proofs"],
+    transaction: { chainId: 31337, from: owner, to: agent, value: "0", data: "0x1234" as const } };
+  let opened = "";
+  const cancelledFlow = runOwnerActionFlow({ intent, rpcUrl: "http://127.0.0.1:8545", timeoutMs: 5000,
+    openBrowser: async url => { opened = url; }, confirm: async () => ({ authenticationRevoked: true }) });
+  const cancelledResult = assert.rejects(cancelledFlow, { name: "FlowCancelledError" });
+  for (let i = 0; !opened && i < 50; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(opened);
+  const origin = new URL(opened).origin;
+  assert.equal((await fetch(`${opened}/cancel`, { method: "POST", headers: { Origin: "https://attacker.example" } })).status, 403);
+  assert.equal((await fetch(`${opened}/cancel`, { method: "POST", headers: { Origin: origin } })).status, 200);
+  await cancelledResult;
+
+  let releaseConfirmation: (() => void) | undefined;
+  const confirmation = new Promise<void>(resolve => { releaseConfirmation = resolve; });
+  opened = "";
+  const submittedFlow = runOwnerActionFlow({ intent, rpcUrl: "http://127.0.0.1:8545", timeoutMs: 5000,
+    openBrowser: async url => { opened = url; }, confirm: async () => { await confirmation; return { authenticationRevoked: true }; } });
+  for (let i = 0; !opened && i < 50; i++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(opened);
+  const submittedOrigin = new URL(opened).origin;
+  const completing = fetch(`${opened}/complete`, { method: "POST", headers: { Origin: submittedOrigin, "Content-Type": "application/json" }, body: JSON.stringify({ hash }) });
+  for (let i = 0; i < 50; i++) {
+    const context = await (await fetch(`${opened}/context`)).json();
+    if (context.submittedHash === hash) break;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.equal((await fetch(`${opened}/cancel`, { method: "POST", headers: { Origin: submittedOrigin } })).status, 409);
+  releaseConfirmation?.();
+  assert.equal((await completing).status, 200);
+  assert.deepEqual(await submittedFlow, { hash, state: { authenticationRevoked: true } });
 });

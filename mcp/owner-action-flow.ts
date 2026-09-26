@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import type { Address, Hex } from "viem";
 import { openDefaultBrowser } from "./open-browser.js";
+import { FlowCancelledError } from "./flow-cancel.js";
 
 export type OwnerActionIntent = {
   action: "policy" | "rotate" | "revoke";
@@ -31,6 +32,7 @@ export async function runOwnerActionFlow<T>(options: Options<T>): Promise<{ hash
   let base = "";
   let confirming = false;
   let confirmed = false;
+  let submittedHash: Hex | undefined;
   let settle: (value: { hash: Hex; state: T }) => void = () => {};
   let fail: (error: Error) => void = () => {};
   const outcome = new Promise<{ hash: Hex; state: T }>((resolve, reject) => { settle = resolve; fail = reject; });
@@ -52,7 +54,13 @@ export async function runOwnerActionFlow<T>(options: Options<T>): Promise<{ hash
       const rpc = new URL(options.rpcUrl);
       send(200, { ...options.intent, chainName: options.intent.transaction.chainId === 31337 ? "Agentic World local" : `Chain ${options.intent.transaction.chainId}`,
         deploymentBlockNumber: options.deploymentBlockNumber, deploymentBlockHash: options.deploymentBlockHash,
-        localRpcUrl: ["127.0.0.1", "localhost"].includes(rpc.hostname) ? options.rpcUrl : undefined });
+        localRpcUrl: ["127.0.0.1", "localhost"].includes(rpc.hostname) ? options.rpcUrl : undefined, submittedHash });
+      return;
+    }
+    if (request.url === `/flow/${token}/cancel` && request.method === "POST" && request.headers.origin === base) {
+      if (submittedHash || confirming || confirmed) { send(409, { error: "A transaction was submitted. Closing this page cannot cancel it; check its hash before retrying." }); return; }
+      response.once("close", () => fail(new FlowCancelledError()));
+      send(200, { cancelled: true });
       return;
     }
     if (request.url !== `/flow/${token}/complete` || request.method !== "POST" || request.headers.origin !== base ||
@@ -66,12 +74,14 @@ export async function runOwnerActionFlow<T>(options: Options<T>): Promise<{ hash
     try {
       const body = JSON.parse(data) as Record<string, unknown>;
       if (typeof body.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(body.hash)) { send(400, { error: "Invalid transaction hash" }); return; }
+      if (submittedHash && submittedHash.toLowerCase() !== body.hash.toLowerCase()) { send(409, { error: "A different transaction was already submitted" }); return; }
+      submittedHash = body.hash as Hex;
       confirming = true;
       try {
         const hash = body.hash as Hex;
         const state = await options.confirm(hash);
         confirmed = true;
-        response.once("finish", () => settle({ hash, state }));
+        response.once("close", () => settle({ hash, state }));
         send(200, { hash, state });
       } finally { confirming = false; }
     } catch (error) { send(400, { error: error instanceof Error ? error.message : "Confirmation failed" }); }
