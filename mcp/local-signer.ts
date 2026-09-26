@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import { keccak256, type Address, type Hex } from "viem";
-import { requestAuthenticationDigest, type RequestAuthenticationProof } from "../sdk/core.js";
+import { authenticationDigest, requestAuthenticationDigest, type AuthenticationChallenge, type AuthenticationProof, type RequestAuthenticationProof } from "../sdk/core.js";
 
 type SignerConfig = { binaryPath: string; label: string };
 type PublicKey = { scheme: "p256"; qx: Hex; qy: Hex };
 
-async function invoke(config: SignerConfig, command: "public-key" | "sign-request", input?: unknown): Promise<unknown> {
+async function invoke(config: SignerConfig, command: "public-key" | "sign-request" | "sign-challenge", input?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const child = spawn(config.binaryPath, [command, config.label], { stdio: ["pipe", "pipe", "pipe"], env: { PATH: "/usr/bin:/bin" } });
     const stdout: Buffer[] = [];
@@ -34,6 +34,21 @@ export async function signerPublicKey(config: SignerConfig): Promise<PublicKey> 
   if (value.scheme !== "p256" || typeof value.qx !== "string" || typeof value.qy !== "string" ||
       !/^0x[0-9a-fA-F]{64}$/.test(value.qx) || !/^0x[0-9a-fA-F]{64}$/.test(value.qy)) throw new Error("Invalid signer public key");
   return value as PublicKey;
+}
+
+export async function signLocalChallenge(config: SignerConfig, challenge: AuthenticationChallenge): Promise<AuthenticationProof> {
+  const value = await invoke(config, "sign-challenge", { kind: "AgentAuthentication", label: config.label, challenge }) as Record<string, unknown>;
+  const proof = value as AuthenticationProof;
+  const now = Math.floor(Date.now() / 1000);
+  if (proof.agentId?.toLowerCase() !== challenge.agentId.toLowerCase() ||
+      proof.audience !== challenge.audience || proof.chainId !== challenge.chainId ||
+      proof.nonce !== challenge.nonce || proof.issuedAt !== challenge.issuedAt ||
+      proof.expiresAt !== challenge.expiresAt || proof.issuedAt > now + 30 ||
+      proof.expiresAt <= now || !/^0x[0-9a-fA-F]{128}$/.test(proof.signature)) {
+    throw new Error("Local signer returned a mismatched challenge proof");
+  }
+  authenticationDigest(proof);
+  return proof;
 }
 
 export async function signLocalRequest(config: SignerConfig, identity: { agentId: Address; chainId: number },

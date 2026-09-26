@@ -3,7 +3,7 @@ import Foundation
 import Security
 
 // A deliberately small, standalone macOS signer. The model-facing MCP never receives a private key
-// or supplies a digest to this process. Only a canonical AgentRequest can reach Secure Enclave.
+// or supplies a digest to this process. Only protocol-defined authentication objects reach Secure Enclave.
 
 private enum SignerError: Error, CustomStringConvertible {
     case invalid(String)
@@ -107,6 +107,21 @@ private struct Request: Decodable {
     let bodyBase64: String
 }
 
+private struct Challenge: Codable {
+    let agentId: String
+    let audience: String
+    let chainId: UInt64
+    let nonce: String
+    let issuedAt: UInt64
+    let expiresAt: UInt64
+}
+
+private struct ChallengeRequest: Decodable {
+    let kind: String
+    let label: String
+    let challenge: Challenge
+}
+
 private func canonicalAudience(_ audience: String) throws {
     guard let components = URLComponents(string: audience), components.scheme == "https",
           let host = components.host, !host.isEmpty, components.user == nil, components.password == nil,
@@ -146,6 +161,32 @@ private func digest(_ request: Request, nonce: [UInt8], issuedAt: UInt64, expire
     let structHash = keccak256(requestType + paddedAgent + stringHash(request.audience) + nonce + word(issuedAt) + word(expiresAt)
         + stringHash(request.method) + stringHash(request.target) + bodyHash)
     return (keccak256([0x19, 0x01] + domain + structHash), bodyHash)
+}
+
+private func challengeDigest(_ request: ChallengeRequest, enforceTime: Bool = true) throws -> [UInt8] {
+    guard request.kind == "AgentAuthentication" else { throw SignerError.invalid("Unsupported signing request type") }
+    let challenge = request.challenge
+    guard challenge.chainId > 0 else { throw SignerError.invalid("Invalid chain ID") }
+    try canonicalAudience(challenge.audience)
+    let now = UInt64(Date().timeIntervalSince1970)
+    if enforceTime {
+        guard challenge.issuedAt <= now + 30, challenge.expiresAt > now,
+              challenge.expiresAt > challenge.issuedAt,
+              challenge.expiresAt - challenge.issuedAt <= 300 else {
+            throw SignerError.invalid("Challenge is expired or outside the accepted time window")
+        }
+    }
+    let agent = try bytes(hex: challenge.agentId, length: 20)
+    guard agent.contains(where: { $0 != 0 }) else { throw SignerError.invalid("Zero agent ID") }
+    let paddedAgent = [UInt8](repeating: 0, count: 12) + agent
+    let nonce = try bytes(hex: challenge.nonce, length: 32)
+    let domainType = stringHash("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
+    let authType = stringHash("AgentAuthentication(address agentId,bytes32 audienceHash,bytes32 nonce,uint64 issuedAt,uint64 expiresAt)")
+    let domain = keccak256(domainType + stringHash("Agentic World AgentAccount") + stringHash("1")
+        + word(challenge.chainId) + paddedAgent)
+    let structHash = keccak256(authType + paddedAgent + stringHash(challenge.audience) + nonce
+        + word(challenge.issuedAt) + word(challenge.expiresAt))
+    return keccak256([0x19, 0x01] + domain + structHash)
 }
 
 private let keychainService = "world.agentic.secure-enclave.signer"
@@ -218,7 +259,7 @@ private func output(_ value: [String: Any]) throws {
 
 private func run() throws {
     let arguments = CommandLine.arguments
-    guard arguments.count >= 2 else { throw SignerError.invalid("Expected provision, public-key, sign-request, or hash") }
+    guard arguments.count >= 2 else { throw SignerError.invalid("Expected provision, public-key, sign-challenge, sign-request, or hash") }
     if arguments[1] == "self-test" {
         guard arguments.count == 2 else { throw SignerError.invalid("self-test takes no arguments") }
         let request = Request(kind: "AgentRequest", label: "test", agentId: "0x1111111111111111111111111111111111111111",
@@ -229,7 +270,16 @@ private func run() throws {
               hex(computed.bodyHash) == "0xaf7220891333e24ced1fcd91362b60dd07458c77d6658c92e4306e08eb7a8317" else {
             throw SignerError.invalid("EIP-712 self-test failed")
         }
-        try output(["ok": true, "digest": hex(computed.hash)])
+        let challenge = Challenge(agentId: "0x1111111111111111111111111111111111111111",
+                                  audience: "https://service-a.example", chainId: 31337,
+                                  nonce: "0x" + String(repeating: "22", count: 32),
+                                  issuedAt: 1_700_000_000, expiresAt: 1_700_000_060)
+        let challengeHash = try challengeDigest(ChallengeRequest(kind: "AgentAuthentication", label: "test",
+                                                                 challenge: challenge), enforceTime: false)
+        guard hex(challengeHash) == "0xcc0a62bbb07f2774ff53282919ef91ec302742394a18a42d0fb7cfacb6341e65" else {
+            throw SignerError.invalid("AgentAuthentication self-test failed")
+        }
+        try output(["ok": true, "requestDigest": hex(computed.hash), "challengeDigest": hex(challengeHash)])
         return
     }
     if arguments[1] == "availability" {
@@ -262,6 +312,21 @@ private func run() throws {
     if arguments[1] == "public-key" {
         let publicBytes = publicKey(key)
         try output(["scheme": "p256", "qx": hex(Array(publicBytes[1..<33])), "qy": hex(Array(publicBytes[33..<65]))])
+        return
+    }
+    if arguments[1] == "sign-challenge" {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        guard input.count <= 4096 else { throw SignerError.invalid("Challenge too large") }
+        let request = try JSONDecoder().decode(ChallengeRequest.self, from: input)
+        guard request.label == label else { throw SignerError.invalid("Key label mismatch") }
+        let hash = try challengeDigest(request)
+        let raw = try key.signature(for: RawDigest(value: hash)).rawRepresentation
+        let signature = try lowSSignature(Array(raw))
+        let challenge = request.challenge
+        try output(["agentId": challenge.agentId, "audience": challenge.audience,
+                    "chainId": challenge.chainId, "nonce": challenge.nonce,
+                    "issuedAt": challenge.issuedAt, "expiresAt": challenge.expiresAt,
+                    "signature": hex(signature)])
         return
     }
     guard arguments[1] == "sign-request" else { throw SignerError.invalid("Unsupported command") }
