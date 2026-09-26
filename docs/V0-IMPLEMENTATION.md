@@ -2,7 +2,7 @@
 
 This page describes the code in this repository as of the ERC-4337 / ERC-7579 migration. It is a prototype, not an audited deployment. The older EIP-7702 `AgentAccount` and optional `MandateRegistry` remain only for historical tests and documentation.
 
-**Sepolia deployment update required:** the pinned deployment predates the final-review management-target guard and ERC-165 discovery. An owner rule allowing execution against the policy hook or validator could bypass the account's owner-only wrappers. Source now rejects these targets in execution and preview. The factory/implementation pins still point at the existing deployment; a new factory deployment and explicit pin update are required to apply this fix on Sepolia. Existing immutable clones cannot be upgraded in place.
+**Sepolia execution deployment verified:** the current factory includes the management-target guard and ERC-165 discovery, plus recipient-bound transfer policies and expiring P-256 execution signatures. See the [deployment record](../deployments/sepolia-execution-v1.json). Existing immutable clones cannot upgrade in place; MCP retains them for authentication and rejects their payment attempts. Physical hardware execution and live bundler submission still require testing.
 
 ## Account creation and trust anchor
 
@@ -20,7 +20,7 @@ Authentication establishes **which agent signed**. Manual mode resolves that age
 
 ## ERC-4337 execution and policy
 
-Execution feature branch: [direct USDC payments](EXECUTION.md) add recipient-bound version-2 transfer policies, structured expiring P-256 signatures, a Pimlico adapter and MCP execution tools. These changes are locally tested, not yet deployed to Sepolia. The raw-hash signer mentioned below is the legacy secp256k1 adapter; new P-256 execution signs the separate `AgentExecution` envelope.
+Execution feature branch: [direct USDC payments](EXECUTION.md) add recipient-bound version-2 transfer policies, structured expiring P-256 signatures, a Pimlico adapter and MCP execution tools. The contract stack is deployed on Sepolia; actual transfers are locally tested but not yet verified with live Pimlico. The raw-hash signer mentioned below is the legacy secp256k1 adapter; new P-256 execution signs the separate `AgentExecution` envelope.
 
 The agent SDK can sign an EntryPoint-provided `userOpHash`; `encodeAgentExecution` builds the account call data for ERC-7579 single-call execution, optionally with an exact-action owner approval. The account accepts `validateUserOp` only from its configured EntryPoint and delegates signature validation to the fixed `AgentValidator`. Its execution path invokes `AgentPolicyHook` before and after the call. `PolicyEngine` defaults to deny and evaluates ordered, owner-set target/selector/value rules. The token-purchase demo decodes only `purchaseCompute(address,uint256)` and checks actual token balance change after the call; its limits are per call, not cumulative.
 
@@ -32,7 +32,7 @@ The [owner portal](PORTAL.md) creates/verifies accounts, manages operating keys 
 
 ## What remains before a live demo
 
-- Redeploy the corrected account stack on Sepolia and update the trusted pins. A factory and EntryPoint are already deployed; they are not the same thing as verifying the corrected source onchain.
+- Create and fund a new agent from the verified execution factory; old immutable identities are not upgraded by changing the factory pin.
 - Test the browser-wallet and physical Secure Enclave/TPM flow on the target machines. Automated lifecycle tests use explicit software signer and wallet fixtures.
 - Validate the implemented structured signing and Pimlico payment path against the newly deployed stack. Local tests exercise actual P-256 transfers through the official EntryPoint and a bundler fixture, but live Pimlico and physical hardware execution still need verification.
 - Before deploying the example services publicly, replace in-memory stores with durable atomic stores and add real customer/payment systems, administration, TLS and rate limiting.

@@ -91,11 +91,11 @@ against that deployment. The local MCP supports macOS Secure Enclave and Windows
 TPM signers, multiple identities, aliases, an owner portal, and browser-approved
 creation, policy updates, rotation, and revocation.
 
-**Deployment update required:** the final review found that a policy could allow
-agent execution to call its own management modules directly. Source now blocks
-those targets and includes ERC-165 discovery, but the pinned Sepolia deployment
-predates these changes. Deploy a new factory and update the pins before treating
-onchain execution as ready. Existing immutable accounts cannot be upgraded.
+**Execution deployment verified:** the current Sepolia factory includes the
+management-target guard, ERC-165 discovery, transfer policies and expiring
+P-256 execution signatures. Existing immutable accounts cannot be upgraded;
+legacy identities remain authentication-only in the MCP. Real payments require
+a new funded agent and a hands-on Pimlico/hardware test.
 
 Local tests exercise P-256 authentication, both services, owner approval flows,
 rotation across MCP restarts, and policy changes through the official EntryPoint
@@ -103,7 +103,7 @@ v0.8. Hardware signing and real wallet-extension interactions still need a
 hands-on run. This feature branch adds direct USDC payments through a Pimlico
 adapter, structured native signing, and exact-action owner approval. Local
 end-to-end tests use a bundler fixture; live Pimlico submission is not yet verified.
-The old Sepolia pins remain unchanged and payments fail closed for those accounts.
+The MCP retains the legacy identity pins; payments fail closed for those accounts.
 Only single-call, revert-on-error ERC-7579 execution is supported, and execution
 defaults to deny. See the [execution rollout and tools](docs/EXECUTION.md) and the
 [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
@@ -115,19 +115,20 @@ trusted addresses in [`sdk/deployments.ts`](sdk/deployments.ts).
 
 | Component | Address |
 | --- | --- |
-| AgentAccountFactory | [0x63f158897834bbc1579e82dfc29a7aacc8b91f93](https://sepolia.etherscan.io/address/0x63f158897834bbc1579e82dfc29a7aacc8b91f93) |
-| AgentAccount4337 implementation | [0xd08B955ca8727d86e708ae5684D5fa7f32635e66](https://sepolia.etherscan.io/address/0xd08B955ca8727d86e708ae5684D5fa7f32635e66) |
-| AgentValidator | [0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55](https://sepolia.etherscan.io/address/0x8626C6788393632e7Cd07992B6E97E5B9c2eaF55) |
-| AgentPolicyHook | [0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968](https://sepolia.etherscan.io/address/0x64C2685aDD03EBcaDf4b769B39f7979A1b3a5968) |
+| AgentAccountFactory | [0xf78336a75b7b517fdb784b1a34eae9527628b065](https://sepolia.etherscan.io/address/0xf78336a75b7b517fdb784b1a34eae9527628b065) |
+| AgentAccount4337 implementation | [0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd](https://sepolia.etherscan.io/address/0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd) |
+| AgentValidator | [0x6A9c4FA6B8a42B1c82B6d701cC76232633D243a0](https://sepolia.etherscan.io/address/0x6A9c4FA6B8a42B1c82B6d701cC76232633D243a0) |
+| AgentPolicyHook | [0x72db3464519404302a95D65130b0a2fbE53E23d6](https://sepolia.etherscan.io/address/0x72db3464519404302a95D65130b0a2fbE53E23d6) |
 | EntryPoint v0.8 (existing infrastructure) | [0x4337084d9e255ff0702461cf8895ce9e3b5ff108](https://sepolia.etherscan.io/address/0x4337084d9e255ff0702461cf8895ce9e3b5ff108) |
 
 Factory deployment transaction:
-[0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c](https://sepolia.etherscan.io/tx/0xb9fe814993ba3cda718853d5648bda2dc38c5e687b2e8646a44bd7f92286c15c).
+[0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8](https://sepolia.etherscan.io/tx/0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8), block **11788771**.
 The factory deployed the implementation, validator, and policy hook; each agent
 gets its own account address when its owner creates it.
 
-**These addresses predate the management-target guard and ERC-165 fixes described
-above.** Listing them does not mean the corrected source has been redeployed.
+The [deployment record](deployments/sepolia-execution-v1.json) records the compiled
+initcode and runtime code hashes. Legacy addresses remain in
+`LEGACY_SEPOLIA_DEPLOYMENT`; their immutable accounts were not upgraded.
 
 ### Run locally
 

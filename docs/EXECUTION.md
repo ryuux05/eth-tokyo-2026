@@ -1,6 +1,6 @@
 # Policy-controlled USDC execution
 
-Status: implemented and tested on a local EVM through the official EntryPoint v0.8. **Not deployed or validated through live Pimlico yet.** Existing Sepolia identities and Service C remain authentication/policy-preview demos. No testnet funds were moved by this implementation work.
+Status: the updated stack is deployed and independently verified on Sepolia in transaction `0x6041588b9ef0b0d83de192b19d6b11ff5a0e35231679439f43fa4fdfc6e42fa8`, block 11788771. See [the deployment record](../deployments/sepolia-execution-v1.json). Actual transfers pass local EntryPoint/MCP tests; **live Pimlico submission and physical hardware execution remain untested**. Existing identities and Service C remain authentication/policy-preview demos. No USDC payment was submitted during deployment.
 
 ## What changes
 
@@ -12,8 +12,8 @@ Status: implemented and tested on a local EVM through the official EntryPoint v0
 
 ## Sepolia rollout gate
 
-1. Deploy the updated factory stack using `npm run deploy:sepolia:browser`; the human approves the transaction. Independently verify the resulting addresses/code and update the release's trusted pins. Do not replace addresses with placeholders or accept agent-supplied implementation pins.
-2. Publish the verified execution deployment and corresponding SDK/MCP/installer version. Services accepting new accounts need the new trusted implementation too. The current single-pin SDK does not yet accept both account generations simultaneously; coordinate migration rather than silently dropping old identities.
+1. Completed: wallet-approved factory deployment, compiled transaction-input comparison, module-link verification, runtime hashes and `executionVersion() = 1`. Current creation/payment pins now point to that stack.
+2. Publish the SDK/MCP/installer version and update services accepting new accounts. A service still enforces one chosen implementation: current by default, or an explicit `LEGACY_SEPOLIA_DEPLOYMENT.implementation` for old authentication-only identities. The local MCP/portal recognize both exact clone generations and preserve old IDs; creation uses the current factory. No unrecognized implementation or EIP-7702 delegation is accepted by these Sepolia checks.
 3. Create a **new** agent from that factory. Existing ERC-1167 clones cannot upgrade in place. Keep old IDs and their status/history; transfer policies cannot be installed on the old deployed implementation.
 4. Configure Pimlico's Sepolia bundler URL privately via `AGENTIC_WORLD_BUNDLER_RPC_URL` in the MCP environment, or `execution.bundlerRpcUrl` in its existing private config. Restart MCP. Do not commit or print API keys. A normal Ethereum RPC is still used for independent state/receipt reads.
 5. Fund only the intended new agent with Sepolia ETH for gas and Sepolia USDC, then set its transfer policy with owner-wallet approval. No paymaster/sponsorship is requested.
@@ -67,4 +67,4 @@ The local `<config>.payments.json` contains private payment history and signed o
 `test/PaymentApproval.ts`: wrong origin/signer/approval rejection, cancellation and persistent exclusive journal.
 `test/ExecutionSignerVectors.ts`: Swift/Go hashes against viem and unsafe-input rejection, without accessing private keys.
 
-These tests are not a contract audit, a physical TPM/Secure Enclave execution test, or evidence of live Pimlico compatibility. Do not present the feature as deployed until the rollout gate above is complete.
+These tests are not a contract audit, a physical TPM/Secure Enclave execution test, or evidence of live Pimlico compatibility. Contract deployment is complete; do not claim successful live payments until the remaining rollout checks pass.
