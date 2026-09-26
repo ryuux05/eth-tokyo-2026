@@ -16,10 +16,10 @@ Service B demonstrates owner-derived association: register your owner wallet at 
 
 ## See the access decision change
 
-1. In Service A, select **Issue challenge**. It returns the service-generated `agentId`, HTTPS `audience`, `chainId`, random `nonce`, `issuedAt`, and `expiresAt`. Copy the whole JSON object.
+1. In Service A, select **Issue challenge**. The page requests `/private/report` with `Agent-ID` and reads the challenge from its `401` response. It returns the service-generated `agentId`, HTTPS `audience`, `chainId`, random `nonce`, `issuedAt`, and `expiresAt`. Copy the whole JSON object.
 2. In your Codex/Claude MCP client, call `agentic_session_proof({ challenge: <that JSON object> })`. Use the Secure Enclave-backed identity you created. The MCP signs locally; it does **not** call Service A.
-3. Paste only the returned proof JSON into **Signed proof JSON** and select **Create AgentSession**. Service A calls the SDK, which verifies ERC-1271 against the pinned account, consumes the challenge, checks manual enrollment, and creates a service-local session. The session token stays in the page's memory; it is not written to browser storage. A challenge cannot be reused.
-4. Select **Try report**. The default response is `403` because the report gate is closed. Select **Grant access** beside Private report, then **Try report** again. The same session now receives `200`. Revoke access and retry: the same session receives `403` again. The compute gate is independent.
+3. Paste only the returned proof JSON into **Signed proof JSON** and select **Create AgentSession**. The page retries `/private/report` with proof headers. Middleware verifies ERC-1271, consumes the challenge, checks enrollment and report permission, and only then returns the report plus a service-local session. The session token stays in the page's memory; it is not written to browser storage. A challenge cannot be reused.
+4. With the default closed report gate, step 3 returns `403` without a session. Select **Grant access** beside Private report, obtain a new challenge, sign it, and submit the new proof. You now get the report and a session. Select **Try report**, revoke access and retry with that same session: it receives `403`. Grant again and it receives `200`. The compute gate is independent.
 
 Challenges and sessions last up to five minutes in this hands-on demo. If either expires, request a new challenge and proof. A `401` means the service did not accept the session; a `403` means the agent authenticated but this service denied the specific resource. Service-owned permissions are checked on **every** private request, not copied into the session.
 
@@ -29,10 +29,13 @@ The operator page is only a testing UI. An agent can call the same endpoints dir
 
 | Endpoint | Input | Output |
 | --- | --- | --- |
-| `POST /agent/challenge` | JSON `{ "agentId": "0x…" }` | SDK challenge JSON |
-| `POST /agent/session` | Signed `AgentAuthentication` proof JSON | `Agent-Session` response header |
+| `GET /private/report` | No authentication | `401` AgenticWorld discovery |
+| `GET /private/report` | `Agent-ID: 0x…` | `401` with `authentication.challenge` |
+| `GET /private/report` | Proof headers returned by MCP | Resource + `Agent-Session` if permitted; otherwise denial |
 | `GET /private/report` | `Agent-Session: <token>` | `200`, `401`, or `403` |
 | `GET /private/compute` | `Agent-Session: <token>` | `200`, `401`, or `403` |
+
+No `/agent/challenge` or `/agent/session` route is installed; SDK middleware handles everything on each resource route. See [SDK.md](SDK.md) for the header format.
 
 The operator-only `/admin/*` routes require the random `X-Operator-Token` printed at startup and reject cross-origin browser requests. Never give this key to the agent. The signed audience is the canonical `https://service-a.example` origin; loopback HTTP transport is a **local-demo exception**, not a production deployment pattern.
 

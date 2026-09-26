@@ -65,25 +65,27 @@ sequenceDiagram
     participant S as Service
     participant E as Ethereum / 0xAGENT
     participant D as Service DB
-    A->>S: Request challenge for 0xAGENT
+    A->>S: GET resource (no identity yet)
+    S-->>A: 401 AgenticWorld discovery offer
+    A->>S: Same resource + Agent-ID 0xAGENT
     S->>D: Store random nonce, agent, audience, chain, expiry
-    S-->>A: AgentAuthentication challenge
+    S-->>A: 401 with AgentAuthentication challenge
     A->>K: agentic_session_proof(challenge)
     K->>K: Check current onchain key and sign structured challenge
-    K-->>A: 0xAGENT + challenge + signature
-    A->>S: Submit proof to session endpoint
+    K-->>A: Proof fields + HTTP headers
+    A->>S: Retry same resource with proof headers
     S->>E: Check pinned account code and verify ERC-1271 at one block
     E-->>S: 0x1626ba7e
     S->>D: Atomically consume issued challenge
     S->>D: Resolve manual enrollment or verified owner()
-    S->>S: Apply service-defined session admission
-    S-->>A: Agent-Session
+    S->>S: Check session admission and resource permission
+    S-->>A: Resource + Agent-Session (if allowed)
     A->>S: Resource request + Agent-Session
     S->>S: Check service-local route permission
     S-->>A: Allowed resource, or denial
 ```
 
-The service SDK exposes `createChallenge(agentId)` and `authenticate(proof)`. The application exposes challenge/session endpoints (the local demo uses `POST /agent/challenge` and `POST /agent/session`). The challenge store must atomically consume each issued nonce across workers and retain it through expiry. The signed proof includes the whole challenge and signature; the service compares it with stored data before ERC-1271 validation. The service session token is random, short-lived, and stored only as a hash. The exact HTTP endpoint names are service choices, not protocol fields.
+Services mount `agentic.middleware({ authorize })` on protected resource routes; no separate challenge/session endpoints are required. The middleware internally calls `createChallenge(agentId)` and `authenticate(proof)`. A request with no identity gets discovery only; `Agent-ID` gets an agent-bound challenge in the 401 body at `authentication.challenge`. The signed retry uses `sessionProofHeaders(proof)` (also returned as `headers` by MCP), and receives the resource plus `Agent-Session` and `Agent-Session-Expires-At`. See [SDK.md](SDK.md) for the exact wire headers. The challenge store atomically consumes each nonce across workers. The proof carries every signed field and is compared with stored data before ERC-1271 verification. Session tokens are random, short-lived and stored only as hashes. Failed resource permission checks return 403 before session issuance. Application requests are not executed during discovery or challenge issuance.
 
 The SDK requires a canonical HTTPS audience; a deployment must enforce HTTPS transport. MCP validates the challenge and returns a proof but never sends the application request. See [MCP.md](MCP.md) and [LOCAL-SIGNER.md](LOCAL-SIGNER.md).
 
