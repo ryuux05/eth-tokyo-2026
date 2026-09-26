@@ -1,149 +1,99 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#e9f0f3" />
-    <title>Register an agent · Agentic World</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@400;500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./styles.css" />
-    <script type="module" src="./main.js"></script>
-  </head>
-  <body>
-    <div class="site-shell">
-      <header class="topbar">
-        <a class="brand" href="#top" aria-label="Agentic World home">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span>AGENTIC<span class="brand-light"> WORLD</span></span>
-        </a>
-        <div class="topbar-actions">
-          <span id="networkBadge" class="network-badge">Network not connected</span>
-          <button id="connectButton" class="button button-dark" type="button">Connect owner wallet</button>
-        </div>
-      </header>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#102a2c" />
+  <title>Agent setup · Agentic World</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="module" src="./main.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#top" aria-label="Agentic World, return to top"><span class="brand-glyph" aria-hidden="true">A<span>·</span>W</span><span>Agentic World</span></a>
+    <div class="topbar-actions"><span id="networkBadge" class="network-badge">Not connected</span><button id="connectButton" class="button button-on-dark" type="button">Connect owner wallet</button></div>
+  </header>
 
-      <div class="workspace" id="top">
-        <main class="main-column">
-          <div class="page-intro">
-            <p class="eyebrow">Owner workspace / 01</p>
-            <h1>Register an agent.<br /><span>Define its limits.</span></h1>
-            <p class="intro-copy">Your agent keeps its own identity. You decide which onchain actions it may take, then register your mandate without sharing your login or signing key.</p>
-          </div>
-
-          <div id="configNotice" class="notice notice-warning" role="status" hidden></div>
-          <div id="statusMessage" class="notice" role="status" aria-live="polite" hidden></div>
-
-          <section class="step" aria-labelledby="identityTitle">
-            <div class="step-index" aria-hidden="true">01</div>
-            <div class="step-body">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Identify</p>
-                  <h2 id="identityTitle">Confirm the agent account</h2>
-                </div>
-                <span id="identityState" class="state-tag">Waiting</span>
-              </div>
-              <p class="section-copy">Enter an already delegated and initialized agent address. We’ll check its implementation and owner on the connected chain.</p>
-              <label class="field-label" for="agentAddress">Agent address</label>
-              <div class="input-action">
-                <input id="agentAddress" type="text" autocomplete="off" spellcheck="false" placeholder="0x…" aria-describedby="agentHelp" />
-                <button id="verifyButton" class="button button-outline" type="button">Verify agent</button>
-              </div>
-              <p id="agentHelp" class="field-help">This page does not create or store the agent root key. Bootstrap the EIP-7702 account first.</p>
-              <div id="identityDetails" class="verification-details" hidden>
-                <div><span>Delegation</span><strong id="delegationValue">—</strong></div>
-                <div><span>Current owner</span><strong id="ownerValue">—</strong></div>
-                <div><span>Mandate</span><strong id="mandateValue">—</strong></div>
-              </div>
-            </div>
-          </section>
-
-          <section class="step" aria-labelledby="policyTitle">
-            <div class="step-index" aria-hidden="true">02</div>
-            <div class="step-body">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Autonomy</p>
-                  <h2 id="policyTitle">Build the execution policy</h2>
-                </div>
-                <span id="policyState" class="state-tag">Default deny</span>
-              </div>
-              <p class="section-copy">Rules run from top to bottom. The first match wins. Anything not matched is denied—even with an owner signature.</p>
-              <div class="rule-toolbar">
-                <span class="toolbar-label">Ordered rules</span>
-                <div class="toolbar-actions">
-                  <button id="addNativeButton" class="text-button" type="button">+ Native call</button>
-                  <button id="addTokenButton" class="text-button" type="button">+ Token purchase</button>
-                </div>
-              </div>
-              <div id="rulesList" class="rules-list" aria-live="polite"></div>
-              <div class="default-rule"><span class="default-icon" aria-hidden="true">×</span><span>Default</span><strong>DENY</strong><small>No matching rule can execute</small></div>
-              <div class="policy-footer">
-                <div class="hash-block"><span class="eyebrow">Draft policy hash</span><code id="draftHash">Add a rule to begin</code></div>
-                <button id="savePolicyButton" class="button button-primary" type="button" disabled>Save policy onchain</button>
-              </div>
-              <div class="preview-block">
-                <div>
-                  <h3>Preview the current onchain policy</h3>
-                  <p>A read-only chain call; no transaction or gas fee. Execution always checks the policy again.</p>
-                </div>
-                <div class="preview-actions">
-                  <button id="previewSmallButton" class="button button-quiet" type="button" disabled>Preview 2 tokens</button>
-                  <button id="previewLargeButton" class="button button-quiet" type="button" disabled>Preview 20 tokens</button>
-                </div>
-                <output id="previewResult" class="preview-result" aria-live="polite">Save a token rule to preview it.</output>
-              </div>
-            </div>
-          </section>
-
-          <section class="step" aria-labelledby="mandateTitle">
-            <div class="step-index" aria-hidden="true">03</div>
-            <div class="step-body">
-              <div class="section-heading">
-                <div>
-                  <p class="eyebrow">Mandate</p>
-                  <h2 id="mandateTitle">Register your relationship</h2>
-                </div>
-                <span id="mandateState" class="state-tag">Not registered</span>
-              </div>
-              <p class="section-copy">Registration records that this agent acts for your wallet. It does not grant the agent every service permission.</p>
-              <div class="permit-box">
-                <div class="permit-header"><span>Agent-root authorization</span><button id="copyPermitButton" class="text-button" type="button" disabled>Copy typed data</button></div>
-                <p>Sign this typed data with the agent’s root key outside this page. Never paste the root private key here. Then paste only its signature below.</p>
-                <pre id="permitPayload" tabindex="0">Verify an agent to prepare the registration permit.</pre>
-              </div>
-              <label class="field-label" for="rootSignature">Agent-root signature</label>
-              <input id="rootSignature" type="text" autocomplete="off" spellcheck="false" placeholder="0x… 65-byte signature" />
-              <p class="field-help">Your connected owner wallet sends the registration transaction. The root signature only authorizes this specific agent–owner pairing.</p>
-              <button id="registerButton" class="button button-dark button-wide" type="button" disabled>Register mandate onchain <span aria-hidden="true">↗</span></button>
-            </div>
-          </section>
-        </main>
-
-        <aside class="summary-column" aria-label="Authority summary">
-          <div class="summary-sticky">
-            <div class="summary-topline"><span>Authority sheet</span><span id="summaryChain">—</span></div>
-            <div class="authority-route" aria-hidden="true">
-              <div class="route-node route-owner"><span>H</span><i></i></div>
-              <div class="route-line"></div>
-              <div class="route-node route-agent"><span>A</span><i></i></div>
-              <div class="route-line"></div>
-              <div class="route-node route-service"><span>S</span></div>
-            </div>
-            <div class="summary-fact"><small>01 / Owner</small><strong id="summaryOwner">Connect wallet</strong><p>Controls policy and mandate</p></div>
-            <div class="summary-fact"><small>02 / Agent identity</small><strong id="summaryAgent">Not verified</strong><p>Signs as itself, not as you</p></div>
-            <div class="summary-fact"><small>03 / Service access</small><strong>Service decides</strong><p>Mandate is not a blanket grant</p></div>
-            <div class="summary-policy">
-              <div class="summary-policy-head"><span>Execution boundary</span><span id="summaryRuleCount">0 rules</span></div>
-              <div id="summaryDecisions" class="summary-decisions"><p>No rules yet. The agent cannot execute through its operating key.</p></div>
-              <div class="deny-stamp">DEFAULT DENY</div>
-            </div>
-            <p class="summary-footnote">The root EOA retains ultimate EIP-7702 authority. Keep that key outside the agent runtime.</p>
-          </div>
-        </aside>
+  <div class="page" id="top">
+    <main>
+      <div class="intro">
+        <p class="context-line">Identity workbench <span>·</span> v0 / ERC-4337 + ERC-7579</p>
+        <h1>Give your agent an identity.<br /><span>Keep its authority bounded.</span></h1>
+        <p>Deploy a smart account you own, assign a separate operating signer, and set the onchain actions it may take. Services still decide which of their resources the agent can use.</p>
       </div>
-    </div>
-  </body>
+      <div id="configNotice" class="notice notice-warning" role="status" hidden></div>
+      <div id="statusMessage" class="notice" role="status" aria-live="polite" hidden></div>
+
+      <section class="flow-section" aria-labelledby="identityTitle">
+        <div class="section-head"><span class="section-number">01</span><div><h2 id="identityTitle">Create or load an agent</h2><p>The owner wallet sends the factory transaction. No agent-root EOA key or separate registry is needed.</p></div><span id="identityState" class="state-pill">Waiting</span></div>
+        <div class="section-content">
+          <div class="create-grid">
+            <div class="create-form">
+              <h3>Create a new account</h3>
+              <label for="authenticatorInput">Operating signer address</label>
+              <input id="authenticatorInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x… KMS-backed key" aria-describedby="authHelp" />
+              <p class="field-help" id="authHelp">The agent runtime uses this key to sign requests and UserOperations. It must differ from your owner wallet.</p>
+              <label for="saltInput">Deployment salt</label>
+              <div class="input-row"><input id="saltInput" type="text" spellcheck="false" autocomplete="off" aria-describedby="saltHelp" /><button id="newSaltButton" class="button button-secondary" type="button">New salt</button></div>
+              <p class="field-help" id="saltHelp">A 32-byte value makes the address deterministic. Save it if you need to predict the address again.</p>
+              <div class="predicted"><span>Predicted agent ID</span><code id="predictedAgent">Connect a wallet to preview</code></div>
+              <button id="createButton" class="button button-primary" type="button" disabled>Create agent account <span aria-hidden="true">↗</span></button>
+            </div>
+            <div class="load-form">
+              <h3>Already created one?</h3>
+              <p>Load an account created by the pinned factory on this chain. The current wallet must be its owner.</p>
+              <label for="agentAddress">Agent address</label>
+              <input id="agentAddress" type="text" spellcheck="false" autocomplete="off" placeholder="0x…" />
+              <button id="verifyButton" class="button button-secondary" type="button" disabled>Verify account</button>
+            </div>
+          </div>
+          <div id="identityDetails" class="identity-details" hidden>
+            <div><span>Agent ID</span><code id="activeAgent">—</code></div>
+            <div><span>Immutable owner</span><code id="ownerValue">—</code></div>
+            <div><span>Validator</span><code id="validatorValue">—</code></div>
+            <div><span>Policy hook</span><code id="policyHookValue">—</code></div>
+            <div><span>EntryPoint</span><code id="entryPointValue">—</code></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="flow-section" aria-labelledby="signerTitle">
+        <div class="section-head"><span class="section-number">02</span><div><h2 id="signerTitle">Operating signer</h2><p>Rotate or revoke the key without changing the agent ID or its owner.</p></div><span id="signerState" class="state-pill">Load an agent</span></div>
+        <div class="section-content">
+          <div class="signer-row"><span>Current signer</span><code id="signerValue">—</code></div>
+          <label for="rotationInput">Replacement signer address</label>
+          <div class="input-row signer-controls"><input id="rotationInput" type="text" spellcheck="false" autocomplete="off" placeholder="0x…" /><button id="rotateButton" class="button button-secondary" type="button" disabled>Rotate</button><button id="restoreButton" class="button button-secondary" type="button" disabled>Restore</button></div>
+          <button id="revokeButton" class="text-action text-danger" type="button" disabled>Revoke current signer</button>
+          <p class="field-help">Revocation stops new signatures from validating onchain. Service sessions already issued may last until their short expiry.</p>
+        </div>
+      </section>
+
+      <section class="flow-section" aria-labelledby="policyTitle">
+        <div class="section-head"><span class="section-number">03</span><div><h2 id="policyTitle">Execution policy</h2><p>Rules are checked by the ERC-7579 policy hook before the agent account executes a call.</p></div><span id="policyState" class="state-pill">Default deny</span></div>
+        <div class="section-content">
+          <div class="rules-toolbar"><div><strong>Ordered rules</strong><small>First match wins. Everything else is denied.</small></div><div class="toolbar-actions"><button id="addNativeButton" class="button button-secondary" type="button">+ Native call</button><button id="addTokenButton" class="button button-secondary" type="button">+ Token purchase</button></div></div>
+          <div id="rulesList" class="rules-list" aria-live="polite"></div>
+          <div class="default-deny"><span>Fallback</span><strong>DENY</strong><small>No matching rule can execute.</small></div>
+          <div class="save-row"><div><span>Draft policy hash</span><code id="draftHash">—</code></div><button id="savePolicyButton" class="button button-primary" type="button" disabled>Save policy onchain <span aria-hidden="true">↗</span></button></div>
+          <div class="preview-row"><div><h3>Preview saved policy</h3><p>Read-only chain call. The actual UserOperation is checked again at execution.</p></div><div class="preview-actions"><button id="previewSmallButton" class="button button-secondary" type="button" disabled>2 tokens</button><button id="previewLargeButton" class="button button-secondary" type="button" disabled>20 tokens</button></div><output id="previewResult" aria-live="polite">Save a token-purchase rule to preview it.</output></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="aside" aria-label="Agent state and trust boundaries">
+      <div class="aside-inner">
+        <p class="aside-title">Live account state <span id="summaryChain">—</span></p>
+        <div class="route" aria-hidden="true"><span>HUMAN</span><i></i><span>AGENT</span><i></i><span>SERVICE</span></div>
+        <div class="fact"><span>Owner wallet</span><strong id="summaryOwner">Not connected</strong><small>Controls signer and policy.</small></div>
+        <div class="fact"><span>Agent identity</span><strong id="summaryAgent">Not loaded</strong><small>Signs as itself, never as the human.</small></div>
+        <div class="fact"><span>Operating key</span><strong id="summarySigner">Not loaded</strong><small>KMS key; no owner permissions.</small></div>
+        <div class="fact"><span>Execution policy</span><strong id="summaryPolicy">Default deny</strong><small>Checked before onchain execution.</small></div>
+        <div class="boundary"><strong>Service access is separate.</strong><p>A service verifies the agent's signature, then applies its own enrollment, owner association, subscriptions, and route permissions. This page cannot grant API access.</p></div>
+      </div>
+    </aside>
+  </div>
+</body>
 </html>
