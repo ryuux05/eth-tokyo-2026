@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import hre from "hardhat";
-import { concatHex, encodeFunctionData, keccak256, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, createPublicClient, custom, encodeFunctionData, keccak256, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createAgentSdk, Decision, encodeAgentExecution, encodePolicy } from "../sdk/agent.js";
 import { AgenticWorld, type Session } from "../sdk/service.js";
@@ -63,8 +63,9 @@ describe("Agentic World through the official ERC-4337 EntryPoint", () => {
 
     const usedNonces = new Set<string>();
     const sessions = new Map<Hex, Session>();
+    const cachedClient = createPublicClient({ transport: custom({ request: publicClient.request }), cacheTime: 60_000 });
     const service = new AgenticWorld<{ id: string }>({
-      client: publicClient,
+      client: cachedClient,
       chainId: await publicClient.getChainId(),
       audience: "https://service-a.example",
       pinnedImplementation: await factory.read.implementation() as Address,
@@ -86,5 +87,11 @@ describe("Agentic World through the official ERC-4337 EntryPoint", () => {
     assert.equal(authenticated.session.agentId.toLowerCase(), agent.toLowerCase());
     assert.equal((await service.readSession(authenticated.token))?.user?.id, "demo-user");
     await assert.rejects(service.authenticateRequest(proof, request));
+    const staleBlock = await cachedClient.getBlockNumber();
+    const revoked = await owner.writeContract({ address: agent, abi: account.abi, functionName: "revokeAuthenticator" });
+    await publicClient.waitForTransactionReceipt({ hash: revoked });
+    assert.equal(await cachedClient.getBlockNumber(), staleBlock, "the test client must still cache its old chain head");
+    const postRevocationProof = await sdk.signRequest(request, "https://service-a.example");
+    await assert.rejects(service.authenticateRequest(postRevocationProof, request), /Invalid agent request signature/);
   });
 });

@@ -32,3 +32,4 @@ broadcast/
 .DS_Store
 .idea/
 .vscode/
+.agentic-world.json

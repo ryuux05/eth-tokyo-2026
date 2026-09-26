@@ -1,0 +1,11 @@
+{
+  "rpcUrl": "https://YOUR_RPC_ENDPOINT",
+  "chainId": 11155111,
+  "agentId": "0x0000000000000000000000000000000000000001",
+  "implementation": "0x0000000000000000000000000000000000000002",
+  "signer": {
+    "kind": "secure-enclave",
+    "binaryPath": "/absolute/path/to/eth-tokyo-2026/dist/signer/agentic-signer",
+    "label": "my-agent"
+  }
+}
