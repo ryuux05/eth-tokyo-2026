@@ -4,7 +4,7 @@ This page describes the code in this repository as of the ERC-4337 / ERC-7579 mi
 
 ## Account creation and trust anchor
 
-`AgentAccountFactory(entryPoint)` deploys one `AgentValidator`, one `AgentPolicyHook`, and one `AgentAccount4337` implementation. A human calls `createAgent(authenticator, salt)` directly from their wallet. The factory deploys a deterministic ERC-1167 clone and atomically initializes `owner = msg.sender`, the operating authenticator, and the two fixed modules. `predictAgent(owner, salt)` is available before deployment. There is no agent-root EOA or EIP-7702 delegation in this path.
+`AgentAccountFactory(entryPoint)` deploys one `AgentValidator`, one `AgentPolicyHook`, and one `AgentAccount4337` implementation. A human calls `createAgentP256(qx, qy, salt)` for a local Secure Enclave key or `createAgent(authenticator, salt)` for the earlier secp256k1 demo path. The factory deploys a deterministic ERC-1167 clone and atomically initializes `owner = msg.sender`, the operating authenticator, and the two fixed modules. `predictAgent(owner, salt)` is available before deployment. There is no agent-root EOA or EIP-7702 delegation in this path.
 
 The owner cannot be changed by the agent. Only the owner can rotate, revoke, or restore the operating key and set a policy. The account rejects validator/hook installation or removal, executor execution, delegatecall, batch calls, and non-reverting execution modes. This limits the policy-bypass surface; it also means v0 is deliberately a narrow ERC-7579 account rather than a general-purpose modular wallet.
 
@@ -12,7 +12,7 @@ An independent service pins the expected implementation address in trusted confi
 
 ## Agent authentication and service authorization
 
-The KMS-held operating key signs the existing request-bound EIP-712 digest: agent address, service audience, chain, nonce, issue/expiry times, HTTP method, target, and body hash. `AgentValidator` checks the signature behind the account's ERC-1271 interface. Services independently validate the request, consume the nonce atomically, and may issue a short-lived local session. A challenge-response proof remains supported. The service-facing `new AgenticWorld({ association: { mode: "manual" | "owner", ... } })` API is preserved.
+The local P-256 helper signs the existing request-bound EIP-712 digest: agent address, service audience, chain, nonce, issue/expiry times, HTTP method, target, and body hash. The MCP supplies only structured request fields and the exact body; the helper creates nonce/times/hash and signs with a non-exportable Secure Enclave key. `AgentValidator` checks the signature behind the account's ERC-1271 interface. Services independently validate the request, consume the nonce atomically, and may issue a short-lived local session. A challenge-response proof remains supported by the SDK. The service-facing `new AgenticWorld({ association: { mode: "manual" | "owner", ... } })` API is preserved.
 
 Authentication establishes **which agent signed**. Manual mode resolves that agent through the service's local enrollment record; owner mode reads the pinned account's immutable owner and resolves that wallet to a local user. Neither mode inherits all permissions. The service checks its own route, subscription, payment, resource, and agent-eligibility rules. The onchain execution policy does not grant access to a service, and Agentic World cannot enforce the agent model's offchain intent.
 
@@ -29,8 +29,8 @@ The [owner portal](PORTAL.md) is a three-step Protocol Workbench: create or veri
 ## What remains before a live demo
 
 - Deploy and pin an ERC-4337 EntryPoint and factory on the selected chain; integrate a bundler and test simulation, gas estimation, and execution on that network. Local tests cover the mock caller boundary plus a signed, funded UserOperation through the official EntryPoint v0.8 contract, including nonce advancement and replay rejection, but **not** bundler interoperability.
-- Connect a real KMS signer and build two independent HTTP services with durable, atomic nonce/session stores and service-owned authorization. The current tests use in-memory stores.
-- Define and test a canonical MCP wire format if MCP is part of the demo. Current request signing is HTTP-specific.
+- Exercise the Secure Enclave helper with a provisioned key on supported hardware and replace in-memory service nonce/session stores with durable, atomic stores; integrate actual customer/payment systems and deploy the services.
+- Complete the owner portal's P-256 provisioning/registration flow. The current portal still centers the earlier secp256k1 account path.
 - Add independent security review, especially around hook reentrancy, token behavior, owner-key custody, RPC consistency/reorgs, and service replay storage. Do not treat local tests as an audit.
 
 The ERC-1167 implementation pointer is immutable. This makes exact runtime provenance straightforward to check, but a future EIP-8141 / ERC-8286 implementation **cannot upgrade this v0 account at the same address**. A later account generation can use those standards with a new address, or an explicit migration/upgrade design must be agreed before deployment if preserving the same agent address is required. Service sessions also remain locally valid until their TTL unless a service rechecks onchain state; immediate key-revocation invalidation of existing sessions is not implemented.

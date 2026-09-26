@@ -21,10 +21,10 @@ sequenceDiagram
     participant A as 0xAGENT clone
     participant V as AgentValidator
     participant P as AgentPolicyHook
-    H->>H: Provision a separate operating key (for example, KMS)
-    H->>F: createAgent(authenticator, salt)
+    H->>H: Provision a local Secure Enclave P-256 operating key
+    H->>F: createAgentP256(qx, qy, salt)
     F->>A: Deploy deterministic ERC-1167 clone
-    F->>A: initialize(owner = msg.sender, authenticator)
+    F->>A: initializeP256(owner = msg.sender, qx, qy)
     A->>V: Install fixed validator for this account
     A->>P: Install fixed hook for this account
     A-->>H: Persistent agent address
@@ -47,7 +47,7 @@ EIP712Domain {
 }
 ```
 
-Both service-proof types bind `agentId`, `audienceHash = keccak256(canonical HTTPS service origin)`, a 32-byte nonce, `issuedAt`, and `expiresAt`. `AgentRequest` also binds `methodHash`, `targetHash`, and `bodyHash` for the exact HTTP request. The target is the origin-form path plus raw query; the body hash covers the raw bytes. The signer returns a 65-byte Ethereum ECDSA signature over the digest, not an EIP-191 `personal_sign` result. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
+Both service-proof types bind `agentId`, `audienceHash = keccak256(canonical HTTPS service origin)`, a 32-byte nonce, `issuedAt`, and `expiresAt`. `AgentRequest` also binds `methodHash`, `targetHash`, and `bodyHash` for the exact HTTP request. The target is the origin-form path plus raw query; the body hash covers the raw bytes. A P-256 account uses a 64-byte low-s `r || s` signature; the older secp256k1 account uses a 65-byte Ethereum ECDSA signature. Neither uses EIP-191 `personal_sign`. [EIP-712](https://eips.ethereum.org/EIPS/eip-712)
 
 The service reconstructs the digest from its expected chain and audience and the actual request. It calls `0xAGENT.isValidSignature(digest, encodedProof)` using `eth_call`. The account forwards validation to its fixed ERC-7579 `AgentValidator`. The validator checks the current, non-revoked operating key and only accepts the structured `AgentAuthentication` or `AgentRequest` envelope; an arbitrary raw operating-key signature does not become a general ERC-1271 wallet signature. The valid return value is `0x1626ba7e`. [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271)
 
@@ -59,13 +59,13 @@ An ERC-1271 result only says this account currently accepts that proof. It does 
 sequenceDiagram
     autonumber
     participant A as Agent
-    participant K as Operating signer / KMS
+    participant K as Local Secure Enclave signer
     participant S as Service
     participant E as Ethereum / 0xAGENT
     participant D as Service DB
-    A->>A: Generate random 32-byte nonce
-    A->>K: Sign AgentRequest for exact method, target, body, audience, chain and expiry
-    K-->>A: Signature
+    A->>K: Request AgentRequest proof for exact URL, method and body
+    K->>K: Generate nonce and 60-second validity; hash and sign
+    K-->>A: Request-bound proof
     A->>S: Resource request + Agent-* proof headers
     S->>E: Check pinned account code and verify ERC-1271 at one block
     E-->>S: 0x1626ba7e
@@ -77,7 +77,7 @@ sequenceDiagram
 
 The wire headers are `Agent-ID`, `Agent-Chain-ID`, `Agent-Nonce`, `Agent-Issued-At`, `Agent-Expires-At`, and `Agent-Signature`. The service derives method, target, body hash, and audience from the actual HTTP request and trusted configuration. It rejects duplicate proof headers, wrong chain/audience/request, malformed proof, expiration, and replay. Its nonce store must perform an **atomic insert-if-absent** across workers and retain the key at least through the proof's expiry. An agent-generated nonce is not a service-issued challenge: the service verifies uniqueness and freshness window, not prior issuance. The request proof's ERC-1271 signature argument is `0x41575231` (`AWR1`) followed by `abi.encode(RequestProof)`.
 
-The service needs a documented rule for proxies that rewrite paths or queries before verification. If authorization depends on unsigned headers or content negotiation, the service must normalize or bind those inputs too. The SDK requires a canonical HTTPS audience; a deployment must also enforce HTTPS transport. The current SDK implements this HTTP format; an MCP canonical wire format is **not implemented**.
+The service needs a documented rule for proxies that rewrite paths or queries before verification. If authorization depends on unsigned headers or content negotiation, the service must normalize or bind those inputs too. The SDK requires a canonical HTTPS audience; a deployment must also enforce HTTPS transport. The local MCP accepts `{url, method, body?}`, derives audience/path/query, and uses this same HTTP wire format. See [MCP.md](MCP.md) and [LOCAL-SIGNER.md](LOCAL-SIGNER.md).
 
 ### Alternative: service-issued challenge
 
@@ -105,6 +105,6 @@ Local tests cover the mock caller boundary and an operation through the official
 - An expired or reused nonce fails, and a valid signature without a local entitlement still gets no resource.
 - The owner can rotate or revoke the operating key without changing the agent address; existing service sessions may remain usable until their short expiry unless rechecked.
 - A UserOperation cannot change the owner, remove the hook, install an executor, self-call around policy, or use an unsupported execution mode.
-- Public factory/EntryPoint addresses, a real bundler and KMS adapter, durable service stores, two running services, a demo agent, and MCP canonicalization remain open.
+- Public factory/EntryPoint addresses, a real bundler, physical Secure Enclave signing verification, durable service stores, and deployed services/agent remain open. A local two-service/agent-process demo is available in [LOCAL-DEMO.md](LOCAL-DEMO.md).
 
 The immutable clone makes account provenance simple to verify but prevents an in-place EIP-8141/ERC-8286 code migration at the same agent address. A later standard can be used for new accounts, or preserving existing addresses needs a different upgrade design before deployment.
