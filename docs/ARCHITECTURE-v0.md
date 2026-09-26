@@ -10,14 +10,14 @@ This is the v0 architecture now implemented in the contracts, SDKs, and owner po
 | Identity | `0xAGENT`, `owner() = 0xHUMAN` | Persistent agent identity and human association. `owner()` is not a grant of the human's service permissions. |
 | Agent authentication | `AgentValidator`, KMS operating key, ERC-1271 | Validate agent-signed UserOperations and service proofs without giving the runtime the human's key. |
 | User execution policy | `AgentPolicyHook` + `PolicyEngine` | Gate onchain execution by the agent account according to owner-configured rules. This cannot enforce the agent's offchain instructions. |
-| Service authentication | Signed HTTP/MCP request → ERC-1271 → short-lived service session | Each service verifies the agent account independently; no Agentic World authentication backend is on the request path. |
+| Service authentication | Signed HTTP request → ERC-1271 → short-lived service session | Each service verifies the agent account independently; no Agentic World authentication backend is on the request path. MCP canonicalization remains future work. |
 | Service authorization | Service database | Each service chooses manual agent registration **or** `owner()`-derived association, then applies its own route, entitlement, payment, and resource rules. |
 
 These are distinct decisions: authenticating `0xAGENT`, associating it with a service user, allowing a service resource, and authorizing an onchain account action. Neither `owner()` nor an onchain execution policy is a universal service mandate. Agentic World cannot verify a black-box model's intent.
 
 ## ERC-4337 execution path
 
-1. The agent runtime asks its KMS-held operating key to sign a `UserOperation` for `0xAGENT`. It does not hold the owner's key or an agent-root EOA key.
+1. The agent runtime asks its separate operating key (intended to be KMS-held) to sign a `UserOperation` for `0xAGENT`. It does not hold the owner's key or an agent-root EOA key.
 2. In a live deployment, a bundler submits the operation to the configured ERC-4337 EntryPoint. The account's `validateUserOp` calls its fixed `AgentValidator`. Local tests currently use a caller fixture, not a full EntryPoint or bundler.
 3. The EntryPoint calls the account's ERC-7579 single-call execution entrypoint. `AgentPolicyHook` checks the action before execution and checks token spend afterward. Batch, delegatecall, executor, and try modes are unsupported.
 4. The human directly calls owner-only key and policy methods. The operating validator cannot install/remove modules, upgrade the account, or change `owner()`.
@@ -26,8 +26,8 @@ The hook is an execution boundary, **not** a replacement for signature validatio
 
 ## Service request path
 
-1. The agent signs the exact HTTP request or a defined canonical MCP request, with `agentId`, service audience, chain, nonce, issue/expiry times, and request contents bound to the signed digest. HTTP method, target, and body are already specified by the prototype; MCP canonicalization still needs a wire-level definition.
-2. The service reconstructs the digest from the received request, checks audience/chain/time, and calls `0xAGENT.isValidSignature(digest, signature)` via `eth_call`. The smart account forwards the ERC-1271 check to the installed `AgentValidator`; the module's ERC-7579 interface is `isValidSignatureWithSender`.
+1. The agent signs the exact HTTP request, with `agentId`, service audience, chain, nonce, issue/expiry times, method, target, and body hash bound to the signed digest. MCP canonicalization still needs a wire-level definition.
+2. The service reconstructs the digest from the received request, checks audience/chain/time, and calls `0xAGENT.isValidSignature(digest, encodedProof)` via `eth_call`. The smart account forwards the ERC-1271 check to the installed `AgentValidator`; the module's ERC-7579 interface is `isValidSignatureWithSender`.
 3. A valid ERC-1271 result (`0x1626ba7e`) proves that the **current account authentication rules** accept this agent proof. The service then atomically consumes the nonce before granting a session or resource. It does not grant access by itself; a short-lived session is service-local.
 4. The service maps the agent to a local user by explicit registration (`manual`) or by reading `owner()` and resolving that wallet (`owner`). It then checks its own authorization rules before serving the resource. Sessions, replay records, and entitlements stay in that service's database.
 

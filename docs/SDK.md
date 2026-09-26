@@ -5,7 +5,7 @@ The dependency order is `contracts → core → agent/service`; there is no Agen
 | Entry point | Role | v0 responsibility |
 | --- | --- | --- |
 | `agentic-world/core` | Shared | Account/factory ABIs, proof formats, policy encoding, exact ERC-1167 clone check, single-call execution encoder. |
-| `agentic-world/agent` | Agent runtime | Sign the exact HTTP request or challenge with an injected KMS digest signer; sign an EntryPoint-provided UserOperation hash. |
+| `agentic-world/agent` | Agent runtime | Sign the exact HTTP request or challenge with an injected digest signer (KMS adapter pending); sign an EntryPoint-provided UserOperation hash. |
 | `agentic-world/service` | Independent service | Pin an implementation, verify account provenance and ERC-1271, atomically consume nonces, issue local sessions, resolve a local user through manual or owner association. |
 
 ## Agent-side request
@@ -16,14 +16,14 @@ import { createAgentSdk, requestProofHeaders } from "agentic-world/agent";
 const agent = createAgentSdk({
   agentId,
   chainId,
-  signDigest: digest => kms.signEthereumDigest(digest),
+  signDigest: digest => operatingAccount.sign({ hash: digest }), // local development signer
 });
 const request = { method: "GET", target: "/private/report", body: new Uint8Array() };
 const proof = await agent.signRequest(request, "https://service-a.example");
 const headers = requestProofHeaders(proof);
 ```
 
-`signDigest` must return a 65-byte Ethereum ECDSA signature over the given digest—not an `personal_sign`/EIP-191 signature. The same injected signer may call `agent.signUserOperationHash(userOpHash)` when a bundler or EntryPoint provides the canonical hash. `encodeAgentExecution(target, value, data, approval?)` creates ERC-7579 single-call account calldata. These helpers do not build, fund, estimate, submit, or receipt-track a complete UserOperation.
+`signDigest` must return a 65-byte Ethereum ECDSA signature over the given digest—not a `personal_sign`/EIP-191 signature. A production KMS adapter is not yet included. The same injected signer may call `agent.signUserOperationHash(userOpHash)` when a bundler or EntryPoint provides the canonical hash. `encodeAgentExecution(target, value, data, approval?)` creates ERC-7579 single-call account calldata. These helpers do not build, fund, estimate, submit, or receipt-track a complete UserOperation.
 
 ## Service-side authentication
 

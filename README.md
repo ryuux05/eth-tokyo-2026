@@ -5,19 +5,19 @@ Agent-native, portable identity and authentication for independent services.
 Built for ETHGlobal Tokyo 2026.
 
 **Architecture freeze:** Agentic World v0 uses an ERC-4337 / ERC-7579 smart
-account, an `AgentValidator` for KMS-backed authentication and ERC-1271, and an
+account, an `AgentValidator` for operating-key authentication and ERC-1271, and an
 `AgentPolicyHook` plus `PolicyEngine` for owner-controlled onchain execution.
-Services verify signed HTTP/MCP requests independently and keep their own
+The protocol lets services verify signed HTTP requests independently and keep their own
 authorization rules, with manual or `owner()`-derived agent association. See the
-[v0 architecture](docs/ARCHITECTURE-v0.md). EIP-8141 + ERC-8286 are a possible
-future execution path, **not** part of v0.
+[v0 architecture](docs/ARCHITECTURE-v0.md). MCP request canonicalization and
+EIP-8141 + ERC-8286 are future work, **not** part of v0.
 
 Start with the [current implementation](docs/V0-IMPLEMENTATION.md),
 [architecture](docs/ARCHITECTURE-v0.md), [owner portal guide](docs/PORTAL.md),
-and [design system](DESIGN.md). The longer [protocol](docs/PROTOCOL.md),
+and [design system](DESIGN.md). The [protocol](docs/PROTOCOL.md),
 [policy](docs/POLICY.md), [Core SDK](docs/CORE-SDK.md), [service SDK](docs/SDK.md),
-and [implementation plan](docs/IMPLEMENTATION.md) include historical EIP-7702
-material where marked; it is not the v0 deployment guide.
+and [implementation plan](docs/IMPLEMENTATION.md) describe the current v0 path.
+Legacy EIP-7702 code and compatibility helpers are identified separately.
 
 ## Idea
 
@@ -32,12 +32,12 @@ associate that agent with one of its users through explicit local enrollment
 cannot verify the intent of a black-box model or enforce how the agent behaves
 offchain. Each service decides whether and how that agent may access its resources.
 
-## v0 components
+## v0 scope
 
 - An ERC-4337 / ERC-7579 modular agent account with owner binding,
   `AgentValidator`, and owner-controlled `AgentPolicyHook`.
-- Request-bound, expiring signatures with single-use agent-generated nonces; an
-  older service-challenge path remains available.
+- Request-bound, expiring signatures with single-use agent-generated nonces; a
+  service-issued challenge path remains available.
 - A separate agent signing SDK and service verification SDK.
 - Two independent services recognizing the same agent with different local permissions.
 - A demonstration where a service chooses manual enrollment or owner-based
