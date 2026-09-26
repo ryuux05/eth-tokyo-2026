@@ -141,7 +141,26 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     return { blockNumber, owner, principal: owner && !sameAddress(principal, zeroAddress) && sameAddress(principal, owner) ? principal : undefined };
   }
 
+  async function createChallenge(agentId: Address): Promise<AuthenticationChallenge> {
+    if (!config.challenges) throw new Error("Challenge store is not configured");
+    await checkAgent(agentId);
+    const issuedAt = now();
+    const challenge: AuthenticationChallenge = {
+      agentId,
+      audience: config.audience,
+      chainId: config.chainId,
+      nonce: `0x${randomBytes(32).toString("hex")}`,
+      issuedAt,
+      expiresAt: issuedAt + challengeTtl,
+    };
+    await config.challenges.put(challenge);
+    return challenge;
+  }
+
   return {
+    createChallenge,
+    /** Compatibility name for existing service integrations. */
+    issueChallenge: createChallenge,
     /** Verify a proof attached to the first resource request; no challenge round trip. */
     async authenticateRequest(proof: RequestAuthenticationProof, request: HttpRequest): Promise<{ token: string; session: Session }> {
       if (!config.requestNonces) throw new Error("Request nonce store is not configured");
@@ -169,23 +188,7 @@ export function createServiceSdk(config: ServiceSdkConfig) {
       await config.sessions.put(tokenHash(token), session);
       return { token, session };
     },
-    async issueChallenge(agentId: Address): Promise<AuthenticationChallenge> {
-      if (!config.challenges) throw new Error("Challenge store is not configured");
-      await checkAgent(agentId);
-      const issuedAt = now();
-      const challenge: AuthenticationChallenge = {
-        agentId,
-        audience: config.audience,
-        chainId: config.chainId,
-        nonce: `0x${randomBytes(32).toString("hex")}`,
-        issuedAt,
-        expiresAt: issuedAt + challengeTtl,
-      };
-      await config.challenges.put(challenge);
-      return challenge;
-    },
-
-    async authenticate(proof: AuthenticationProof): Promise<{ token: string; session: Session }> {
+    async authenticate(proof: AuthenticationProof, authorizeSession?: (identity: Session) => Promise<boolean>): Promise<{ token: string; session: Session }> {
       if (!config.challenges) throw new Error("Challenge store is not configured");
       if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new Error("Malformed proof");
       const challenge = await config.challenges.get(proof.nonce);
@@ -204,8 +207,9 @@ export function createServiceSdk(config: ServiceSdkConfig) {
       });
       if (result.toLowerCase() !== ERC1271_MAGIC) throw new Error("Invalid agent signature");
       if (!(await config.challenges.consume(challenge.nonce))) throw new Error("Challenge already consumed");
-      const token = randomBytes(32).toString("base64url");
       const session: Session = { agentId: challenge.agentId, ...(config.readOwner && owner ? { owner } : {}), ...(principal ? { principal } : {}), expiresAt: now() + sessionTtl };
+      if (authorizeSession && !(await authorizeSession(session))) throw new Error("Service did not authorize this agent session");
+      const token = randomBytes(32).toString("base64url");
       await config.sessions.put(tokenHash(token), session);
       return { token, session };
     },
@@ -239,16 +243,20 @@ export type AgenticWorldConfig<User> = Omit<ServiceSdkConfig, "implementation" |
   /** Trusted deployment address, supplied at service startup; never from an agent request. */
   pinnedImplementation: Address;
   association: Association<User>;
+  /** Service-owned admission rule. Resource permissions still need checking on every request. */
+  authorizeSession?: (identity: Session, user: User) => Promise<boolean>;
 };
 
 /** Service-facing authentication layer. Association lookup never grants a resource by itself. */
 export class AgenticWorld<User> {
   private readonly association: Association<User>;
+  private readonly authorizeSession?: (identity: Session, user: User) => Promise<boolean>;
   private readonly service: ReturnType<typeof createServiceSdk>;
 
   constructor(config: AgenticWorldConfig<User>) {
-    const { association, pinnedImplementation, ...serviceConfig } = config;
+    const { association, authorizeSession, pinnedImplementation, ...serviceConfig } = config;
     this.association = Object.freeze({ ...association });
+    this.authorizeSession = authorizeSession;
     this.service = createServiceSdk({
       ...serviceConfig,
       implementation: pinnedImplementation,
@@ -269,13 +277,21 @@ export class AgenticWorld<User> {
     return { ...result, user: await this.userFor(result.session) };
   }
 
+  async createChallenge(agentId: Address) {
+    return this.service.createChallenge(agentId);
+  }
+
   async issueChallenge(agentId: Address) {
-    return this.service.issueChallenge(agentId);
+    return this.createChallenge(agentId);
   }
 
   async authenticate(proof: AuthenticationProof) {
-    const result = await this.service.authenticate(proof);
-    return { ...result, user: await this.userFor(result.session) };
+    let user: User | null = null;
+    const result = await this.service.authenticate(proof, async identity => {
+      user = await this.userFor(identity);
+      return user !== null && (!this.authorizeSession || await this.authorizeSession(identity, user));
+    });
+    return { ...result, user: user as User | null };
   }
 
   async readSession(token: string) {

@@ -6,7 +6,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { p256 } from "@noble/curves/nist.js";
 import { Decision, encodePolicy, isExpectedAgentClone, ownerActionTypedData, requestAuthenticationDigest, encodeRequestAuthenticationProof } from "../sdk/core.js";
 import { createAgentSdk } from "../sdk/agent.js";
-import { AgenticWorld, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AuthenticationChallenge, type Session } from "../sdk/service.js";
 
 const mode = `0x${"00".repeat(32)}` as Hex;
 const salt = `0x${"42".repeat(32)}` as Hex;
@@ -69,13 +69,41 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     assert.equal(await account.read.isValidSignature([digest, encodeRequestAuthenticationProof(proof)]), "0x1626ba7e");
     const sessions = new Map<Hex, Session>();
     const nonces = new Set<Hex>();
+    const challenges = new Map<Hex, AuthenticationChallenge>();
+    const consumedChallenges = new Set<Hex>();
+    let admitted = 0;
+    let allowSession = false;
     const service = new AgenticWorld({ client: publicClient, chainId: await publicClient.getChainId(),
       audience: "https://service-a.example", pinnedImplementation: await factory.read.implementation() as Address,
       requestNonces: { async consume(_id, nonce) { if (nonces.has(nonce)) return false; nonces.add(nonce); return true; } },
+      challenges: {
+        async put(challenge) { challenges.set(challenge.nonce, challenge); },
+        async get(nonce) { return consumedChallenges.has(nonce) ? undefined : challenges.get(nonce); },
+        async consume(nonce) {
+          if (consumedChallenges.has(nonce) || !challenges.has(nonce)) return false;
+          consumedChallenges.add(nonce);
+          return true;
+        },
+      },
       sessions: { async put(hash, session) { sessions.set(hash, session); }, async get(hash) { return sessions.get(hash); } },
       association: { mode: "owner", async resolveUser(address) { return address.toLowerCase() === owner.account.address.toLowerCase() ? { id: "owner" } : null; } },
+      authorizeSession: async (_identity, user) => { admitted += 1; return allowSession && user.id === "owner"; },
     });
     assert.equal((await service.authenticateRequest(proof, request)).user?.id, "owner");
+    const deniedChallenge = await service.createChallenge(agentId);
+    const deniedProof = await agent.answerChallenge(deniedChallenge, "https://service-a.example");
+    const existingSessions = sessions.size;
+    await assert.rejects(service.authenticate(deniedProof));
+    assert.equal(sessions.size, existingSessions, "denied agent must not receive a session");
+    await assert.rejects(service.authenticate(deniedProof), "denied challenge is still consumed");
+    allowSession = true;
+    const challenge = await service.createChallenge(agentId);
+    const challengeProof = await agent.answerChallenge(challenge, "https://service-a.example");
+    const established = await service.authenticate(challengeProof);
+    assert.equal(established.user?.id, "owner");
+    assert.equal(admitted, 2);
+    assert.equal((await service.readSession(established.token))?.session.agentId, agentId);
+    await assert.rejects(service.authenticate(challengeProof));
     const userOpHash = keccak256(toBytes("p256-userop"));
     const op = packedOp(agentId, "0x", await signDigest(userOpHash));
     assert.equal(await publicClient.simulateContract({ address: entryPoint.address, abi: entryPoint.abi,
