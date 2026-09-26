@@ -3,14 +3,12 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { fileURLToPath } from "node:url";
 import { getAddress, isAddress, verifyMessage, zeroAddress, type Address, type Hex, type PublicClient } from "viem";
-import { AgenticWorld, type AgenticRequest, type AuthenticationChallenge, type Session } from "../sdk/service.js";
+import { AgenticWorld, type AgenticRequest } from "../sdk/service.js";
+import { memoryServiceBStores, type Entitlement, type ServiceBStores } from "./stores.js";
 import { agentAccountAbi, isExpectedAgentClone } from "../sdk/core.js";
 import { SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT } from "../sdk/deployments.js";
 import { createVerifiedSepoliaClient, resolveSepoliaRpcUrl } from "../scripts/sepolia-runtime.js";
 
-type Entitlement = { owner: Address; report: boolean };
-type WalletChallenge = { owner: Address; nonce: Hex; message: string; expiresAt: number };
-type Event = { at: string; kind: string; agentId?: Address; owner?: Address; detail: string };
 type Options = {
   client: PublicClient;
   chainId: number;
@@ -18,6 +16,7 @@ type Options = {
   audience: string;
   host?: string;
   port?: number;
+  stores?: ServiceBStores;
 };
 
 function sendJson(response: ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}): void {
@@ -40,55 +39,32 @@ async function readJson(request: IncomingMessage): Promise<Record<string, unknow
   return value as Record<string, unknown>;
 }
 
-/** Owner-based association demo. All state is intentionally in memory and loopback-only. */
-export async function startDemoServiceB(options: Options) {
-  const host = options.host ?? "127.0.0.1";
-  if (host !== "127.0.0.1") throw new Error("Service B may only bind to 127.0.0.1");
-  const owners = new Map<string, Entitlement>();
-  const walletChallenges = new Map<Hex, WalletChallenge>();
-  const challenges = new Map<Hex, AuthenticationChallenge>();
-  const sessions = new Map<Hex, Session>();
-  const events: Event[] = [];
-  const record = (kind: string, detail: string, owner?: Address, agentId?: Address) => {
-    events.unshift({ at: new Date().toISOString(), kind, detail, ...(owner ? { owner } : {}), ...(agentId ? { agentId } : {}) });
-    if (events.length > 60) events.length = 60;
-  };
+/** Same SDK authentication handler for local HTTP and hosted functions. */
+export function createServiceBHandler(options: Options & { origin: string; stores: ServiceBStores }) {
+  const baseUrl = new URL(options.origin).origin;
+  const { owners, wallets: walletChallenges, challenges, sessions } = options.stores;
+  const record = (kind: string, detail: string, owner?: Address, agentId?: Address) =>
+    options.stores.record({ at: new Date().toISOString(), kind, detail, ...(owner ? { owner } : {}), ...(agentId ? { agentId } : {}) });
   const service = new AgenticWorld<Entitlement>({
     client: options.client,
     chainId: options.chainId,
     audience: options.audience,
     pinnedImplementation: options.implementation,
-    association: { mode: "owner", resolveUser: async owner => owners.get(owner.toLowerCase()) ?? null },
+    association: { mode: "owner", resolveUser: async owner => await owners.get(owner) ?? null },
     challengeTtlSeconds: 300,
     sessionTtlSeconds: 300,
-    challenges: {
-      async put(challenge) { challenges.set(challenge.nonce, challenge); },
-      async get(nonce) {
-        const challenge = challenges.get(nonce);
-        if (challenge && challenge.expiresAt <= Math.floor(Date.now() / 1000)) challenges.delete(nonce);
-        return challenges.get(nonce);
-      },
-      async consume(nonce) { return challenges.delete(nonce); },
-    },
-    sessions: {
-      async put(hash, session) { sessions.set(hash, session); },
-      async get(hash) {
-        const session = sessions.get(hash);
-        if (session && session.expiresAt <= Math.floor(Date.now() / 1000)) sessions.delete(hash);
-        return sessions.get(hash);
-      },
-    },
+    challenges,
+    sessions,
   });
 
-  const requireReport = service.middleware({ realm: "Service B", authorize: ({ session, user }) => {
-    if (!user.report) record("DENIED", "Report permission is not active", session.owner, session.agentId);
+  const requireReport = service.middleware({ realm: "Service B", authorize: async ({ session, user }) => {
+    if (!user.report) await record("DENIED", "Report permission is not active", session.owner, session.agentId);
     return user.report;
   } });
 
-  let baseUrl = "";
-  const server = createServer(async (request, response) => {
-    if (request.headers.host !== baseUrl.slice("http://".length)) {
-      sendJson(response, 403, { error: "Use the loopback Service B URL shown at startup" });
+  return async (request: IncomingMessage, response: ServerResponse) => {
+    if (request.headers.host !== new URL(baseUrl).host) {
+      sendJson(response, 403, { error: "Use the configured Service B origin" });
       return;
     }
     const url = new URL(request.url ?? "/", baseUrl);
@@ -108,13 +84,13 @@ export async function startDemoServiceB(options: Options) {
       return;
     }
     if (request.method === "GET" && path === "/activity") {
-      sendJson(response, 200, { events });
+      sendJson(response, 200, { events: await options.stores.events() });
       return;
     }
     if (request.method === "GET" && path === "/owner/status") {
       const address = url.searchParams.get("address");
       if (!address || !isAddress(address)) { sendJson(response, 400, { error: "Valid wallet address required" }); return; }
-      const entitlement = owners.get(address.toLowerCase());
+      const entitlement = await owners.get(getAddress(address));
       sendJson(response, 200, { owner: getAddress(address), registered: Boolean(entitlement), report: entitlement?.report ?? false });
       return;
     }
@@ -125,12 +101,12 @@ export async function startDemoServiceB(options: Options) {
     if (request.method === "POST" && path === "/owner/challenge") {
       try {
         const input = await readJson(request);
-        if (typeof input.owner !== "string" || !isAddress(input.owner)) throw new Error("Valid wallet address required");
+        if (typeof input.owner !== "string" || !isAddress(input.owner) || input.owner.toLowerCase() === zeroAddress) throw new Error("Valid wallet address required");
         const owner = getAddress(input.owner);
         const nonce = `0x${randomBytes(32).toString("hex")}` as Hex;
         const expiresAt = Math.floor(Date.now() / 1000) + 300;
         const message = `Register ${owner} with Agentic World Service B\nOrigin: ${baseUrl}\nChain ID: ${options.chainId}\nNonce: ${nonce}\nExpires: ${new Date(expiresAt * 1000).toISOString()}\n\nThis proves wallet control. It is not a blockchain transaction.`;
-        walletChallenges.set(nonce, { owner, nonce, message, expiresAt });
+        await walletChallenges.put({ owner, nonce, message, expiresAt });
         sendJson(response, 200, { owner, nonce, message, expiresAt });
       } catch (error) { sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not create challenge" }); }
       return;
@@ -141,16 +117,16 @@ export async function startDemoServiceB(options: Options) {
         if (typeof input.owner !== "string" || !isAddress(input.owner) || typeof input.nonce !== "string" ||
             !/^0x[0-9a-fA-F]{64}$/.test(input.nonce) || typeof input.signature !== "string" ||
             !/^0x[0-9a-fA-F]{130}$/.test(input.signature)) throw new Error("Invalid wallet registration proof");
-        const challenge = walletChallenges.get(input.nonce as Hex);
+        const challenge = await walletChallenges.get(input.nonce as Hex);
         if (!challenge || challenge.owner.toLowerCase() !== input.owner.toLowerCase() || challenge.expiresAt <= Math.floor(Date.now() / 1000)) {
           throw new Error("Wallet challenge missing, expired, or mismatched");
         }
-        walletChallenges.delete(challenge.nonce);
         const valid = await verifyMessage({ address: challenge.owner, message: challenge.message, signature: input.signature as Hex });
         if (!valid) throw new Error("Wallet signature did not match the registered address");
-        const entitlement = owners.get(challenge.owner.toLowerCase()) ?? { owner: challenge.owner, report: true };
-        owners.set(challenge.owner.toLowerCase(), entitlement);
-        record("WALLET_REGISTERED", "Report entitlement is active", challenge.owner);
+        if (!await walletChallenges.consume(challenge.nonce)) throw new Error("Wallet proof already used");
+        const entitlement = await owners.get(challenge.owner) ?? { owner: challenge.owner, report: true };
+        await owners.put(entitlement);
+        await record("WALLET_REGISTERED", "Report entitlement is active", challenge.owner);
         sendJson(response, 200, { owner: entitlement.owner, registered: true, report: entitlement.report });
       } catch (error) { sendJson(response, 401, { error: error instanceof Error ? error.message : "Wallet registration failed" }); }
       return;
@@ -166,22 +142,34 @@ export async function startDemoServiceB(options: Options) {
         if (!isExpectedAgentClone(code, options.implementation)) throw new Error("Not an Agentic World account from the pinned implementation");
         const owner = await options.client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber });
         if (owner === zeroAddress) throw new Error("Agent account is not initialized");
-        sendJson(response, 200, { agentId, owner, ownerRegistered: owners.has(owner.toLowerCase()),
-          report: owners.get(owner.toLowerCase())?.report ?? false });
-      } catch (error) { sendJson(response, 400, { error: error instanceof Error ? error.message : "Could not inspect agent" }); }
+        const entitlement = await owners.get(owner);
+        sendJson(response, 200, { agentId, owner, ownerRegistered: Boolean(entitlement), report: entitlement?.report ?? false });
+      } catch { sendJson(response, 400, { error: "Could not inspect agent. Check its address and Sepolia RPC availability." }); }
       return;
     }
     if (request.method === "GET" && path === "/private/report") {
-      await requireReport(request, response, () => {
+      await requireReport(request, response, async () => {
         const { session } = (request as AgenticRequest<Entitlement>).agentic!;
-        record("ALLOWED", "Report returned · 200", session.owner, session.agentId);
+        await record("ALLOWED", "Report returned · 200", session.owner, session.agentId);
         sendJson(response, 200, { service: "Service B", resource: "report", agentId: session.agentId,
           owner: session.owner, result: "Owner-associated private report available" });
       });
-      if (response.statusCode === 401) record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
+      if (response.statusCode === 401) await record("AUTH_REQUIRED", "Report request without a valid Agent-Session");
       return;
     }
     sendJson(response, 404, { error: "Unknown route" });
+  };
+}
+
+/** Loopback adapter; hosted deployments supply Redis instead of per-process memory. */
+export async function startDemoServiceB(options: Options) {
+  const host = options.host ?? "127.0.0.1";
+  if (host !== "127.0.0.1") throw new Error("Service B may only bind to 127.0.0.1");
+  let handler: ReturnType<typeof createServiceBHandler>;
+  const server = createServer((request, response) => {
+    void handler(request, response).catch(() => {
+      if (!response.headersSent) sendJson(response, 503, { error: "Service B temporarily unavailable" });
+    });
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -189,7 +177,8 @@ export async function startDemoServiceB(options: Options) {
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Service B did not bind");
-  baseUrl = `http://${host}:${address.port}`;
+  const baseUrl = `http://${host}:${address.port}`;
+  handler = createServiceBHandler({ ...options, origin: baseUrl, stores: options.stores ?? memoryServiceBStores() });
   return { baseUrl, close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) };
 }
 
