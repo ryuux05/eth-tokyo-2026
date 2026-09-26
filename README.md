@@ -4,48 +4,69 @@ Agent-native, portable identity and authentication for independent services.
 
 Built for ETHGlobal Tokyo 2026.
 
-Read the [protocol design](docs/PROTOCOL.md) for authentication and trust boundaries, the [execution policy](docs/POLICY.md), the [Core SDK boundary](docs/CORE-SDK.md), the [owner portal guide](docs/PORTAL.md), the [use cases](docs/USECASE.md), the [SDK guide](docs/SDK.md), and the [implementation plan](docs/IMPLEMENTATION.md).
+**Architecture freeze:** Agentic World v0 uses an ERC-4337 / ERC-7579 smart
+account, an `AgentValidator` for KMS-backed authentication and ERC-1271, and an
+`AgentPolicyHook` plus `PolicyEngine` for owner-controlled onchain execution.
+Services verify signed HTTP/MCP requests independently and keep their own
+authorization rules, with manual or `owner()`-derived agent association. See the
+[v0 architecture](docs/ARCHITECTURE-v0.md). EIP-8141 + ERC-8286 are a possible
+future execution path, **not** part of v0.
+
+Start with the [current implementation](docs/V0-IMPLEMENTATION.md),
+[architecture](docs/ARCHITECTURE-v0.md), [owner portal guide](docs/PORTAL.md),
+and [design system](DESIGN.md). The longer [protocol](docs/PROTOCOL.md),
+[policy](docs/POLICY.md), [Core SDK](docs/CORE-SDK.md), [service SDK](docs/SDK.md),
+and [implementation plan](docs/IMPLEMENTATION.md) include historical EIP-7702
+material where marked; it is not the v0 deployment guide.
 
 ## Idea
 
-Give an agent a persistent Ethereum account that it can use to authenticate across
-services without borrowing a human's login session or access tokens. A separate
-user-approved mandate lets services recognize that it acts on someone's behalf.
-EIP-7702 provides programmable account behavior, while a human or organization
-retains control of the identity and its operating signers.
+Give an agent a persistent Ethereum smart account that it can use to authenticate
+across services without borrowing a human's login session or access tokens. The
+human retains control of the identity and its operating signers.
 
-Identity and mandate are portable; authorization belongs to each service. A service
-can choose to let a mandated agent request selected resources already paid for or
-registered to its principal. Neither agent authentication nor the mandate alone
-grants access to a resource.
+Agentic World is an authentication layer, not a mandate manager or a universal
+permission system. It verifies which agent signed a request. Each service can
+associate that agent with one of its users through explicit local enrollment
+(`manual`) or by resolving `owner()` on a trusted agent account (`owner`). It
+cannot verify the intent of a black-box model or enforce how the agent behaves
+offchain. Each service decides whether and how that agent may access its resources.
 
-## Planned prototype
+## v0 components
 
-- An EIP-7702 agent account with owner/controller binding and operating-signer management.
-- Single-use, expiring challenges bound to the intended service and request.
+- An ERC-4337 / ERC-7579 modular agent account with owner binding,
+  `AgentValidator`, and owner-controlled `AgentPolicyHook`.
+- Request-bound, expiring signatures with single-use agent-generated nonces; an
+  older service-challenge path remains available.
 - A separate agent signing SDK and service verification SDK.
 - Two independent services recognizing the same agent with different local permissions.
-- A demonstration of mandate-backed access to a selected resource paid for by the
-  principal, with other principal privileges still restricted.
+- A demonstration where a service chooses manual enrollment or owner-based
+  association, then separately decides whether a paid account permits agent access.
 
 Services verify proofs and relevant onchain identity state without depending on
 an Agentic World-hosted authentication backend. They retain responsibility for
-their own access policies, challenge consumption, rate limits, and billing.
+their own authorization, access policies, replay prevention, rate limits, and billing.
 
 A global permission registry, onchain service ACLs, and universal payment policies
 are not part of the core identity protocol.
 
 ## Status
 
-The contracts, bounded execution policy, Core SDK, and two role-specific SDKs are implemented locally:
-`AgentAccount` manages EIP-7702 identity and authenticators, while
-`MandateRegistry` records principal-approved mandates. The agent SDK signs
-service challenges; the service SDK verifies proofs and issues local sessions.
-Tests cover EIP-7702 delegation, authorization flows, owner-defined native and
-token-purchase rules, and SDK interoperability. The owner registration/policy
-page is built, but needs deployed contract addresses and a bootstrapped agent.
-HTTP services, durable storage adapters, KMS integration, and public deployment
-are not implemented yet.
+The repository now contains `AgentAccount4337`, `AgentAccountFactory`,
+`AgentValidator`, `AgentPolicyHook`, the Core/agent/service SDKs, local contract
+tests, and a redesigned owner portal. The factory deploys an initialized
+ERC-1167 clone and binds its owner to the human transaction sender. The service
+SDK accepts that clone only when its runtime bytecode points to a trusted,
+pinned implementation; the service-facing `AgenticWorld` manual/owner API is
+unchanged. The old `AgentAccount` and `MandateRegistry` remain as historical
+prototype code, not v0 deployment components.
+
+This is **not yet a deployed, end-to-end network demo**. The tests use a local
+EntryPoint caller fixture, not a real bundler or production EntryPoint. There is
+no deployed factory address, live KMS adapter, HTTP service, durable nonce/session
+store, or canonical MCP request format. Only the single-call, revert-on-error
+ERC-7579 execution mode is enabled; all onchain actions are default-denied until
+the owner installs a policy. See the [implementation status and security limits](docs/V0-IMPLEMENTATION.md).
 
 To run the checks:
 

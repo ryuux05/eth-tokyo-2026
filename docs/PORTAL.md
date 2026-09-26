@@ -1,29 +1,20 @@
-# Owner registration page
+# Owner portal — Protocol Workbench
 
-The [owner portal](../portal/index.html) joins three owner tasks in one place: verify an existing agent identity, configure its onchain execution policy, and register the principal–agent mandate. It is a local, browser-built prototype, not an Agentic World authentication backend.
+The [owner portal](../portal/index.html) is a local setup tool for a human creating and configuring one v0 agent. Its visual and interaction choices are documented in [PRODUCT.md](../PRODUCT.md) and [DESIGN.md](../DESIGN.md). It is not an authentication backend or a service-permission manager.
 
-## Run it
+## Run
 
-1. Deploy `AgentAccount` and `MandateRegistry` to a chain that supports EIP-7702. Pin their trusted addresses by chain ID in [`portal/config.ts`](../portal/config.ts). The map is intentionally empty because this repository has no public deployment yet.
-2. Run `npm run build:portal`, then `npm run serve:portal`. Open `http://localhost:4173` in a browser with an injected wallet.
-3. Connect the **human owner** wallet and enter an already delegated, initialized `0xAGENT` address. The page checks the EIP-7702 pointer against the pinned implementation and checks `0xAGENT.owner()` against the connected wallet.
-4. Add ordered native-call or token-purchase rules. Save them with an owner transaction to `0xAGENT.setPolicy(bytes)`. The page shows the resulting hash and can preview the current onchain policy for a 2- or 20-token purchase using `evaluateAction(...)` via `eth_call`.
-5. Copy the registration EIP-712 typed data. Sign it **outside this page** with the agent root key, then paste only the 65-byte signature. The page checks that it recovers `0xAGENT` before asking the owner wallet to send `MandateRegistry.register(...)`.
+1. Deploy a trusted `AgentAccountFactory` with the chosen EntryPoint address. Record the factory's `implementation()` and configure both addresses under the chain ID in [`portal/config.ts`](../portal/config.ts). The map is empty by default: there is no public deployment to assume.
+2. Run `npm run build:portal` and `npm run serve:portal`, then open `http://localhost:4173` in a browser with an injected owner wallet.
+3. Connect the human owner wallet. The page checks that the configured factory reports the pinned implementation. Enter a KMS operating signer address and create an agent through the factory, or enter an existing agent address to verify it. A new agent is a deterministic ERC-1167 clone with `owner = msg.sender` from the owner wallet's factory transaction.
+4. The page checks clone runtime code, account version, owner, and installed validator/hook at one block. It then shows the active operating signer and lets the owner rotate, revoke, or restore that key.
+5. Create ordered onchain execution rules. The page displays the encoded policy hash, saves only after the owner confirms an account transaction, and can preview the saved 2/20 token-purchase decisions. Unsaved drafts are not executed or treated as service access rights.
 
-The portal never asks for or stores a root private key, human seed phrase, or service credential. It does not create or bootstrap the agent EOA; that is a separate, high-trust workflow. It does not register a mandate until the owner transaction is confirmed. It does not claim a policy grants service access.
+The portal never asks for a seed phrase, agent-root key, KMS private key, or service credential. The operating signer cannot use the page to change the owner or policy. Revocation stops new operating-key signatures, but does not automatically invalidate a service session already issued by an independent service.
 
-## Supported rule editor
+## Boundaries
 
-The editor offers only protocol-supported v1 rule types. A native rule specifies exact target, selector, maximum ETH value, and `ALLOW` / `REQUIRE_OWNER_SIGNATURE` / `DENY`. A token-purchase rule specifies exact target, token, maximum token amount, token decimals, and decision; its selector is fixed to `purchaseCompute(address,uint256)`. The first match wins and the default is deny. Reordering buttons make this precedence visible.
-
-Token amounts are encoded in base units using the selected decimals. The demo token has six decimals. Verify a real token's address, decimals, and target contract before saving a policy. The policy only checks the call's declared token and amount; it assumes the pinned target implements the purchase semantics the owner expects.
-
-The page previews **saved onchain policy**, not unsaved draft rules. An `eth_call` has no transaction gas fee, though the RPC provider may charge for infrastructure use. The actual `execute` transaction always reevaluates the current policy.
-
-## Deliberate limits
-
-- No public addresses are silently assumed. Until `portal/config.ts` is set, verification and transactions remain unavailable on that chain.
-- No agent-root private key import or browser key generation. Offline root signing is safer for this prototype.
-- No owner wallet connection means no owner transaction. `setPolicy` and `register` are separate transactions; a saved policy does not itself register a mandate.
-- No automatic service permissions or subscriptions. The service SDK independently verifies identity and mandate, then the service applies its local rules.
-- No production-grade deployment verification, accessibility audit, browser screenshot review, KMS integration, or mainnet security audit yet.
+- A missing or mismatched trusted deployment disables creation and verification. Switching wallet/network requires reconnecting; transactions check the current chain before submission.
+- The editor supports native calls and the specifically decoded `purchaseCompute(address,uint256)` token-purchase action. Limits apply per call, not across time. First matching policy rule wins; the default is deny.
+- The policy hook restricts onchain account execution. It cannot control a model's offchain behavior or grant the agent access to a service. Services independently choose manual or owner-derived association and their own authorization.
+- The portal is currently a static browser build. It has no deployed factory addresses, bundler, live KMS integration, or recovery mechanism. See [implementation status](V0-IMPLEMENTATION.md).
