@@ -3,8 +3,11 @@ pragma solidity ^0.8.28;
 
 import {AccountERC7579Hooked} from
     "@openzeppelin/contracts/account/extensions/draft-AccountERC7579Hooked.sol";
-import {IEntryPoint, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
-import {IERC7579Validator, MODULE_TYPE_VALIDATOR, MODULE_TYPE_HOOK, VALIDATION_FAILED} from
+import {IAccount, IEntryPoint, PackedUserOperation} from "@openzeppelin/contracts/interfaces/draft-IERC4337.sol";
+import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+import {IERC1271} from "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import {IERC7579Validator, IERC7579Execution, IERC7579AccountConfig, IERC7579ModuleConfig,
+    MODULE_TYPE_VALIDATOR, MODULE_TYPE_HOOK, VALIDATION_FAILED} from
     "@openzeppelin/contracts/interfaces/draft-IERC7579.sol";
 import {Mode} from "@openzeppelin/contracts/account/utils/draft-ERC7579Utils.sol";
 import {AgentValidator} from "./AgentValidator.sol";
@@ -13,7 +16,7 @@ import {PolicyEngine} from "./PolicyEngine.sol";
 
 /// @notice ERC-4337 / ERC-7579 agent identity. The factory deploys initialized ERC-1167 clones.
 /// @dev The owner is fixed after bootstrap; the operating validator cannot configure modules or policy.
-contract AgentAccount4337 is AccountERC7579Hooked {
+contract AgentAccount4337 is AccountERC7579Hooked, IERC165 {
     address public immutable factory;
     AgentValidator public immutable agentValidator;
     AgentPolicyHook public immutable policyHook;
@@ -95,6 +98,12 @@ contract AgentAccount4337 is AccountERC7579Hooked {
     }
     function accountId() public pure override returns (string memory) { return "agentic.world.AgentAccount4337.v0"; }
     function entryPoint() public view override returns (IEntryPoint) { return _entryPoint; }
+
+    function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+        return interfaceId == type(IERC165).interfaceId || interfaceId == type(IERC1271).interfaceId ||
+            interfaceId == type(IAccount).interfaceId || interfaceId == type(IERC7579Execution).interfaceId ||
+            interfaceId == type(IERC7579AccountConfig).interfaceId || interfaceId == type(IERC7579ModuleConfig).interfaceId;
+    }
 
     function rotateAuthenticator(address signer) external onlyOwner {
         if (signer == _owner) revert InvalidOwner();

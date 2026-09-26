@@ -9,6 +9,7 @@ import {PolicyEngine} from "./PolicyEngine.sol";
 
 interface IAgentPolicyAccount {
     function owner() external view returns (address);
+    function agentValidator() external view returns (address);
 }
 
 /// @notice ERC-7579 execution hook. Each agent account has its own owner-defined policy.
@@ -82,6 +83,7 @@ contract AgentPolicyHook is IERC7579Hook {
     function evaluateAction(address account, address target, uint256 value, bytes calldata data)
         external view returns (PolicyEngine.Decision)
     {
+        if (!_states[account].installed || _isManagementTarget(account, target)) return PolicyEngine.Decision.DENY;
         return _states[account].policy.evaluate(target, value, data);
     }
 
@@ -110,7 +112,7 @@ contract AgentPolicyHook is IERC7579Hook {
             target := shr(96, mload(add(execution, 32)))
             value := mload(add(execution, 52))
         }
-        if (target == address(0) || target == msg.sender) revert PolicyDenied();
+        if (_isManagementTarget(msg.sender, target)) revert PolicyDenied();
         bytes memory callData = execution.slice(52);
         PolicyEngine.Decision decision = state.policy.evaluate(target, value, callData);
         if (decision == PolicyEngine.Decision.DENY) revert PolicyDenied();
@@ -138,6 +140,13 @@ contract AgentPolicyHook is IERC7579Hook {
     function _installedState(address account) private view returns (PolicyState storage state) {
         state = _states[account];
         if (!state.installed) revert NotInstalled();
+    }
+
+    // Module calls execute with the account as msg.sender. Letting an operating
+    // key call these modules would bypass the account's onlyOwner wrappers.
+    function _isManagementTarget(address account, address target) private view returns (bool) {
+        return target == address(0) || target == account || target == address(this) ||
+            target == IAgentPolicyAccount(account).agentValidator();
     }
 
     function _checkOwnerApproval(

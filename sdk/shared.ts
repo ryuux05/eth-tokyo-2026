@@ -46,6 +46,9 @@ export type RequestAuthentication = {
 export type RequestAuthenticationProof = RequestAuthentication & { signature: Hex };
 
 export const agentAccountAbi = [
+  { type: "function", name: "supportsInterface", stateMutability: "pure", inputs: [{ name: "interfaceId", type: "bytes4" }], outputs: [{ type: "bool" }] },
+  // Compatibility initializer for the historical EIP-7702 prototype. V0 clones
+  // are initialized atomically by AgentAccountFactory.createAgentP256.
   { type: "function", name: "initialize", stateMutability: "nonpayable", inputs: [
     { name: "initialAuthenticator", type: "address" }, { name: "nonce", type: "uint256" },
     { name: "deadline", type: "uint64" }, { name: "rootSignature", type: "bytes" },

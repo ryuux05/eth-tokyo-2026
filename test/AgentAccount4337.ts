@@ -89,7 +89,10 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
       association: { mode: "owner", async resolveUser(address) { return address.toLowerCase() === owner.account.address.toLowerCase() ? { id: "owner" } : null; } },
       authorizeSession: async (_identity, user) => { admitted += 1; return allowSession && user.id === "owner"; },
     });
-    assert.equal((await service.authenticateRequest(proof, request)).user?.id, "owner");
+    await assert.rejects(service.authenticateRequest(proof, request), /did not authorize/);
+    assert.equal(sessions.size, 0, "request proofs must enforce the same admission rule as challenges");
+    await assert.rejects(service.authenticateRequest(proof, request), /already consumed/);
+    await assert.rejects(service.authenticateRequest({ ...proof, nonce: `0x${proof.nonce.slice(2).toUpperCase()}` }, request), /already consumed/);
     const deniedChallenge = await service.createChallenge(agentId);
     const deniedProof = await agent.answerChallenge(deniedChallenge, "https://service-a.example");
     const existingSessions = sessions.size;
@@ -101,7 +104,7 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     const challengeProof = await agent.answerChallenge(challenge, "https://service-a.example");
     const established = await service.authenticate(challengeProof);
     assert.equal(established.user?.id, "owner");
-    assert.equal(admitted, 2);
+    assert.equal(admitted, 3);
     assert.equal((await service.readSession(established.token))?.session.agentId, agentId);
     await assert.rejects(service.authenticate(challengeProof));
     const userOpHash = keccak256(toBytes("p256-userop"));
@@ -175,6 +178,10 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     assert.equal((await c.account.read.owner() as Address).toLowerCase(), c.owner.account.address.toLowerCase());
     assert.equal((await c.account.read.authenticator() as Address).toLowerCase(), c.authenticator.address.toLowerCase());
     assert.equal(await c.account.read.protocolVersion(), 2n);
+    assert.equal(await c.account.read.supportsInterface(["0x01ffc9a7"]), true, "ERC-165");
+    assert.equal(await c.account.read.supportsInterface(["0x1626ba7e"]), true, "ERC-1271");
+    assert.equal(await c.account.read.supportsInterface(["0xffffffff"]), false);
+    assert.equal(await c.account.read.supportsInterface(["0x00000000"]), false);
     assert.equal(await c.account.read.isModuleInstalled([1n, await c.factory.read.validator() as Address, "0x"]), true);
     assert.equal(await c.account.read.isModuleInstalled([4n, await c.factory.read.policyHook() as Address, "0x"]), true);
     await assert.rejects(c.stranger.writeContract({ address: c.agent, abi: c.account.abi, functionName: "initialize", args: [c.stranger.account.address, c.authenticator.address] }));
@@ -324,5 +331,27 @@ describe("Agentic World v0 ERC-4337 / ERC-7579 account", () => {
     await assert.rejects(c.publicClient.simulateContract({ address: c.entryPoint.address, abi: c.entryPoint.abi,
       functionName: "run", args: [c.agent, call(shop.address, purchaseData(amount2))] }));
     assert.equal(await token.read.balanceOf([c.agent]), parseUnits("78", 6));
+  });
+
+  it("never executes policy or authenticator administration through an allowed module target", async () => {
+    const c = await setup();
+    const hook = await c.viem.getContractAt("AgentPolicyHook", await c.factory.read.policyHook() as Address);
+    const validator = await c.viem.getContractAt("AgentValidator", await c.factory.read.validator() as Address);
+    const attempts = [
+      { target: hook.address, data: encodeFunctionData({ abi: hook.abi, functionName: "setPolicy", args: [encodePolicy([])] }) },
+      { target: validator.address, data: encodeFunctionData({ abi: validator.abi, functionName: "rotateAuthenticator", args: [c.stranger.account.address] }) },
+    ];
+    for (const attempt of attempts) {
+      const policy = encodePolicy([{ target: attempt.target, selector: attempt.data.slice(0, 10) as Hex,
+        token: zeroAddress, maxValue: 0n, maxAmount: 0n, decision: Decision.ALLOW }]);
+      const saved = await c.account.write.setPolicy([policy]);
+      await c.publicClient.waitForTransactionReceipt({ hash: saved });
+      const callData = encodeFunctionData({ abi: c.account.abi, functionName: "execute",
+        args: [mode, single(attempt.target, 0n, attempt.data)] });
+      await assert.rejects(c.entryPoint.write.run([c.agent, callData]), "operating execution cannot invoke management modules");
+      assert.equal(await c.account.read.evaluateAction([attempt.target, 0n, attempt.data]), Decision.DENY);
+      assert.equal(await c.account.read.policyHash(), keccak256(policy));
+      assert.equal((await c.account.read.authenticator() as Address).toLowerCase(), c.authenticator.address.toLowerCase());
+    }
   });
 });

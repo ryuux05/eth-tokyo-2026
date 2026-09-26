@@ -463,10 +463,11 @@ describe("Agent and service SDK interoperability", () => {
         return enrolled.has(agentId.toLowerCase()) ? { id: "manual-user" } : null;
       } },
     });
+    await assert.rejects(manualSdk.authenticateRequest(await agent.signRequest(request, base.audience), request), /did not authorize/);
+    enrolled.add(context.agentRoot.address.toLowerCase());
     const manualResult = await manualSdk.authenticateRequest(await agent.signRequest(request, base.audience), request);
     assert.equal(manualResult.session.owner, undefined);
-    assert.equal(manualResult.user, null);
-    enrolled.add(context.agentRoot.address.toLowerCase());
+    assert.deepEqual(manualResult.user, { id: "manual-user" });
     assert.deepEqual((await manualSdk.readSession(manualResult.token))?.user, { id: "manual-user" });
   });
 

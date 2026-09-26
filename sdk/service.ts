@@ -169,7 +169,7 @@ export function createServiceSdk(config: ServiceSdkConfig) {
     /** Compatibility name for existing service integrations. */
     issueChallenge: createChallenge,
     /** Verify a proof attached to the first resource request; no challenge round trip. */
-    async authenticateRequest(proof: RequestAuthenticationProof, request: HttpRequest): Promise<{ token: string; session: Session }> {
+    async authenticateRequest(proof: RequestAuthenticationProof, request: HttpRequest, authorizeSession?: (identity: Session) => Promise<boolean>): Promise<{ token: string; session: Session }> {
       if (!config.requestNonces) throw new Error("Request nonce store is not configured");
       assertHttpRequest(request);
       if (!/^0x[0-9a-fA-F]{64}$/.test(proof.nonce) || !/^0x[0-9a-fA-F]{64}$/.test(proof.bodyHash) || !/^0x(?:[0-9a-fA-F]{128}|[0-9a-fA-F]{130})$/.test(proof.signature)) throw new Error("Malformed request proof");
@@ -189,9 +189,10 @@ export function createServiceSdk(config: ServiceSdkConfig) {
         blockNumber,
       });
       if (result.toLowerCase() !== ERC1271_MAGIC) throw new Error("Invalid agent request signature");
-      if (!(await config.requestNonces.consume(proof.agentId, proof.nonce, proof.expiresAt))) throw new Error("Request nonce already consumed");
-      const token = randomBytes(32).toString("base64url");
+      if (!(await config.requestNonces.consume(proof.agentId.toLowerCase() as Address, proof.nonce.toLowerCase() as Hex, proof.expiresAt))) throw new Error("Request nonce already consumed");
       const session: Session = { agentId: proof.agentId, ...(config.readOwner && owner ? { owner } : {}), ...(principal ? { principal } : {}), expiresAt: now() + sessionTtl };
+      if (authorizeSession && !(await authorizeSession(session))) throw new Error("Service did not authorize this agent session");
+      const token = randomBytes(32).toString("base64url");
       await config.sessions.put(tokenHash(token), session);
       return { token, session };
     },
@@ -280,8 +281,12 @@ export class AgenticWorld<User> {
   }
 
   async authenticateRequest(proof: RequestAuthenticationProof, request: HttpRequest) {
-    const result = await this.service.authenticateRequest(proof, request);
-    return { ...result, user: await this.userFor(result.session) };
+    let user: User | null = null;
+    const result = await this.service.authenticateRequest(proof, request, async identity => {
+      user = await this.userFor(identity);
+      return user !== null && (!this.authorizeSession || await this.authorizeSession(identity, user));
+    });
+    return { ...result, user: user as User | null };
   }
 
   async createChallenge(agentId: Address) {
