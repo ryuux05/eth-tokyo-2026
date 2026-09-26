@@ -19,12 +19,12 @@ export default function PolicyWorkbench() {
   <section className="try-payment" aria-labelledby="try-title">
     <h2 id="try-title">Choose a compute pack</h2>
     <div className="packs" role="group" aria-label="Compute packs">
-      <button className="pack" data-amount="5" aria-pressed="true"><span>Small compute pack</span><strong>5 <small>USDC</small></strong><span>Check a smaller purchase</span></button>
-      <button className="pack" data-amount="20" aria-pressed="false"><span>Large compute pack</span><strong>20 <small>USDC</small></strong><span>Check a larger purchase</span></button>
+      <button className="pack" data-amount="1" aria-pressed="true"><span>Small compute pack</span><strong>1 <small>USDC</small></strong><span>Check a smaller purchase</span></button>
+      <button className="pack" data-amount="2" aria-pressed="false"><span>Large compute pack</span><strong>2 <small>USDC</small></strong><span>Check a larger purchase</span></button>
     </div>
     <form id="preview-form">
-      <input id="amount" type="hidden" defaultValue="5" />
-      <div className="actions"><button type="button" id="copy" disabled>Copy 5-USDC purchase prompt</button><button type="submit" id="preview" className="secondary" disabled>Check account policy</button></div>
+      <input id="amount" type="hidden" defaultValue="1" />
+      <div className="actions"><button type="button" id="copy" disabled>Copy 1-USDC purchase prompt</button><button type="submit" id="preview" className="secondary" disabled>Check account policy</button></div>
       <p id="prompt-help" className="hint">Use the contract setup below once, then copy the prompt into your agent session. No tokens or compute credits are delivered.</p>
       <details className="prompt-details"><summary>See the prompt</summary><pre id="agent-prompt">Choose a service target to prepare the prompt. Your agent can select its own identity.</pre></details>
     </form>
@@ -33,7 +33,7 @@ export default function PolicyWorkbench() {
     <div className="section-heading"><h2 id="account-title">Check the purchase</h2><span className="hint">Read from the agent account</span></div>
     <label htmlFor="agent">Agent address to inspect</label>
     <div className="amount-row"><input id="agent" placeholder="0x… (your agent can give you this)" spellCheck="false" autoComplete="off" /><button id="inspect" className="secondary" disabled>Read contract</button></div>
-    <p id="policy-summary" className="policy-summary">Read an agent to see its stored rules. Nothing here assumes a 5-USDC limit.</p>
+    <p id="policy-summary" className="policy-summary">Read an agent to see its stored rules. The account policy determines the limit, not the selected pack.</p>
     <div className="decision" id="decision" data-state="idle" aria-live="polite"><strong id="decision-label">Not checked yet</strong><p id="decision-detail">Enter an agent address and service target, then read the contract.</p><small id="decision-block"></small></div>
     <p className="hint">Change spending rules in your Agentic World portal, then read this contract again. Registering with Service C does not change those rules.</p>
     <button id="copy-policy" className="secondary" disabled>Copy portal setup instructions</button>

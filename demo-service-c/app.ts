@@ -149,7 +149,7 @@ async function checkTransaction() {
     const snapshot = await inspect(); render(snapshot);
     rememberPending(undefined);
     status(snapshot.policyHash.toLowerCase() === value.expectedPolicyHash?.toLowerCase()
-      ? "Policy confirmed onchain. Try 5 and 5.000001 USDC, then change the boundary and check again."
+      ? "Policy confirmed onchain. Try the 1 and 2 USDC packs to check the saved rules."
       : "Transaction confirmed, but the current policy differs from the submitted one. Review its current revision before making another change.");
   }
 }
@@ -199,7 +199,7 @@ listen(el("copy"), "click", () => void work(async () => {
 listen(el("copy-policy"), "click", () => void work(async () => {
   const target = input("target"); if (!isAddress(target)) throw new Error("Set a Service C target first.");
   const agent = input("agent");
-  const prompt = `Open agentic_portal for ${isAddress(agent) ? `my agent ${agent}` : "my Agentic World agent (ask which identity if there are several)"} on chain ${config.chainId}. Help me configure ordered Token purchase rules for Service C's compute-credit purchase. Target: ${target}. Function: purchaseCompute(address,uint256), selector ${TOKEN_PURCHASE_SELECTOR}. Token: USDC ${config.token}, 6 decimals. Native value: 0. First rule: ALLOW up to 5 USDC (5000000 base units). Second: REQUIRE_OWNER_SIGNATURE up to 100 USDC (100000000 base units). Unmatched actions remain DENY. Explain existing rules before I replace anything; I must save and approve the policy in my wallet. Then I can compare Service C's 5 and 20 USDC packs. Do not send tokens, grant allowances, or edit policy outside the portal.`;
+  const prompt = `Open agentic_portal for ${isAddress(agent) ? `my agent ${agent}` : "my Agentic World agent (ask which identity if there are several)"} on chain ${config.chainId}. Help me configure ordered Token purchase rules for Service C's compute-credit purchase. Target: ${target}. Function: purchaseCompute(address,uint256), selector ${TOKEN_PURCHASE_SELECTOR}. Token: USDC ${config.token}, 6 decimals. Native value: 0. First rule: ALLOW up to 1 USDC (1000000 base units). Second: REQUIRE_OWNER_SIGNATURE up to 2 USDC (2000000 base units). Unmatched actions remain DENY. Explain existing rules before I replace anything; I must save and approve the policy in my wallet. Then I can compare Service C's 1 and 2 USDC packs. Do not send tokens, grant allowances, or edit policy outside the portal.`;
   await navigator.clipboard.writeText(prompt); status("Portal instructions copied. Configure and save the policy there; Service C only reads it.");
 }));
 function updateTarget() {

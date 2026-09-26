@@ -179,6 +179,17 @@ describe("Service C policy demonstration", () => {
       assert.equal(allowed.purchase.action.valueWei, "0");
       assert.equal(allowed.purchase.action.data, c.data("5"));
       assert.equal((await (await preview("5.000001")).json()).decision, "REQUIRE_OWNER_SIGNATURE");
+      const packRules = decodePolicy(serviceCPolicy(c.shop.address, c.token.address, 1_000_000n));
+      packRules[1].maxAmount = 2_000_000n;
+      await c.setPolicy(encodePolicy(packRules));
+      for (const [amount, expected] of [["1", "ALLOW"], ["2", "REQUIRE_OWNER_SIGNATURE"], ["3", "DENY"]]) {
+        const quote: Response = await fetch(`${running.baseUrl}/private/quote?target=${c.shop.address}&amount=${amount}`, { headers: { "Agent-Session": session } });
+        assert.equal(quote.status, 200);
+        const checked = await quote.json();
+        assert.equal(checked.decision, expected);
+        assert.equal(checked.purchase.action.data, c.data(amount));
+        assert.equal(checked.purchase.status, "NOT_PAID");
+      }
       await c.setPolicy(serviceCPolicy(c.shop.address, c.token.address, 3_000_000n));
       const changed = await (await fetch(`${running.baseUrl}${route}`, { headers: { "Agent-Session": session } })).json();
       assert.equal(changed.decision, "REQUIRE_OWNER_SIGNATURE");

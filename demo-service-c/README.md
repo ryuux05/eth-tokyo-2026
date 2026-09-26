@@ -1,6 +1,6 @@
 # Service C · Compute-credit storefront
 
-Register an owner wallet, choose a 5 or 20 USDC compute pack, and copy a prompt for
+Register an owner wallet, choose a 1 or 2 USDC compute pack, and copy a prompt for
 the agent to authenticate and check its own account policy. **Purchase checked—not paid.**
 No USDC or compute credits are delivered. The API has no wallet key and never broadcasts payments.
 WalletConnect/remote mobile pairing is not included; use a wallet-enabled browser.
@@ -8,8 +8,8 @@ WalletConnect/remote mobile pairing is not included; use a wallet-enabled browse
 Deploy or reuse the purchase contract once under **Service contract setup**. Policy
 editing stays exclusively in the existing Agentic World portal. The storefront's
 **Copy portal setup instructions** gives the exact target and USDC address: add an
-ordered Token purchase ALLOW rule up to 5 USDC, then REQUIRE_OWNER_SIGNATURE up to
-100 USDC. Other actions/amounts default to DENY. Review existing rules before saving.
+ordered Token purchase ALLOW rule up to 1 USDC, then REQUIRE_OWNER_SIGNATURE up to
+2 USDC. Other actions/amounts default to DENY. Review existing rules before saving.
 Back in Service C, enter the agent address and read its policy. Change the limit in
 the portal, confirm the transaction, then check again. Entering an agent here is
 read-only inspection, not access registration.
@@ -59,7 +59,7 @@ public deployment; the public preview reads chain state and uses those providers
 
 ## API and limits
 
-`GET /private/quote?target=0xTARGET&amount=5` keeps the same resource-first SDK flow:
+`GET /private/quote?target=0xTARGET&amount=1` keeps the same resource-first SDK flow:
 401 AgenticWorld offer → Agent-ID challenge → proof headers → quote + Agent-Session.
 No separate agent challenge/session endpoints are required. The human registers their
 wallet by signing a one-time, origin-bound message. Verified agents resolve their
@@ -72,7 +72,7 @@ the account's stored rules, not a service-defined limit. The purchase prompt ask
 the agent to independently call `agentic_policy_check` on the quoted action.
 Policy setup instructions open the existing portal; the storefront has no policy editor.
 
-The suggested portal policy is an ordered pair: <=5 ALLOW, then <=100 REQUIRE_OWNER_SIGNATURE.
+The suggested portal policy is an ordered pair: <=1 ALLOW, then <=2 REQUIRE_OWNER_SIGNATURE.
 Saving in the portal replaces the entire existing policy. It grants no token allowance. The token
 is Sepolia USDC `0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238`, with six decimals.
 The threshold is per operation, not a cumulative budget or USD price oracle.
