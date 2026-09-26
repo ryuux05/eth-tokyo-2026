@@ -31,10 +31,10 @@ or USDC to try the hosted authentication and policy-preview demos below.
 
 Checked on **27 September 2026**: both hosted services trust the original
 implementation, `0xd08B955ca8727d86e708ae5684D5fa7f32635e66`.
-The walkthrough uses **`main`**, which creates matching accounts through factory
+The hosted-demo walkthrough uses **`release/v.0.0.1`**, which creates matching accounts through factory
 `0x63f158897834bbc1579e82dfc29a7aacc8b91f93`.
 
-This **`feat/policy-usdc-execution` branch** creates accounts through the newer
+The current release on **`main`** creates accounts through the newer
 factory listed under [Deployed contracts](#deployed-contracts--sepolia).
 Those new accounts need the services redeployed with the matching implementation
 before hosted authentication will succeed. Existing identities are not upgraded.
@@ -45,7 +45,7 @@ Do not change trust checks or create repeated identities to work around a mismat
 **Codex — from another project:** send this message in a Codex session:
 
 ```text
-$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/main/.agents/skills/agentic-world
+$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/release/v.0.0.1/.agents/skills/agentic-world
 ```
 
 Start a new session if the skill is not visible, then continue to step 2.
@@ -53,7 +53,7 @@ Start a new session if the skill is not visible, then continue to step 2.
 **Claude Code — or Codex using a checkout:** run these terminal commands:
 
 ```sh
-git clone --branch main https://github.com/ryuux05/eth-tokyo-2026.git
+git clone --branch release/v.0.0.1 https://github.com/ryuux05/eth-tokyo-2026.git
 cd eth-tokyo-2026
 ```
 
@@ -74,10 +74,12 @@ a similarly named third-party package. See [installer options](#installer-option
 Send this as a **chat message**, not a terminal command:
 
 ```text
-agentic-world:init
+agentic-world:init — use release/v.0.0.1 for this hosted demo
 ```
 
-For a source checkout, tell the agent to reuse that checkout. Init installs
+For a source checkout, tell the agent to reuse that checkout. If the agent needs
+to clone the runtime, explicitly select `release/v.0.0.1` for this walkthrough.
+Init installs
 dependencies, builds the MCP/portal/native signer, checks the host, creates a
 private Sepolia configuration, and registers the MCP for your client.
 It creates **no signing key, agent identity, or transaction**.
@@ -208,7 +210,7 @@ permissions**; Service C demonstrates **account-owned onchain policy**.
 
 ### Real payments are a separate test
 
-This feature branch also implements direct USDC transfers through
+The current release also implements direct USDC transfers through
 `agentic_pay_usdc`; the Service C quote is not that execution path.
 Payments require a new execution-capable account, a private Pimlico bundler
 configuration, agent ETH/USDC funding, and transfer-specific policy.
@@ -299,7 +301,7 @@ a new funded agent and a hands-on Pimlico/hardware test.
 Local tests exercise P-256 authentication, both services, owner approval flows,
 rotation across MCP restarts, and policy changes through the official EntryPoint
 v0.8. Hardware signing and real wallet-extension interactions still need a
-hands-on run. This feature branch adds direct USDC payments through a Pimlico
+hands-on run. This release adds direct USDC payments through a Pimlico
 adapter, structured native signing, and exact-action owner approval. Local
 end-to-end tests use a bundler fixture; live Pimlico submission is not yet verified.
 The MCP retains the legacy identity pins; payments fail closed for those accounts.
