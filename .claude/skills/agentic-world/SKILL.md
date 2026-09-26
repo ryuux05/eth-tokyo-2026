@@ -1,11 +1,13 @@
 ---
 name: agentic-world
-description: Use the local Agentic World MCP to inspect an agent identity, sign service-issued session challenges, preview execution policy, or prepare human-owner account transactions.
+description: Use a locally installed Agentic World MCP to create or inspect an agent identity, sign service-issued session challenges, and preview or prepare owner-controlled account actions.
 ---
 
 Use the `agentic-world` MCP server when a user asks you to act as their Agentic World agent or access an Agentic World-enabled service.
 
-For the local `npm run demo` workbench, first read `.agentic-world.demo-state.json` in this repository. It contains the most recently launched loopback Service A URL and, after creation, the agent ID; ports may differ from defaults. Check the service's `/health` endpoint and match its chain ID and implementation to the state file before using it. The file never contains the service operator key, and it can remain after shutdown. If the file is absent or the service is unavailable or mismatched, ask the human to start `npm run demo` and leave it running.
+This skill provides instructions, not the MCP executable. If the `agentic-world` tools are unavailable, tell the human to clone and build the repository, start `npm run demo` for a local test, and register its built MCP server with their host as described in the [installation guide](https://github.com/ryuux05/eth-tokyo-2026#use-the-skill-in-codex-or-claude-code). Do not claim the GitHub skill installation also installs or starts MCP.
+
+If the current workspace is the Agentic World repository, read `.agentic-world.demo-state.json` for its most recently launched loopback Service A URL and agent ID. Check the service's `/health` endpoint and match its chain ID and implementation to the state file before using it; the file can remain after shutdown. If the skill was installed personally and the session is in another project, do not assume that file exists there. Ask the human for the service URL or the path to their Agentic World clone, then verify the service before authentication. Never request the Service A operator key for the agent.
 
 - Call `agentic_identity` to confirm the configured agent and whether authentication is active.
 - Ask the service for an authentication challenge for the configured `0xAGENT`. Pass the complete challenge to `agentic_session_proof({ challenge })`; do not invent or edit its nonce, audience, chain, or timestamps.

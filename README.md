@@ -103,35 +103,96 @@ it to create an identity. See the [interactive demo guide](docs/SERVICE-DEMO.md)
 
 ### Use the skill in Codex or Claude Code
 
-The skill is already checked into this repo. [Codex finds](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills) `.agents/skills/agentic-world/SKILL.md`, and [Claude Code finds](https://code.claude.com/docs/en/skills#choose-where-skills-load) `.claude/skills/agentic-world/SKILL.md` when started from this repository. There is no separate skill installation command. The skill teaches the workflow; the local MCP server supplies the signing tools.
-
-Keep `npm run demo` running. When you are ready to configure the agent, run these **separately** in another terminal:
+Installing the skill and connecting the MCP are **two separate steps**. The skill
+is instructions for the agent; the MCP and Secure Enclave signer run locally on
+your Mac. A GitHub URL alone cannot launch them. For a fresh machine, clone the
+public repository into a stable location and build the local components:
 
 ```sh
+git clone https://github.com/ryuux05/eth-tokyo-2026.git
+cd eth-tokyo-2026
+npm ci
 npm run build:mcp
 npm run build:signer
 dist/signer/agentic-signer availability
 ```
 
-Start a Codex or Claude session from this repo and say “Create an Agentic World identity.” The skill calls `agentic_create_identity()` with no arguments. That explicit call creates or reuses a local Secure Enclave P-256 key, opens a temporary localhost page in your default browser, and asks you to connect a MetaMask-compatible wallet. **You** select the human owner account and confirm the factory transaction on the printed local chain. The MCP never sees your wallet key or submits the transaction. The page verifies the confirmed onchain account and reports `0xAGENT` back to the agent; the MCP updates its local config. The demo also detects the factory event and updates `.agentic-world.demo-state.json`. The default key label is `agentic-world-demo`; if you set `AGENTIC_DEMO_SIGNER_LABEL`, that label is used instead. The owner portal is optional.
+`availability` must report `secureEnclaveAvailable: true`. Keep this checkout:
+the MCP registration below points to its built files. Start the demo in a
+separate terminal and leave it running; it creates the gitignored runtime
+config and prints the actual RPC and Service A URLs. Run this from the checkout
+in another terminal:
 
-For **Codex**, register the MCP once, check it, then start a new session from this repo:
+```sh
+npm run demo
+```
+
+For a session **inside this checkout**, the skills are already installed at the
+repository level: [Codex loads `.agents/skills`](https://learn.chatgpt.com/docs/build-skills#where-codex-loads-local-skills)
+and [Claude Code loads `.claude/skills`](https://code.claude.com/docs/en/skills#choose-where-skills-load).
+Do not install a second personal copy for that same session.
+
+For a session **in another project**, install the skill personally first:
+
+- Codex: in a Codex session, ask
+  `$skill-installer Install the skill from https://github.com/ryuux05/eth-tokyo-2026/tree/main/.agents/skills/agentic-world`.
+  This public GitHub URL was tested with the bundled installer. It installs under
+  `$CODEX_HOME/skills` (normally `~/.codex/skills`); Codex also recognizes
+  manually placed personal skills under `~/.agents/skills`. Start a new Codex
+  session if the skill does not appear.
+- Claude Code: with the clone as your current directory, run:
+
+  ```sh
+  mkdir -p "$HOME/.claude/skills"
+  ln -s "$(pwd -P)/.claude/skills/agentic-world" "$HOME/.claude/skills/agentic-world"
+  ```
+
+  The symlink makes `/agentic-world` available in other projects and updates
+  with your clone. If that destination already exists, inspect it before
+  replacing anything. [Claude Code supports personal and symlinked skills](https://code.claude.com/docs/en/skills#choose-where-skills-load).
+
+Next, register the **local MCP** with the host you will use. Run the command
+from the clone so the paths become absolute:
+
+For **Codex**:
 
 ```sh
 codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json" -- node "$PWD/dist/mcp/server.js"
 codex mcp list
-codex
 ```
 
-For **Claude Code**, the repo's `.mcp.json` already declares the server. Set its runtime config path in the shell and start Claude here; approve the project MCP server if prompted:
+For **Claude Code inside this checkout**, the committed `.mcp.json` already
+declares the server. Set its runtime config path before launching Claude and
+approve the project server if prompted:
 
 ```sh
 export AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json"
-claude mcp list
 claude
 ```
 
-Claude Code's `/mcp` screen can confirm the connection. For setup details, see the [MCP guide](docs/MCP.md) and [local signer guide](docs/LOCAL-SIGNER.md). The service operator key is **not** in the skill or MCP config; keep it in the Service A operator page only.
+For **Claude Code in another project**, register a user-scoped server instead
+of relying on this repo's `.mcp.json`:
+
+```sh
+claude mcp add --scope user --transport stdio agentic-world --env AGENTIC_WORLD_CONFIG="$PWD/.agentic-world.demo.json" -- node "$PWD/dist/mcp/server.js"
+claude mcp list
+```
+
+Start a new Codex or Claude session, check that `agentic_identity` is available,
+then say “Create an Agentic World identity.” The no-argument
+`agentic_create_identity()` call creates or reuses a local Secure Enclave P-256
+key and opens a temporary localhost page in your default browser. Connect a
+MetaMask-compatible wallet to the demo's **printed RPC URL**. The wallet must
+have local test ETH to pay for the factory transaction. **You** choose the
+human owner account and approve in the wallet; the MCP never sees your wallet
+key or submits the transaction. The page verifies the account and reports
+`0xAGENT` back to the agent. For a personal skill used outside this checkout,
+give the agent the printed Service A URL; it must not assume the demo state
+file is in your current project. The default local signer label is
+`agentic-world-demo`. See the [MCP guide](docs/MCP.md) and [local signer guide](docs/LOCAL-SIGNER.md).
+
+The service operator key is **not** in the skill or MCP config; keep it in the
+Service A operator page only. The full portal is optional.
 
 To deploy and exercise the complete local RPC + HTTP path, start a Hardhat node
 in one terminal and run the smoke script in another:
