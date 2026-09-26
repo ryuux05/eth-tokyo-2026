@@ -212,6 +212,13 @@ This feature branch also implements direct USDC transfers through
 `agentic_pay_usdc`; the Service C quote is not that execution path.
 Payments require a new execution-capable account, a private Pimlico bundler
 configuration, agent ETH/USDC funding, and transfer-specific policy.
+To add or replace the bundler after init, say `agentic-world:configure-bundler`.
+The skill guides you to stop the MCP, run `npm run configure:bundler` from this
+checkout, paste the URL into a hidden terminal prompt, and restart the MCP.
+After npm publication, the terminal command is `npx agenticworld configure-bundler`.
+You can also supply `AGENTIC_WORLD_BUNDLER_RPC_URL` locally. Setup validates the
+endpoint and preserves your identities; it does not send a payment. With no
+bundler configured, authentication and policy previews still work.
 Above-limit actions can request an exact-action owner signature.
 A successful live hardware/Pimlico payment has **not yet been verified**.
 Follow the [execution guide](docs/EXECUTION.md) rather than treating an

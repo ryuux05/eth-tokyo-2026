@@ -30,6 +30,12 @@ Source-checkout fallback:
    If a config already exists, reuse its RPC unless the user requests a change. For an explicitly requested change, have the user stop/disconnect the MCP, run `npm run init:mcp -- --rpc <url> --update-rpc` (or `npm run init:mcp -- --update-rpc` with the environment variable), then restart/reconnect it. This updates only the endpoint and preserves agent IDs, aliases, and signer settings. Do not delete the config or recreate identities to change RPCs. Stop and report failed endpoint validation; never silently fall back to another provider.
 4. Use the absolute `MCP_CONFIG_PATH` printed by init and the absolute `<checkout>/dist/mcp/server.js` path. Check `codex mcp get agentic-world --json`; reuse an exact existing registration, report a conflicting one, or register an absent one with `codex mcp add agentic-world --env AGENTIC_WORLD_CONFIG=<absolute-config-path> -- node <absolute-server-path>`. Verify with `codex mcp get agentic-world --json`, then start a new Codex session so its tools load. No other local service is required.
 
+## agentic-world:configure-bundler
+
+For an explicit user request to add or replace the bundler after init, stop/disconnect the MCP before changing its config. Use the existing config path from its registration; preserve all identities and signing keys. With the published installer, run `npx agenticworld configure-bundler --config <absolute-config-path>`. From a source checkout before publication, use `npm run configure:bundler -- --config <absolute-config-path>`. This command saves only the bundler endpoint after read-only Sepolia, EntryPoint v0.8, and Pimlico gas-price checks.
+
+Use a locally supplied `AGENTIC_WORLD_BUNDLER_RPC_URL` when available. Otherwise give the user that command to run in their own terminal: it prompts for the URL with hidden input. Do not request the API key in chat or echo the URL. On failure, report the sanitized error; the existing config remains unchanged. On success, restart/reconnect the MCP. No key, transaction, funding, policy or payment is created by setup. Without a configured bundler, authentication and policy previews remain available; payment execution returns `BUNDLER_REQUIRED`.
+
 ## agentic-world:list
 
 Call `agentic_list_identities()`. Report the count, each local alias and agent ID, and the current onchain status. Revoked agents remain listed. This is the locally managed set, not a global search of every account onchain. Never remove a revoked agent from local config.
