@@ -254,8 +254,35 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
         };
         if (request.headers.host !== base.slice("http://".length) || !path.startsWith(prefix)) { send(404, { error: "Not found" }); return; }
         if (request.method === "GET" && path === `${prefix}api/identities`) {
-          try { send(200, await listIdentities()); }
+          try { send(200, { ...await listIdentities(), creationAvailable: !!config.signer }); }
           catch { send(503, { error: "Could not read agent identities from the configured chain" }); }
+          return;
+        }
+        if (request.method === "POST" && [`${prefix}api/create`, `${prefix}api/signer`].includes(path)) {
+          if (request.headers.origin !== base || !request.headers["content-type"]?.startsWith("application/json")) {
+            send(403, { error: "Request rejected" }); return;
+          }
+          const controller = new AbortController();
+          const disconnected = () => { if (!response.writableEnded) controller.abort(); };
+          response.once("close", disconnected);
+          try {
+            let body = "";
+            for await (const chunk of request) { body += chunk.toString(); if (body.length > 1024) { send(413, { error: "Request too large" }); return; } }
+            const input: unknown = JSON.parse(body);
+            const outcome = await guarded(async () => {
+              if (path === `${prefix}api/create`) {
+                const parsed = z.strictObject({ alias: z.string().optional() }).safeParse(input);
+                if (!parsed.success) throw new ToolError("INVALID_CREATION_INPUT", "Provide only an optional alias; keys and deployment values are generated locally");
+                return createIdentity(parsed.data.alias, controller.signal);
+              }
+              const parsed = z.strictObject({ agentId: z.string(), action: z.enum(["rotate", "restore"]) }).safeParse(input);
+              if (!parsed.success) throw new ToolError("INVALID_KEY_INPUT", "Select an agent and key action; replacement keys are generated locally");
+              return rotateAuthenticator({ scheme: "p256", agentId: parsed.data.agentId }, controller.signal, parsed.data.action === "restore");
+            });
+            const value = JSON.parse(outcome.content[0].text);
+            send("isError" in outcome && outcome.isError ? (["CREATION_IN_PROGRESS", "OWNER_ACTION_IN_PROGRESS"].includes(value.code) ? 409 : 400) : 200, value);
+          } catch { send(400, { error: "Could not start local owner approval" }); }
+          finally { response.off("close", disconnected); }
           return;
         }
         if (request.method === "POST" && path === `${prefix}api/alias`) {
@@ -425,6 +452,10 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       if (!owner || !salt) throw new ToolError("INVALID_CREATION_INPUT", "Provide both owner and salt, or neither for browser approval");
       return prepareIdentity(owner, salt as Hex);
     }
+    return createIdentity(alias, ctx.mcpReq.signal);
+  }));
+
+  async function createIdentity(alias?: string, signal?: AbortSignal) {
     if (!config.signer) throw new ToolError("P256_SIGNER_REQUIRED", "Browser creation requires a local hardware P-256 signer");
     if (!config.factory) throw new ToolError("FACTORY_NOT_CONFIGURED", "Configure a trusted factory address");
     const displayAlias = alias === undefined ? undefined : validatedAlias(alias);
@@ -437,7 +468,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     const creationSalt = `0x${randomBytes(32).toString("hex")}` as Hex;
     let selected: CreationIntent | undefined;
     const agentId = await runCreationFlow({ chainId: config.chainId, factory: config.factory, rpcUrl: config.rpcUrl, qx: key.qx, qy: key.qy,
-      openBrowser, signal: ctx.mcpReq.signal,
+      openBrowser, signal,
       deploymentBlockNumber: config.deploymentBlockNumber, deploymentBlockHash: config.deploymentBlockHash,
       prepare: async walletOwner => {
         const prepared = await prepareIdentity(walletOwner, creationSalt, key, true);
@@ -452,7 +483,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     return { status: "IDENTITY_CREATED", agentId, alias: displayAlias ?? null, owner: selected?.transaction.from, chainId: config.chainId,
       next: "The onchain identity is confirmed and the local MCP config has been updated." };
     } finally { creatingIdentity = false; }
-  }));
+  }
 
   const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 
@@ -543,9 +574,18 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       z.strictObject({ scheme: z.literal("secp256k1"), agentId: z.string().optional(), prepareOnly: z.boolean().optional(), address: z.string() }),
     ]),
   }, async (input, ctx) => guarded(async () => {
+    return rotateAuthenticator(input, ctx.mcpReq.signal);
+  }));
+
+  async function rotateAuthenticator(input:
+    { scheme: "p256"; agentId?: string; prepareOnly?: boolean; qx?: string; qy?: string; keyLabel?: string } |
+    { scheme: "secp256k1"; agentId?: string; prepareOnly?: boolean; address: string },
+    signal?: AbortSignal, restore = false) {
+    if (restore && input.scheme !== "p256") throw new ToolError("P256_REQUIRED", "Portal restoration requires a hardware-backed P-256 key");
     if (ownerActionInProgress) throw new ToolError("OWNER_ACTION_IN_PROGRESS", "An owner approval page is already open");
     const current = await identity(selectManagedAgentId(input.agentId));
-    if (current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_REVOKED", "A revoked authenticator must be restored by a separate owner action");
+    if (!restore && current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_REVOKED", "A revoked authenticator must be restored by a separate owner action");
+    if (restore && !current.authenticationRevoked) throw new ToolError("AUTHENTICATOR_ACTIVE", "Only revoked authenticators can be restored");
     let data: Hex;
     let replacement: Awaited<ReturnType<typeof signerPublicKey>> | undefined;
     let replacementLabel: string | undefined;
@@ -564,7 +604,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       }
       if (current.p256PublicKey?.qx.toLowerCase() === replacement.qx.toLowerCase() &&
           current.p256PublicKey?.qy.toLowerCase() === replacement.qy.toLowerCase()) throw new ToolError("AUTHENTICATOR_UNCHANGED", "That P-256 key is already active");
-      data = encodeFunctionData({ abi: agentAccountAbi, functionName: "rotateP256Authenticator", args: [replacement.qx, replacement.qy] });
+      data = encodeFunctionData({ abi: agentAccountAbi, functionName: restore ? "restoreP256Authenticator" : "rotateP256Authenticator", args: [replacement.qx, replacement.qy] });
     } else {
       if (config.chainId === SEPOLIA_CHAIN_ID) throw new ToolError("P256_REQUIRED", "Sepolia MCP only supports hardware-backed P-256 authenticators");
       if (!isAddress(input.address) || getAddress(input.address) === zeroAddress ||
@@ -575,8 +615,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     }
     try { await client.call({ account: current.owner, to: current.agentId, data }); }
     catch { throw new ToolError("ROTATION_SIMULATION_FAILED", "The current account rejected this rotation; check the new key and owner state"); }
-    const intent: OwnerActionIntent = { action: "rotate", agentId: current.agentId,
-      summary: "Replace this agent's operating authenticator. Existing service sessions may remain valid until they expire.",
+    const intent: OwnerActionIntent = { action: restore ? "restore" : "rotate", agentId: current.agentId,
+      summary: restore ? "Restore this agent with a new hardware-backed authenticator." : "Replace this agent's operating authenticator. Existing service sessions may remain valid until they expire.",
       details: replacement ? [`New P-256 Qx: ${replacement.qx}`, `New P-256 Qy: ${replacement.qy}`] : [`New demo authenticator: ${input.scheme === "secp256k1" ? input.address : ""}`],
       transaction: { chainId: config.chainId, from: current.owner, to: current.agentId, value: "0", data } };
     if (input.prepareOnly) return { status: "OWNER_TRANSACTION_REQUIRED", newAuthenticator: replacement ?? input, transaction: intent.transaction };
@@ -602,8 +642,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       ? { module: "agentValidator", abi: parseAbiItem("event P256AuthenticatorRotated(address indexed account, bytes32 qx, bytes32 qy)"),
         matches: args => args.qx === replacement.qx.toLowerCase() && args.qy === replacement.qy.toLowerCase() }
       : { module: "agentValidator", abi: parseAbiItem("event AuthenticatorRotated(address indexed account, address indexed authenticator)"),
-        matches: args => input.scheme === "secp256k1" && typeof args.authenticator === "string" && args.authenticator.toLowerCase() === input.address.toLowerCase() }, ctx.mcpReq.signal);
-  }));
+        matches: args => input.scheme === "secp256k1" && typeof args.authenticator === "string" && args.authenticator.toLowerCase() === input.address.toLowerCase() }, signal);
+  }
 
   server.registerTool("agentic_revoke_authenticator", {
     description: "Open owner-wallet approval to revoke one configured agent authenticator; optionally return a read-only transaction preview.",

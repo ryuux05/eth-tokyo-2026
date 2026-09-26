@@ -89,7 +89,7 @@
     }
     try{
       context=await api("context");
-      el("title").textContent=context.action==="policy"?"Set agent policy":context.action==="rotate"?"Rotate authenticator":"Revoke authenticator";
+      el("title").textContent=context.action==="policy"?"Set agent policy":context.action==="rotate"?"Rotate authenticator":context.action==="restore"?"Restore authenticator":"Revoke authenticator";
       el("summary").textContent=context.summary;
       el("network").textContent=`${context.chainName} · ${context.transaction.chainId}`;
       el("agent").textContent=context.agentId;el("owner").textContent=context.transaction.from;el("target").textContent=context.transaction.to;

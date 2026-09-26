@@ -7,7 +7,7 @@ import { openDefaultBrowser } from "./open-browser.js";
 import { FlowCancelledError, FlowInterruptedError, watchApprovalPage } from "./flow-cancel.js";
 
 export type OwnerActionIntent = {
-  action: "policy" | "rotate" | "revoke";
+  action: "policy" | "rotate" | "restore" | "revoke";
   agentId: Address;
   summary: string;
   details: string[];
