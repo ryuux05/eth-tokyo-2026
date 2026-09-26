@@ -9,7 +9,7 @@ import { network } from "hardhat";
 import { concatHex, decodeFunctionData, encodeFunctionData, keccak256, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { createAgentSdk, Decision, encodeAgentExecution, encodePolicy } from "../sdk/agent.js";
-import { agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi } from "../sdk/core.js";
+import { agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, authenticationDigest, encodeAuthenticationProof } from "../sdk/core.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
@@ -41,6 +41,18 @@ const deposited = await entryPoint.write.depositTo([agent], { value: parseEther(
 await client.waitForTransactionReceipt({ hash: deposited });
 
 const agentSdk = createAgentSdk({ agentId: agent, chainId, signDigest: digest => authenticator.sign({ hash: digest }) });
+const proofTime = Math.floor(Date.now() / 1000);
+const localChallenge = { agentId: agent, audience: "https://service-a.example", chainId,
+  nonce: generatePrivateKey(), issuedAt: proofTime, expiresAt: proofTime + 60 };
+const localProof = await agentSdk.answerChallenge(localChallenge, localChallenge.audience);
+const localValidity = await account.read.isValidSignature([authenticationDigest(localChallenge), encodeAuthenticationProof(localProof)]);
+if (localValidity !== "0x1626ba7e") {
+  const block = await client.getBlock();
+  if (block.timestamp > BigInt(localChallenge.expiresAt)) {
+    throw new Error(`Local chain clock (${block.timestamp}) is ahead of the short-lived proof (${localChallenge.expiresAt}); use a fresh Hardhat node.`);
+  }
+  throw new Error("Fresh local ERC-1271 proof failed before starting the HTTP services.");
+}
 const unsigned = {
   sender: agent,
   nonce: await entryPoint.read.getNonce([agent, 0n]),

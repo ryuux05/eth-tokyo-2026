@@ -46,6 +46,11 @@ prints deployment addresses and transaction hashes, then shuts down the
 temporary HTTP services; the Hardhat node and deployed contracts persist until
 you stop or restart the node.
 
+If a long-running Hardhat node has a block timestamp more than 60 seconds ahead
+of the machine clock, fresh service proofs appear expired onchain. The smoke
+script checks this before starting HTTP services and asks you to use a fresh
+local node. Do not reuse a node whose test clock was advanced.
+
 This is a local development demo, **not** a public deployment: Hardhat owner
 keys are public, the operating private key is ephemeral and passed to the demo
 agent process, stores are not durable, paid status is simulated, and the signed
