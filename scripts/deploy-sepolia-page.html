@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deploy to Sepolia · Agentic World</title>
+  <style>
+    :root { color-scheme:light; font-family:"IBM Plex Sans",system-ui,sans-serif; --canvas:#eff4f2; --surface:#fff; --ink:#132d2e; --muted:#506768; --line:#cbdad7; --teal:#006d66; --danger:#a33b34; }
+    * { box-sizing:border-box; } body { margin:0; min-width:320px; background:var(--canvas); color:var(--ink); }
+    header { padding:14px max(20px,calc((100vw - 660px)/2)); color:#fff; background:#102a2c; font-size:13px; }
+    .mark { display:inline-grid; place-items:center; width:28px; height:28px; margin-right:9px; border:1px solid #70b9ad; border-radius:5px; color:#bce9db; font:12px ui-monospace,monospace; vertical-align:middle; }
+    main { max-width:660px; margin:auto; padding:34px 20px 54px; }
+    h1 { margin:0 0 10px; font-size:2rem; line-height:1.16; letter-spacing:-.025em; font-weight:600; text-wrap:balance; }
+    .lead { margin:0 0 22px; max-width:64ch; color:var(--muted); font-size:14px; line-height:1.55; }
+    .sheet { background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:22px 24px; }
+    dl { margin:0 0 18px; } .fact { display:grid; grid-template-columns:145px minmax(0,1fr); gap:14px; align-items:baseline; border-bottom:1px solid #e2ebe8; padding:9px 0; }
+    dt { color:var(--muted); font-size:12px; } dd { margin:0; font-size:13px; overflow-wrap:anywhere; line-height:1.45; }
+    .code { font:11px/1.5 ui-monospace,SFMono-Regular,monospace; }
+    details { margin:0 0 18px; color:var(--muted); font-size:12px; }
+    summary { cursor:pointer; width:max-content; max-width:100%; } details p { overflow-wrap:anywhere; margin:8px 0 0; }
+    button { width:100%; min-height:42px; border-radius:7px; font:600 14px "IBM Plex Sans",system-ui,sans-serif; cursor:pointer; transition:background-color .18s ease,border-color .18s ease; }
+    button:focus-visible,summary:focus-visible { outline:3px solid #38ac9f; outline-offset:3px; }
+    button:disabled { cursor:not-allowed; opacity:.58; }
+    #connect { color:var(--ink); background:#fff; border:1px solid #9fb9b4; }
+    #connect:hover:not(:disabled) { border-color:var(--teal); }
+    #deploy { margin-top:8px; color:#fff; background:var(--teal); border:1px solid var(--teal); }
+    #deploy:hover:not(:disabled) { background:#005950; }
+    #cancel { width:auto; min-height:36px; margin-top:5px; padding:0 8px; border:0; color:var(--muted); background:transparent; font-weight:500; }
+    #cancel:hover:not(:disabled) { color:var(--ink); text-decoration:underline; }
+    #status { min-height:24px; margin:11px 0 0; color:var(--muted); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
+    #status.error { color:var(--danger); } #status.success { color:var(--teal); }
+    .caution { margin:12px 0 0; color:var(--muted); font-size:12px; line-height:1.5; }
+    #result { display:none; margin-top:16px; padding:14px; background:#e1f2ee; border-radius:7px; }
+    #result.visible { display:block; } #result p { margin:0 0 7px; font-size:12px; overflow-wrap:anywhere; }
+    @media(max-width:560px) { main { padding:26px 16px 42px; } h1 { font-size:1.65rem; } .sheet { padding:18px; } .fact { display:block; } dt { margin-bottom:4px; } }
+    @media(prefers-reduced-motion:reduce) { button { transition:none; } }
+  </style>
+</head>
+<body>
+  <header><span class="mark">AW</span> Agentic World / wallet approval</header>
+  <main>
+    <h1>Deploy to Sepolia</h1>
+    <p class="lead">One transaction creates the factory, validator, policy hook, and account implementation. It does not create an agent identity.</p>
+    <section class="sheet" aria-label="Deployment review">
+      <dl>
+        <div class="fact"><dt>Network</dt><dd>Sepolia · 11155111</dd></div>
+        <div class="fact"><dt>EntryPoint v0.8</dt><dd class="code" id="entrypoint">Loading…</dd></div>
+        <div class="fact"><dt>Wallet</dt><dd class="code" id="wallet">Not connected</dd></div>
+        <div class="fact"><dt>Balance</dt><dd id="balance">Check after connecting</dd></div>
+        <div class="fact"><dt>Estimated gas</dt><dd id="gas">Check after connecting</dd></div>
+      </dl>
+      <details><summary>Compiled deployment hash</summary><p class="code" id="hash">Loading…</p></details>
+      <button id="connect" type="button">Connect wallet</button>
+      <button id="deploy" type="button" disabled>Deploy factory in wallet</button>
+      <button id="cancel" type="button">Cancel and close session</button>
+      <p id="status" role="status" aria-live="polite">No transaction submitted.</p>
+      <div id="result" role="status" aria-live="polite"></div>
+      <p class="caution">Confirm Sepolia, “New contract,” and 0 ETH value in your wallet. The wallet shows the final gas fee.</p>
+    </section>
+  </main>
+  <script type="module">
+    const el=id=>document.getElementById(id);
+    const token=location.pathname.split("/").at(-1);
+    const status=(message,kind="")=>{el("status").textContent=message;el("status").className=kind;};
+    const rpc=async(method,params=[])=>window.ethereum.request({method,params});
+    let context,owner,submittedHash,done=false,cancelled=false,inWallet=false;
+    const response=await fetch(`/deploy/${token}/context`,{cache:"no-store"});
+    if(!response.ok){status("This link expired. Request a new deployment page.","error");throw new Error("Session expired");}
+    context=await response.json();
+    el("entrypoint").textContent=context.entryPoint;
+    el("hash").textContent=context.initCodeHash;
+    if(context.submittedHash){
+      submittedHash=context.submittedHash;owner=context.submittedOwner;
+      el("wallet").textContent=owner;
+      el("connect").disabled=true;el("deploy").disabled=false;el("cancel").disabled=true;
+      el("deploy").textContent="Check submitted transaction";
+      status(`Transaction ${submittedHash} was submitted. Check it before starting another deployment.`);
+    }
+    async function checkNetwork(){
+      const chain=await rpc("eth_chainId");
+      if(BigInt(chain)!==BigInt(context.chainId))throw new Error("Switch your wallet to Sepolia (11155111), then reconnect.");
+      const block=await rpc("eth_getBlockByNumber",[`0x${BigInt(context.checkpointNumber).toString(16)}`,false]);
+      if(!block||block.hash?.toLowerCase()!==context.checkpointHash.toLowerCase())throw new Error("Wallet RPC is on a different Sepolia fork or is behind. Check the RPC, then reconnect.");
+      const code=await rpc("eth_getCode",[context.entryPoint,"latest"]);
+      if(!code||code==="0x")throw new Error("EntryPoint v0.8 is missing from your wallet’s Sepolia RPC.");
+    }
+    el("connect").addEventListener("click",async()=>{
+      if(!window.ethereum){status("No wallet found. Open this link in a browser with MetaMask or another injected wallet.","error");return;}
+      el("connect").disabled=true;
+      try{
+        const accounts=await rpc("eth_requestAccounts");
+        if(!Array.isArray(accounts)||!accounts[0])throw new Error("Select a wallet to continue.");
+        await checkNetwork();owner=accounts[0];
+        const tx={from:owner,data:context.deployData,value:"0x0"};
+        const [balance,gas,price]=await Promise.all([rpc("eth_getBalance",[owner,"latest"]),rpc("eth_estimateGas",[tx]),rpc("eth_gasPrice")]);
+        const estimate=BigInt(gas)*BigInt(price);
+        el("wallet").textContent=owner;
+        el("balance").textContent=`${(Number(BigInt(balance))/1e18).toFixed(5)} test ETH`;
+        el("gas").textContent=`${BigInt(gas).toLocaleString()} units · about ${(Number(estimate)/1e18).toFixed(5)} test ETH`;
+        if(BigInt(balance)<estimate)throw new Error("Not enough Sepolia ETH for estimated gas. Fund this wallet, then reconnect.");
+        el("deploy").disabled=false;status("Checks passed. Review the wallet prompt before approving.");
+      }catch(error){status(error?.message||"Wallet check failed. Reconnect and try again.","error");}
+      finally{el("connect").disabled=false;}
+    });
+    async function complete(){
+      const response=await fetch(`/deploy/${token}/complete`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({hash:submittedHash,owner})});
+      const result=await response.json();
+      if(!response.ok)throw new Error(result.error||"Deployment verification failed");
+      const box=el("result");box.replaceChildren();
+      for(const [label,value] of Object.entries({"Transaction":result.hash,"Factory":result.factory,"Implementation":result.implementation,"Validator":result.validator,"Policy hook":result.policyHook})){
+        const row=document.createElement("p");row.textContent=`${label}: ${value}`;box.append(row);
+      }
+      box.classList.add("visible");done=true;
+      el("deploy").textContent="Deployment verified";el("deploy").disabled=true;el("cancel").disabled=true;el("connect").disabled=true;
+      status("Confirmed on Sepolia. Contract addresses verified.","success");
+    }
+    el("deploy").addEventListener("click",async()=>{
+      if(done||cancelled)return;
+      el("deploy").disabled=true;
+      try{
+        if(!submittedHash){
+          await checkNetwork();
+          const accounts=await rpc("eth_accounts");
+          if(!accounts.some(address=>address.toLowerCase()===owner.toLowerCase()))throw new Error("Wallet account changed. Reconnect before deploying.");
+          inWallet=true;el("cancel").disabled=true;
+          try{submittedHash=await rpc("eth_sendTransaction",[{from:owner,data:context.deployData,value:"0x0"}]);}
+          finally{inWallet=false;if(!submittedHash)el("cancel").disabled=false;}
+          el("deploy").textContent="Check submitted transaction";
+          status(`Transaction ${submittedHash} submitted. Waiting for confirmation…`);
+        }
+        await complete();
+      }catch(error){status(error?.message||"Check your wallet and transaction status before retrying.","error");}
+      finally{if(!done)el("deploy").disabled=false;}
+    });
+    el("cancel").addEventListener("click",async()=>{
+      if(submittedHash||inWallet){status("A wallet transaction may be pending. Reject or check it before starting another deployment.","error");return;}
+      el("cancel").disabled=true;
+      try{
+        const response=await fetch(`/deploy/${token}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"});
+        const result=await response.json();if(!response.ok)throw new Error(result.error||"Could not cancel this session");
+        cancelled=true;el("connect").disabled=true;el("deploy").disabled=true;
+        status("Session closed. No transaction was submitted. You can close this tab and request another link.");
+      }catch(error){el("cancel").disabled=false;status(error?.message||"Could not cancel this session.","error");}
+    });
+    window.addEventListener("pagehide",()=>{
+      if(!submittedHash&&!inWallet&&!done&&!cancelled)
+        void fetch(`/deploy/${token}/cancel`,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}",keepalive:true});
+    });
+    window.ethereum?.on?.("chainChanged",()=>{status("Wallet network changed. Reconnect to run checks again.");el("deploy").disabled=true;});
+    window.ethereum?.on?.("accountsChanged",()=>{status("Wallet account changed. Reconnect to run checks again.");el("deploy").disabled=true;});
+  </script>
+</body>
+</html>
