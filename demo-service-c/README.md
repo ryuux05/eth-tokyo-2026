@@ -1,5 +1,8 @@
 # Service C · Compute-credit storefront
 
+**Live demo:** [Open Service C](https://eth-tokyo-2026-demo-service-c.vercel.app/).
+For agent authentication and Read/Write permissions, [open Service B](https://eth-tokyo-2026-demo-service-b.vercel.app/).
+
 Register an owner wallet, choose a 1 or 2 USDC compute pack, and copy a prompt for
 the agent to authenticate and check its own account policy. **Purchase checked—not paid.**
 No USDC or compute credits are delivered. The API has no wallet key and never broadcasts payments.

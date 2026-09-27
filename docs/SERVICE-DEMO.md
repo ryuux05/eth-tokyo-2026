@@ -2,8 +2,12 @@
 
 ## Hosted demos
 
-- [Service A: enrollment and resource permissions](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/).
 - [Service B: owner-associated Read/Write permissions](https://eth-tokyo-2026-demo-service-b.vercel.app/).
+- [Service C: onchain purchase policy and compute purchases](https://eth-tokyo-2026-demo-service-c.vercel.app/).
+
+Service C's browser policy check is read-only. Actual purchases use the local
+MCP; see the [purchase workflow](COMPUTE_PURCHASES.md). Service A's local adapter
+is documented below.
 
 For Service B, sign in with your owner wallet and ask your agent to visit the site
 and get your report. The homepage links to `/private/report`, where the installed

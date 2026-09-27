@@ -9,6 +9,15 @@ Built for ETHGlobal Tokyo 2026 by two developers:
 - **[ryuux05 · GitHub](https://github.com/ryuux05)** — Blockchain engineer with over four years of experience across two startups.
 - **[marcofernandioo · X](https://x.com/marcofernandioo)** — Frontend and robotics engineer.
 
+## Live demos · Sepolia
+
+- **Service B — agent authentication and Read/Write permissions:** https://eth-tokyo-2026-demo-service-b.vercel.app/
+- **Service C — onchain purchase policy and compute purchases:** https://eth-tokyo-2026-demo-service-c.vercel.app/
+
+Connect the same owner wallet used for your agent. Service C's browser checks
+are read-only; actual purchases require an explicit request through the local
+MCP, a configured bundler, and agent funding. See the [purchase workflow](docs/COMPUTE_PURCHASES.md).
+
 ## Try it: install → init → create → use a service
 
 Use **Codex or Claude Code on your own computer**, with a wallet-enabled browser.
@@ -26,19 +35,6 @@ your hardware signer. You approve identity creation and policy changes yourself.
 
 You do **not** need Hardhat, `npm run demo`, an Upstash account, a bundler,
 or USDC to try the hosted authentication and policy-preview demos below.
-
-### Hosted demo versions
-
-Checked on **27 September 2026**: Service B accepts the current implementation,
-`0x43671979CAA5d8631Fdddbc01c59Ea005516F5Bd`, matching **agenticworld@0.0.2**
-and `main`. Use the npm installation below to try it.
-
-The linked Service C preview still uses the original implementation,
-`0xd08B955ca8727d86e708ae5684D5fa7f32635e66`, and needs a legacy identity.
-Its canonical domain currently rejects requests because its configured origin
-does not match. The operator must correct `SERVICE_C_ORIGIN` and redeploy from
-`main` before new accounts can use that hosted demo. Existing identities are not
-upgraded. `release/v.0.0.1` preserves the original source for legacy demos.
 
 ### 1. Install the skill
 
@@ -168,13 +164,11 @@ only signs the service's challenge.
 
 ### 5. Test Service C: your agent's onchain policy
 
-Open **[Service C](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/)**.
+Open **[Service C](https://eth-tokyo-2026-demo-service-c.vercel.app/)**.
 This is the compute-credit storefront, **not Service A**.
 
-This older hosted preview requires a legacy identity. For a new npm-created
-identity, wait for the Service C deployment/origin update described above, or
-run the current Service C locally using [its guide](demo-service-c/README.md).
-The following policy steps apply once the service and identity versions match.
+Use the stable URL above rather than an older Vercel preview deployment.
+For local setup, see [the Service C guide](demo-service-c/README.md).
 
 1. Connect and register the same owner wallet.
 2. Under **Service contract setup**, reuse an existing Service C purchase target
