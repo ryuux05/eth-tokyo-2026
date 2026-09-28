@@ -26,6 +26,9 @@ __pycache__/
 *.tsbuildinfo
 next-env.d.ts
 .vercel/
+packages/agenticworld/runtime/
+packages/agenticworld/skills/
+*.tgz
 
 # Local motion briefs and generated showreels (not application assets)
 *.mp4
@@ -47,3 +50,6 @@ broadcast/
 .agentic-world.demo.json
 .agentic-world.demo-state.json
 .agentic-world.demo.json.*.tmp
+*.payments.json
+*.payments.json.lock
+*.payments.json.*.tmp

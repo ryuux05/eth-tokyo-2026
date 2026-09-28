@@ -1,0 +1,17 @@
+{
+  "name": "agenticworld",
+  "version": "0.0.5",
+  "description": "Install Agentic World skills and its local hardware-backed MCP for Codex and Claude Code",
+  "type": "module",
+  "bin": { "agenticworld": "bin/agenticworld.js" },
+  "files": ["bin", "lib", "runtime", "skills"],
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/ryuux05/eth-tokyo-2026.git", "directory": "packages/agenticworld" },
+  "scripts": { "test": "node --test test/*.test.js", "prepack": "node lib/check-package.js" },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.1.0",
+    "cross-spawn": "7.0.6",
+    "viem": "2.56.9",
+    "zod": "4.6.5"
+  }
+}

@@ -191,6 +191,82 @@ private func challengeDigest(_ request: ChallengeRequest, enforceTime: Bool = tr
 
 private let keychainService = "world.agentic.secure-enclave.signer"
 
+private struct ExecutionOperation: Decodable {
+    let sender, nonce, callData, accountGasLimits, preVerificationGas, gasFees: String
+}
+private struct ExecutionRequest: Decodable {
+    let kind, label, entryPoint: String
+    let chainId, validUntil: UInt64
+    let userOperation: ExecutionOperation
+}
+private func smallUInt(_ data: [UInt8]) throws -> UInt64 {
+    guard data.count >= 8, data.dropLast(8).allSatisfy({ $0 == 0 }) else { throw SignerError.invalid("Integer exceeds local signing limit") }
+    return data.suffix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+}
+private func executionDigest(_ request: ExecutionRequest) throws -> [UInt8] {
+    let now = UInt64(Date().timeIntervalSince1970)
+    guard request.kind == "AgentExecution", [11155111, 31337].contains(request.chainId),
+          request.validUntil > now, request.validUntil <= now + 300 else { throw SignerError.invalid("Invalid execution domain or expiry") }
+    if request.chainId == 11155111 && request.entryPoint.lowercased() != "0x4337084d9e255ff0702461cf8895ce9e3b5ff108" { throw SignerError.invalid("Wrong EntryPoint") }
+    let op = request.userOperation
+    let sender = try bytes(hex: op.sender, length: 20)
+    let ep = try bytes(hex: request.entryPoint, length: 20)
+    guard sender.contains(where: { $0 != 0 }), ep.contains(where: { $0 != 0 }) else { throw SignerError.invalid("Zero execution address") }
+    let data = try bytes(hex: op.callData)
+    guard data.count >= 228, data.count <= 4096 else { throw SignerError.invalid("Invalid execution calldata size") }
+    let approved = hex(Array(data[0..<4])) == "0xadc3d7cb"
+    guard approved || hex(Array(data[0..<4])) == "0xe9ae5c53",
+          data[4..<36].allSatisfy({ $0 == 0 }) else { throw SignerError.invalid("Only single-call execution is supported") }
+    let offset = try smallUInt(Array(data[36..<68]))
+    guard offset == (approved ? 160 : 64) else { throw SignerError.invalid("Noncanonical execution offset") }
+    let start = 4 + Int(offset)
+    guard data.count >= start + 160 else { throw SignerError.invalid("Truncated execution") }
+    guard try smallUInt(Array(data[start..<start+32])) == 120 else { throw SignerError.invalid("Only canonical token actions may be signed") }
+    let payload = start + 32
+    let selector = hex(Array(data[payload+52..<payload+56]))
+    let purchase = selector == "0x95f43b71"
+    let allowance = selector == "0x095ea7b3"
+    guard selector == "0xa9059cbb" || purchase || (allowance && approved),
+          data[payload..<payload+20].contains(where: { $0 != 0 }),
+          Array(data[payload..<payload+20]) != sender else { throw SignerError.invalid("Unsupported token action; allowance needs owner approval") }
+    guard data[payload+20..<payload+52].allSatisfy({ $0 == 0 }),
+          data[payload+56..<payload+68].allSatisfy({ $0 == 0 }),
+          data[payload+68..<payload+88].contains(where: { $0 != 0 }),
+          Array(data[payload+68..<payload+88]) != sender,
+          data[payload+88..<payload+120].contains(where: { $0 != 0 }) else { throw SignerError.invalid("Invalid transfer") }
+    let tokenStart = purchase ? payload + 68 : payload
+    if request.chainId == 11155111 && hex(Array(data[tokenStart..<tokenStart+20])).lowercased() != "0x1c7d4b196cb0c7b01d743fbc6116a902379c7238" { throw SignerError.invalid("Only Sepolia USDC is supported") }
+    if allowance && data[payload+88..<payload+120].allSatisfy({ $0 == 255 }) { throw SignerError.invalid("Unlimited allowance is not supported") }
+    if approved {
+        guard data.count >= 356, try smallUInt(Array(data[132..<164])) == 320 else { throw SignerError.invalid("Invalid approval offset") }
+        let size = try smallUInt(Array(data[324..<356]))
+        guard size > 0, size <= 2048, data.count == 356 + ((Int(size) + 31) / 32) * 32,
+              try smallUInt(Array(data[100..<132])) >= request.validUntil else { throw SignerError.invalid("Approval expires before execution") }
+    } else if data.count != 228 { throw SignerError.invalid("Trailing execution bytes") }
+    let gas = try bytes(hex: op.accountGasLimits, length: 32)
+    let fees = try bytes(hex: op.gasFees, length: 32)
+    let pre = try bytes(hex: op.preVerificationGas, length: 32)
+    let verification = try smallUInt(Array(gas[0..<16]))
+    let call = try smallUInt(Array(gas[16..<32]))
+    let overhead = try smallUInt(pre)
+    let priority = try smallUInt(Array(fees[0..<16]))
+    let maxFee = try smallUInt(Array(fees[16..<32]))
+    guard verification > 0, call > 0, verification <= 5_000_000, call <= 5_000_000, overhead <= 5_000_000,
+          maxFee <= 100_000_000_000, priority <= maxFee,
+          (verification + call + overhead) <= 5_000_000,
+          (verification + call + overhead) * maxFee <= 5_000_000_000_000_000 else { throw SignerError.invalid("Execution gas budget exceeded") }
+    let domainType = stringHash("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
+    let epDomain = keccak256(domainType + stringHash("ERC4337") + stringHash("1") + word(request.chainId) + [UInt8](repeating: 0, count: 12) + ep)
+    var packed = stringHash("PackedUserOperation(address sender,uint256 nonce,bytes initCode,bytes callData,bytes32 accountGasLimits,uint256 preVerificationGas,bytes32 gasFees,bytes paymasterAndData)")
+    packed += [UInt8](repeating: 0, count: 12) + sender
+    packed += try bytes(hex: op.nonce, length: 32)
+    packed += keccak256([]) + keccak256(data) + gas + pre + fees + keccak256([])
+    let userOpHash = keccak256([0x19, 0x01] + epDomain + keccak256(packed))
+    let domain = keccak256(domainType + stringHash("Agentic World AgentAccount") + stringHash("1") + word(request.chainId) + [UInt8](repeating: 0, count: 12) + sender)
+    let action = keccak256(stringHash("AgentExecution(bytes32 userOpHash,uint48 validUntil)") + userOpHash + word(request.validUntil))
+    return keccak256([0x19, 0x01] + domain + action)
+}
+
 private func saveKeyReference(_ label: String, _ reference: Data) throws {
     let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: keychainService,
                                 kSecAttrAccount as String: label, kSecValueData as String: reference,
@@ -296,6 +372,18 @@ private func run() throws {
         throw SignerError.invalid("Expected a key label (1–128 bytes)")
     }
     let label = arguments[2]
+    if arguments[1] == "hash-execution" || arguments[1] == "sign-execution" {
+        let input = FileHandle.standardInput.readDataToEndOfFile()
+        guard input.count <= 16384 else { throw SignerError.invalid("Execution request too large") }
+        let request = try JSONDecoder().decode(ExecutionRequest.self, from: input)
+        guard request.label == label else { throw SignerError.invalid("Key label mismatch") }
+        let hash = try executionDigest(request)
+        if arguments[1] == "hash-execution" { try output(["digest": hex(hash)]); return }
+        let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: loadKeyReference(label))
+        let signature = try lowSSignature(Array(key.signature(for: RawDigest(value: hash)).rawRepresentation))
+        try output(["digest": hex(hash), "signature": hex(signature)])
+        return
+    }
     if arguments[1] == "provision" {
         guard SecureEnclave.isAvailable else { throw SignerError.invalid("Secure Enclave is unavailable on this Mac") }
         guard try !keyReferenceExists(label) else { throw SignerError.invalid("Key label already exists") }

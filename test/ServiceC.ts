@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { p256 } from "@noble/curves/nist.js";
 import hre from "hardhat";
-import { concatHex, encodeFunctionData, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { concatHex, encodeFunctionData, hashTypedData, parseAbiItem, parseEther, parseEventLogs, toBytes, toHex, zeroAddress, type Address, type Hex } from "viem";
+import { executionTypedData, wrapExecutionSignature } from "../sdk/payments.js";
 import { createAgentSdk, sessionProofHeaders } from "../sdk/agent.js";
 import { Decision, decodePolicy, encodePolicy, ownerActionTypedData } from "../sdk/policy.js";
 import { encodeAgentExecution, type OwnerApproval } from "../sdk/execution.js";
@@ -47,7 +48,8 @@ async function setup() {
       gasFees: concatHex([toHex(1_000_000_000n, { size: 16 }), toHex(2_000_000_000n, { size: 16 })]),
       paymasterAndData: "0x" as Hex, signature: "0x" as Hex };
     const hash = await entryPoint.read.getUserOpHash([unsigned]) as Hex;
-    const op = { ...unsigned, signature: await sign(hash) };
+    const validUntil = Number((await client.getBlock()).timestamp) + 180;
+    const op = { ...unsigned, signature: wrapExecutionSignature(validUntil, await sign(hashTypedData(executionTypedData(chainId, agentId, hash, validUntil)))) };
     const receipt = await mined(await entryPoint.write.handleOps([[op], owner.account.address]));
     const events = parseEventLogs({ abi: [operationEvent], logs: receipt.logs, eventName: "UserOperationEvent" });
     assert.equal(events.length, 1);

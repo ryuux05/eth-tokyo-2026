@@ -156,6 +156,17 @@ contract AgentValidator is IERC7579Validator {
     function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash) external view returns (uint256) {
         KeyState storage key = _keys[msg.sender];
         if (!key.installed || key.revoked || userOp.sender != msg.sender) return VALIDATION_FAILED;
+        if (key.scheme == 2) {
+            // Execution is a distinct, expiring signature domain. Authentication
+            // proofs cannot authorize spending, and stale mempool operations expire.
+            if (userOp.signature.length != 70) return VALIDATION_FAILED;
+            uint48 validUntil = uint48(bytes6(userOp.signature[:6]));
+            if (validUntil == 0) return VALIDATION_FAILED;
+            bytes32 digest = _typedHash(msg.sender, keccak256(abi.encode(
+                keccak256("AgentExecution(bytes32 userOpHash,uint48 validUntil)"), userOpHash, validUntil
+            )));
+            return (uint256(validUntil) << 160) | (_signedBy(key, digest, userOp.signature[6:]) ? VALIDATION_SUCCESS : VALIDATION_FAILED);
+        }
         return _signedBy(key, userOpHash, userOp.signature) ? VALIDATION_SUCCESS : VALIDATION_FAILED;
     }
 

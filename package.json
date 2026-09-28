@@ -19,6 +19,8 @@
     }
   },
   "scripts": {
+    "build:installer": "npm run build:mcp && npm run build:portal && node scripts/build-installer.mjs",
+    "test:installer": "node --test packages/agenticworld/test/*.test.js",
     "build": "hardhat build && npm run build:sdk && npm run build:mcp && npm run build:portal && npm run build:demo-service && npm run build:demo-service-b && npm run build:demo-service-c",
     "build:demo": "hardhat build && npm run build:demo-service && npm run build:demo-service-b",
     "build:sdk": "tsc --project tsconfig.sdk.json",
@@ -26,6 +28,7 @@
     "build:mcp": "tsc --project tsconfig.mcp.json",
     "build:signer": "node --import tsx scripts/build-signer.ts",
     "init:mcp": "node --import tsx scripts/init-mcp-config.ts",
+    "configure:bundler": "node --import tsx scripts/configure-bundler.ts",
     "build:signer:windows": "node --import tsx scripts/build-signer.ts --package-windows",
     "verify:signer:windows": "node --import tsx scripts/build-signer.ts --verify-windows-bundle",
     "serve:mcp": "node dist/mcp/server.js",

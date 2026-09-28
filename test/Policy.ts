@@ -77,7 +77,7 @@ describe("AgentAccount execution policy", () => {
       { name: "target", type: "address" }, { name: "selector", type: "bytes4" },
       { name: "token", type: "address" }, { name: "maxValue", type: "uint256" },
       { name: "maxAmount", type: "uint256" }, { name: "decision", type: "uint8" },
-    ] }], [2, []]);
+    ] }], [3, []]);
     await assert.rejects(c.client.simulateContract({ account: c.human.account, address: c.agentRoot.address, abi: c.implementation.abi, functionName: "setPolicy", args: [unknownVersion] }));
     await assert.rejects(c.client.simulateContract({ account: c.human.account, address: c.agentRoot.address, abi: c.implementation.abi, functionName: "setPolicy", args: [concatHex([policy, "0x00"])] }));
     await c.setPolicy(policy);

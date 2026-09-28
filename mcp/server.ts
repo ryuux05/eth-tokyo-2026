@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, realpath, rename, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { isAbsolute } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { concatHex, createPublicClient, decodeEventLog, encodeFunctionData, getAddress, http, isAddress, keccak256, parseAbiItem, zeroAddress, type AbiEvent, type Address, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { McpServer } from "@modelcontextprotocol/server";
@@ -10,9 +10,13 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod/v4";
 import { createAgentSdk } from "../sdk/agent.js";
 import { isExpectedAgentClone, agentAccountAbi, agentAccountFactoryAbi, agentPolicyAbi, encodePolicy, Decision,
-  SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, type PolicyRule } from "../sdk/core.js";
+  SEPOLIA_CHAIN_ID, SEPOLIA_DEPLOYMENT, trustedFactory, trustedImplementation, resolveSepoliaAgentDeployment, type PolicyRule } from "../sdk/core.js";
 import { assertAudience, sessionProofHeaders, type AuthenticationChallenge } from "../sdk/core.js";
-import { ensureSignerPublicKey, signLocalChallenge, signerPublicKey } from "./local-signer.js";
+import { ensureSignerPublicKey, signLocalChallenge, signLocalExecution, signerPublicKey } from "./local-signer.js";
+import { createPaymentExecutor, pimlicoBundler, SEPOLIA_USDC, executionAccountAbi, paymentAmount, type PaymentRecord } from "../sdk/payments.js";
+import { decodePolicy, encodeTransferPolicy } from "../sdk/policy.js";
+import { withPaymentJournal } from "./payment-journal.js";
+import { approvePayment } from "./payment-approval.js";
 import { runCreationFlow, type CreationIntent } from "./creation-flow.js";
 import { runOwnerActionFlow, type OwnerActionIntent } from "./owner-action-flow.js";
 import { BrowserLaunchError } from "./open-browser.js";
@@ -20,6 +24,7 @@ import { openDefaultBrowser } from "./open-browser.js";
 import { FlowCancelledError, FlowInterruptedError } from "./flow-cancel.js";
 
 type Config = { rpcUrl: string; chainId: number; agentId?: Address; agentIds?: Address[]; aliases?: Record<string, string>; factory?: Address; implementation: Address;
+  execution?: { bundlerRpcUrl: string; maxGasCostWei?: string };
   authenticatorLabels?: Record<string, string[]>;
   deploymentBlockNumber?: string; deploymentBlockHash?: Hex;
   signer?: { kind: "secure-enclave" | "windows-tpm"; binaryPath: string; label: string } };
@@ -30,6 +35,7 @@ class ToolError extends Error {
 
 export function parseConfig(value: unknown): Config {
   const schema = z.strictObject({
+    execution: z.strictObject({ bundlerRpcUrl: z.url(), maxGasCostWei: z.string().regex(/^[1-9][0-9]*$/).optional() }).optional(),
     rpcUrl: z.url(), chainId: z.int().positive(), agentId: z.string().optional(), agentIds: z.array(z.string()).max(256).optional(), aliases: z.record(z.string(), z.string()).optional(), factory: z.string().optional(), implementation: z.string().optional(),
     authenticatorLabels: z.record(z.string(), z.array(z.string().min(1).refine(label => Buffer.byteLength(label) <= 128 && !/[\x00-\x1f\x7f]/.test(label))).max(256)).optional(),
     deploymentBlockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).optional(),
@@ -49,11 +55,15 @@ export function parseConfig(value: unknown): Config {
   if (!!parsed.deploymentBlockNumber !== !!parsed.deploymentBlockHash) throw new Error("Deployment fingerprint requires both block number and hash");
   const rpc = new URL(parsed.rpcUrl);
   if (rpc.protocol !== "https:" && !(rpc.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(rpc.hostname))) throw new Error("RPC must use HTTPS or loopback HTTP");
+  // Validate historical explicit pins before migrating creation to the current
+  // release. IDs and labels remain untouched; unknown overrides still fail.
+  const factory = trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined);
+  const implementation = trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined);
   return { ...parsed, agentId: parsed.agentId ? getAddress(parsed.agentId) : undefined,
     agentIds: parsed.agentIds?.map(id => getAddress(id)), aliases: Object.fromEntries(Object.entries(parsed.aliases ?? {}).map(([id, alias]) => [id.toLowerCase(), alias])),
     authenticatorLabels: Object.fromEntries(Object.entries(parsed.authenticatorLabels ?? {}).map(([id, labels]) => [id.toLowerCase(), [...new Set(labels)]])),
-    factory: trustedFactory(parsed.chainId, parsed.factory ? getAddress(parsed.factory) : undefined),
-    implementation: trustedImplementation(parsed.chainId, parsed.implementation ? getAddress(parsed.implementation) : undefined),
+    factory: parsed.chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_DEPLOYMENT.factory : factory,
+    implementation: parsed.chainId === SEPOLIA_CHAIN_ID ? SEPOLIA_DEPLOYMENT.implementation : implementation,
     deploymentBlockHash: parsed.deploymentBlockHash as Hex | undefined };
 }
 
@@ -134,13 +144,15 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
     const identities = await Promise.all(ids.map(async agentId => {
       const code = await client.getBytecode({ address: agentId, blockNumber });
-      if (!isExpectedAgentClone(code, config.implementation))
+      const deployment = accountDeployment(code);
+      if (!deployment)
         return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, status: "UNAVAILABLE" as const };
       const [owner, revoked] = await Promise.all([
         client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
         client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
       ]);
       return { agentId, alias: config.aliases?.[agentId.toLowerCase()] ?? null, owner,
+        executionSupported: deployment.implementation.toLowerCase() === config.implementation.toLowerCase(),
         status: revoked ? "REVOKED" as const : "ACTIVE" as const, authenticationRevoked: revoked };
     }));
     return { count: identities.length, blockNumber: blockNumber.toString(), identities };
@@ -159,17 +171,23 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
     return known[0];
   }
 
-  async function pinnedAccountBlock(agentId: Address): Promise<bigint> {
+  function accountDeployment(code: Hex | undefined) {
+    return config.chainId === SEPOLIA_CHAIN_ID ? resolveSepoliaAgentDeployment(code)
+      : isExpectedAgentClone(code, config.implementation) ? { factory: config.factory, implementation: config.implementation } : undefined;
+  }
+
+  async function pinnedAccountBlock(agentId: Address) {
     const [actualChain, blockNumber] = await Promise.all([client.getChainId(), client.getBlockNumber({ cacheTime: 0 })]);
     if (actualChain !== config.chainId) throw new ToolError("CHAIN_MISMATCH", "RPC chain does not match configured chainId");
     const code = await client.getBytecode({ address: agentId, blockNumber });
-    if (!isExpectedAgentClone(code, config.implementation)) throw new ToolError("IDENTITY_UNAVAILABLE", "Agent is not the pinned ERC-4337 account clone");
-    return blockNumber;
+    const deployment = accountDeployment(code);
+    if (!deployment) throw new ToolError("IDENTITY_UNAVAILABLE", "Agent is not a recognized pinned ERC-4337 account clone");
+    return { blockNumber, deployment };
   }
 
   async function identity(agentId = config.agentId) {
     if (!agentId) throw new ToolError("IDENTITY_NOT_CONFIGURED", "Create an agent identity and configure its address first");
-    const blockNumber = await pinnedAccountBlock(agentId);
+    const { blockNumber, deployment } = await pinnedAccountBlock(agentId);
     const [owner, authenticator, scheme, p256PublicKey, revoked, createdAt, policyHash, policyRevision] = await Promise.all([
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "owner", blockNumber }),
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticator", blockNumber }),
@@ -180,7 +198,8 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyHash", blockNumber }),
       client.readContract({ address: agentId, abi: agentPolicyAbi, functionName: "policyRevision", blockNumber }),
     ]);
-    return { agentId, chainId: config.chainId, factory: config.factory, implementation: config.implementation,
+    return { agentId, chainId: config.chainId, factory: deployment.factory, implementation: deployment.implementation,
+      executionSupported: deployment.implementation.toLowerCase() === config.implementation.toLowerCase(),
       owner, authenticatorScheme: scheme,
       authenticator: scheme === 1 ? authenticator : undefined,
       p256PublicKey: scheme === 2 ? { qx: p256PublicKey[0], qy: p256PublicKey[1] } : undefined,
@@ -189,7 +208,7 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   }
 
   async function authenticationState(agentId: Address) {
-    const blockNumber = await pinnedAccountBlock(agentId);
+    const { blockNumber } = await pinnedAccountBlock(agentId);
     const [scheme, revoked, authenticator, p256PublicKey] = await Promise.all([
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticatorScheme", blockNumber }),
       client.readContract({ address: agentId, abi: agentAccountAbi, functionName: "authenticationRevoked", blockNumber }),
@@ -225,6 +244,122 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
       return { configured: false, chainId: config.chainId, factory: config.factory,
         implementation: config.implementation, next: "Provision a local signer, then call agentic_create_identity to prepare an owner wallet transaction." };
     }));
+
+  function paymentResult(record: PaymentRecord) {
+    const { operation: _operation, ...publicRecord } = record;
+    return { ...publicRecord, paid: record.status === "CONFIRMED" && record.kind !== "allowance", token: SEPOLIA_USDC,
+      purchaseConfirmed: record.kind === "purchase" && record.status === "CONFIRMED",
+      allowanceConfirmed: record.kind === "allowance" && record.status === "CONFIRMED",
+      note: record.status === "CONFIRMED" ? record.kind === "allowance" ? "Exact allowance verified. No purchase or payment completed."
+        : record.kind === "purchase" ? "Exact USDC transfer and Service C Purchased event verified onchain."
+        : "Exact USDC transfer verified from the chain receipt." : "Not confirmed paid. Check this requestId; never create a second payment to retry an unknown submission." };
+  }
+  async function paymentExecutor(journal: Parameters<Parameters<typeof withPaymentJournal>[1]>[0], signal?: AbortSignal) {
+    const url = config.execution?.bundlerRpcUrl ?? process.env.AGENTIC_WORLD_BUNDLER_RPC_URL;
+    if (!url) throw new ToolError("BUNDLER_REQUIRED", "Configure execution.bundlerRpcUrl or AGENTIC_WORLD_BUNDLER_RPC_URL with a Sepolia Pimlico endpoint. No funds were sent.");
+    return createPaymentExecutor({ client, chainId: config.chainId, implementation: config.implementation,
+      bundler: pimlicoBundler(url), journal, signal,
+      maxGasCostWei: config.execution?.maxGasCostWei ? BigInt(config.execution.maxGasCostWei) : undefined,
+      sign: async request => {
+        if (signal?.aborted) throw new Error("Payment cancelled before signing");
+        const current = await authenticationState(selectManagedAgentId(request.userOperation.sender));
+        if (current.authenticationRevoked || !current.p256PublicKey) throw new Error("Payment requires an active hardware-backed P-256 key");
+        return signLocalExecution(await signerForKey(current.agentId, current.p256PublicKey), request);
+      },
+      approve: async (typedData, intent) => {
+        if (ownerActionInProgress) throw new Error("Another owner approval is open");
+        ownerActionInProgress = true;
+        try {
+          const current = await identity(intent.agentId);
+          return await approvePayment({ owner: current.owner, typedData, intent, openBrowser, signal,
+            verify: signature => client.verifyTypedData({ address: current.owner, ...typedData, signature }) });
+        } finally { ownerActionInProgress = false; }
+      },
+    });
+  }
+  server.registerTool("agentic_pay_usdc", {
+    description: "Spend Sepolia USDC from the selected agent via ERC-4337, subject to its onchain transfer policy. Requires an explicit user payment request. Opens owner approval when policy requires it. Use a stable requestId for retries; SUBMITTED is not paid.",
+    inputSchema: z.strictObject({ agentId: z.string().optional(), recipient: z.string(), amount: z.string(), requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/) }),
+  }, async ({ agentId, recipient, amount, requestId }, ctx) => guarded(async () => {
+    if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "Payments require a persistent MCP config and payment journal");
+    if (!isAddress(recipient)) throw new ToolError("INVALID_RECIPIENT", "Provide the recipient address explicitly");
+    const selected = selectManagedAgentId(agentId);
+    if (!(await identity(selected)).executionSupported)
+      throw new ToolError("EXECUTION_UPGRADE_REQUIRED", "This legacy agent remains usable for authentication. Payments require a new agent from the current factory; the existing identity was not changed.");
+    return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal, ctx.mcpReq.signal)).pay(requestId, { agentId: selected, recipient, amount })));
+  }));
+  server.registerTool("agentic_payment_status", {
+    description: "Check a persisted payment without resubmitting. CONFIRMED means both the EntryPoint operation and exact USDC transfer were verified onchain.",
+    inputSchema: z.strictObject({ requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/) }),
+  }, async ({ requestId }) => guarded(async () => {
+    if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "No payment journal is configured");
+    return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal)).status(requestId)));
+  }));
+  for (const [name, kind] of [["agentic_purchase_compute", "purchase"], ["agentic_approve_compute_allowance", "allowance"]] as const) {
+    server.registerTool(name, {
+      description: kind === "purchase"
+        ? "Actually purchase Service C compute using Sepolia USDC and the account's purchase policy. Requires an explicit purchase request, funded account, bundler and sufficient allowance. Verify purchaseConfirmed through agentic_payment_status."
+        : "Set a bounded USDC allowance for the exact Service C purchase amount. Requires owner approval and an onchain approve rule requiring owner signature. Does not purchase or pay. Never grant an unlimited allowance.",
+      inputSchema: z.strictObject({ agentId: z.string().optional(), target: z.string(), amount: z.string(), requestId: z.string().regex(/^[a-zA-Z0-9_-]{8,80}$/) }),
+    }, async ({ agentId, target, amount, requestId }, ctx) => guarded(async () => {
+      if (!configPath) throw new ToolError("PERSISTENT_CONFIG_REQUIRED", "Purchases require a persistent config and payment journal");
+      if (!isAddress(target)) throw new ToolError("INVALID_TARGET", "Provide the Service C purchase contract address");
+      const selected = selectManagedAgentId(agentId);
+      if (!(await identity(selected)).executionSupported) throw new ToolError("EXECUTION_UPGRADE_REQUIRED", "This agent does not support execution");
+      return withPaymentJournal(configPath, async journal => paymentResult(await (await paymentExecutor(journal, ctx.mcpReq.signal))
+        .pay(requestId, { agentId: selected, recipient: target, amount, kind })));
+    }));
+  }
+  server.registerTool("agentic_enable_compute_allowance", {
+    description: "Owner-requested one-time purchase setup. Preserve existing purchase rules and append a USDC approve rule requiring an exact owner signature. Opens a wallet transaction. Does not grant an allowance or change purchase limits.",
+    inputSchema: z.strictObject({ agentId: z.string().optional() }),
+  }, async ({ agentId }, ctx) => guarded(async () => {
+    const current = await identity(selectManagedAgentId(agentId));
+    const encoded = await client.readContract({ address: current.agentId, abi: agentPolicyAbi, functionName: "policy" });
+    let rules: PolicyRule[];
+    try { rules = decodePolicy(encoded); } catch { throw new ToolError("PURCHASE_POLICY_REQUIRED", "Configure purchase rules first. Transfer-only policies are not changed by this setup."); }
+    if (!rules.some(rule => rule.selector.toLowerCase() === "0x95f43b71" && rule.decision !== Decision.DENY))
+      throw new ToolError("PURCHASE_POLICY_REQUIRED", "Configure an allowed purchase rule first");
+    const existing = rules.find(rule => rule.target.toLowerCase() === SEPOLIA_USDC.toLowerCase() && rule.selector.toLowerCase() === "0x095ea7b3");
+    if (existing) {
+      if (existing.decision !== Decision.REQUIRE_OWNER_SIGNATURE) throw new ToolError("ALLOWANCE_POLICY_CONFLICT", "Existing approval policy must be reviewed by the owner; it was not changed");
+      return { status: "ALREADY_CONFIGURED", agentId: current.agentId };
+    }
+    const policy = encodePolicy([...rules, { target: SEPOLIA_USDC, selector: "0x095ea7b3", token: zeroAddress, maxValue: 0n, maxAmount: 0n, decision: Decision.REQUIRE_OWNER_SIGNATURE }]);
+    const policyHash = keccak256(policy);
+    return approveOwnerAction({ action: "policy", agentId: current.agentId,
+      summary: "Enable owner-approved USDC allowances for purchases. Existing purchase rules remain unchanged. Each allowance requires your separate signature for its exact contract and amount.",
+      details: [`Preserve ${rules.length} existing rules`, "Append USDC approve(address,uint256): REQUIRE_OWNER_SIGNATURE", "No allowance or payment is created by this transaction"],
+      transaction: { chainId: config.chainId, from: current.owner, to: current.agentId, value: "0", data: encodeFunctionData({ abi: agentPolicyAbi, functionName: "setPolicy", args: [policy] }) } },
+      async () => { const updated = await identity(current.agentId); if (updated.policyHash !== policyHash) throw new Error("Policy confirmation mismatch"); return { policyHash, policyRevision: updated.policyRevision }; },
+      { module: "policyHook", abi: parseAbiItem("event PolicyUpdated(address indexed account, bytes32 indexed policyHash, uint256 revision)"), matches: args => args.policyHash === policyHash }, ctx.mcpReq.signal);
+  }));
+  server.registerTool("agentic_set_transfer_policy", {
+    description: "Replace this agent's execution policy with ordered, recipient-bound USDC transfer rules. Requires explicit owner request and a wallet transaction. No match means DENY; limits are per transfer, not cumulative.",
+    inputSchema: z.strictObject({ agentId: z.string().optional(), rules: z.array(z.strictObject({ recipient: z.string(), maxUsdc: z.string(), decision: z.enum(["DENY", "ALLOW", "REQUIRE_OWNER_SIGNATURE"]) })).max(32) }),
+  }, async ({ agentId, rules }, ctx) => guarded(async () => {
+    const current = await identity(selectManagedAgentId(agentId));
+    try {
+      if (await client.readContract({ address: current.agentId, abi: executionAccountAbi, functionName: "executionVersion" }) !== 1n) throw new Error();
+    } catch { throw new ToolError("EXECUTION_UPGRADE_REQUIRED", "Transfer policies require a newly deployed execution account; the old Sepolia account is unchanged."); }
+    const encoded = encodeTransferPolicy(rules.map(rule => {
+      if (!isAddress(rule.recipient)) throw new ToolError("INVALID_RECIPIENT", "Invalid policy recipient");
+      return { token: SEPOLIA_USDC, recipient: rule.recipient, maxAmount: paymentAmount(rule.maxUsdc), decision: Decision[rule.decision] };
+    }));
+    const policyHash = keccak256(encoded);
+    const data = encodeFunctionData({ abi: agentPolicyAbi, functionName: "setPolicy", args: [encoded] });
+    await client.call({ account: current.owner, to: current.agentId, data });
+    return approveOwnerAction({ action: "policy", agentId: current.agentId,
+      summary: "Replace the existing execution policy with these per-transfer USDC limits. Other actions will be denied.",
+      details: rules.map((rule, i) => `${i + 1}. ${rule.decision}: up to ${rule.maxUsdc} USDC to ${rule.recipient}`),
+      transaction: { chainId: config.chainId, from: current.owner, to: current.agentId, value: "0", data } },
+      async () => {
+        const updated = await identity(current.agentId);
+        if (updated.policyHash !== policyHash || BigInt(updated.policyRevision) <= BigInt(current.policyRevision)) throw new Error("Policy confirmation mismatch");
+        return { policyHash, policyRevision: updated.policyRevision };
+      }, { module: "policyHook", abi: parseAbiItem("event PolicyUpdated(address indexed account, bytes32 indexed policyHash, uint256 revision)"),
+        matches: args => args.policyHash === policyHash && typeof args.revision === "bigint" && args.revision > BigInt(current.policyRevision) }, ctx.mcpReq.signal);
+  }));
 
   server.registerTool("agentic_list_identities", { description: "List all locally known agent IDs, aliases, and current onchain revocation status, including revoked agents.", inputSchema: z.object({}) },
     async () => guarded(listIdentities));
@@ -706,7 +841,9 @@ export async function createAgenticWorldMcp(configValue: unknown, operatingKey?:
   return server;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves the module URL through symlinks, but argv can retain aliases
+// such as /var vs /private/var or an npx bin link. Compare canonical paths.
+if (process.argv[1] && fileURLToPath(import.meta.url) === await realpath(process.argv[1]).catch(() => undefined)) {
   const configPath = process.env.AGENTIC_WORLD_CONFIG;
   const key = process.env.AGENTIC_WORLD_OPERATING_KEY as Hex | undefined;
   if (!configPath) {

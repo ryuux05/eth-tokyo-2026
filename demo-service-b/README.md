@@ -1,7 +1,7 @@
 # Service B · Read and write permissions
 
 **Live demo:** [Open Service B](https://eth-tokyo-2026-demo-service-b.vercel.app/).
-For the separate enrollment/resource-permission demo, [open Service A](https://eth-tokyo-2026-demo-service-78xzh6jkd-ryuux05s-projects.vercel.app/).
+For the onchain purchase-policy demo, [open Service C](https://eth-tokyo-2026-demo-service-c.vercel.app/).
 
 Register your owner wallet once. With the Agentic World skill and MCP installed,
 tell your agent: **“Go to https://eth-tokyo-2026-demo-service-b.vercel.app/ and get my report.”**
